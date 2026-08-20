@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AO3 Scraper</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1.5rem;
+      background: #faf8f5;
+      color: #2c2c2c;
+      line-height: 1.5;
+    }
+    h1 { margin-top: 0; font-size: 1.75rem; }
+    h2 {
+      font-size: 1.1rem;
+      margin: 1.5rem 0 0.75rem;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 0.25rem;
+    }
+    fieldset {
+      border: 1px solid #ccc;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: #fff;
+    }
+    legend { padding: 0 0.5rem; font-weight: bold; }
+    label {
+      display: block;
+      margin: 0.5rem 0 0.25rem;
+      font-size: 0.95rem;
+    }
+    input[type="text"],
+    input[type="url"],
+    input[type="number"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 0.4rem 0.5rem;
+      border: 1px solid #aaa;
+      font: inherit;
+    }
+    textarea { min-height: 4rem; font-family: monospace; font-size: 0.85rem; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+    .checkbox { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; }
+    .checkbox input { width: auto; }
+    .hint { font-size: 0.85rem; color: #666; margin-top: 0.15rem; }
+    button {
+      background: #7b0022;
+      color: #fff;
+      border: none;
+      padding: 0.65rem 1.25rem;
+      font: inherit;
+      cursor: pointer;
+      margin-top: 0.5rem;
+    }
+    button:hover { background: #5a0018; }
+    .error {
+      background: #fde8ec;
+      border: 1px solid #eb6f92;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .summary {
+      background: #eef6f9;
+      border: 1px solid #3e8fb0;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 0.45rem 0.5rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0ebe3; }
+    .score {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      color: #fff;
+      font-weight: bold;
+      min-width: 2rem;
+      text-align: center;
+    }
+    .score-green { background: #3e8fb0; }
+    .score-yellow { background: #f6c177; color: #2c2c2c; }
+    .score-red { background: #eb6f92; }
+    .score-none { background: #999; }
+    .incomplete { color: #a04000; }
+    .complete { color: #2d6a4f; }
+    a { color: #7b0022; }
+    #json-output { margin-top: 1rem; }
+    #results-section { display: none; margin-top: 1.5rem; }
+    #results-section.visible { display: block; }
+    #status-panel {
+      background: #fff8e6;
+      border: 1px solid #f6c177;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      display: none;
+    }
+    #status-panel.visible { display: block; }
+    #status-panel.error {
+      background: #fde8ec;
+      border-color: #eb6f92;
+    }
+    #status-panel.done {
+      background: #eef6f9;
+      border-color: #3e8fb0;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+  </style>
+</head>
+<body>
+  <h1>AO3 Search Scraper</h1>
+
+  <div id="status-panel"></div>
+
+  <form id="scrape-form" method="post" action="/scrape/stream">
+    <input type="hidden" id="use_form_criteria" name="use_form_criteria" value="0">
+    <fieldset>
+      <legend>Search source</legend>
+      <label for="url">AO3 search URL</label>
+      <input type="url" id="url" name="url" value="{{ form.url }}" placeholder="https://archiveofourown.org/works?...">
+      <p class="hint">Paste a URL to auto-fill empty fields below. Edit any field to use the form as the source of truth instead.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Search criteria</legend>
+      <div class="row">
+        <div>
+          <label for="tag_id">Fandom / tag</label>
+          <input type="text" id="tag_id" name="tag_id" class="criteria-field" value="{{ form.tag_id }}" placeholder="Harry Potter - J. K. Rowling">
+        </div>
+        <div>
+          <label for="sort_column">Sort by</label>
+          <select id="sort_column" name="sort_column" class="criteria-field">
+            {% for col, label in sort_options %}
+            <option value="{{ col }}" {% if form.sort_column == col %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="complete">Complete works (AO3 filter)</label>
+          <select id="complete" name="complete" class="criteria-field">
+            <option value="" {% if form.complete == '' %}selected{% endif %}>Any</option>
+            <option value="true" {% if form.complete == 'true' %}selected{% endif %}>Complete only</option>
+            <option value="false" {% if form.complete == 'false' %}selected{% endif %}>In progress only</option>
+          </select>
+        </div>
+        <div>
+          <label for="language_id">Language</label>
+          <input type="text" id="language_id" name="language_id" class="criteria-field" value="{{ form.language_id }}">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="words_from">Words from</label>
+          <input type="number" id="words_from" name="words_from" class="criteria-field" value="{{ form.words_from }}" min="0">
+        </div>
+        <div>
+          <label for="words_to">Words to</label>
+          <input type="number" id="words_to" name="words_to" class="criteria-field" value="{{ form.words_to }}" min="0">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="date_from">Date from</label>
+          <input type="text" id="date_from" name="date_from" class="criteria-field" value="{{ form.date_from }}" placeholder="YYYY-MM-DD">
+        </div>
+        <div>
+          <label for="date_to">Date to</label>
+          <input type="text" id="date_to" name="date_to" class="criteria-field" value="{{ form.date_to }}" placeholder="YYYY-MM-DD">
+        </div>
+      </div>
+      <label for="query">Search query</label>
+      <input type="text" id="query" name="query" class="criteria-field" value="{{ form.query }}">
+      <div class="row">
+        <div>
+          <label for="relationship_ids">Relationship IDs (comma-separated)</label>
+          <input type="text" id="relationship_ids" name="relationship_ids" class="criteria-field" value="{{ form.relationship_ids }}" placeholder="1110">
+        </div>
+        <div>
+          <label for="freeform_ids">Freeform tag IDs (comma-separated)</label>
+          <input type="text" id="freeform_ids" name="freeform_ids" class="criteria-field" value="{{ form.freeform_ids }}" placeholder="27594097">
+        </div>
+      </div>
+      <label for="character_ids">Character IDs (comma-separated)</label>
+      <input type="text" id="character_ids" name="character_ids" class="criteria-field" value="{{ form.character_ids }}">
+    </fieldset>
+
+    <fieldset>
+      <legend>Result filters</legend>
+      <div class="row">
+        <div>
+          <label for="max_results">Max results</label>
+          <input type="number" id="max_results" name="max_results" value="{{ form.max_results }}" min="1" placeholder="no limit">
+        </div>
+        <div>
+          <label for="start_page">Start page</label>
+          <input type="number" id="start_page" name="start_page" class="criteria-field" value="{{ form.start_page }}" min="1">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="min_score">Min quality score</label>
+          <input type="number" id="min_score" name="min_score" value="{{ form.min_score }}" step="0.1" placeholder="none">
+          <p class="hint">Normalized 0–100 by default (40=yellow, 60=green)</p>
+        </div>
+        <div>
+          <label for="min_kudos">Min kudos</label>
+          <input type="number" id="min_kudos" name="min_kudos" value="{{ form.min_kudos }}" min="0">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="min_words">Min words</label>
+          <input type="number" id="min_words" name="min_words" value="{{ form.min_words }}" min="0">
+        </div>
+        <div>
+          <label for="delay">Delay between pages (seconds)</label>
+          <input type="number" id="delay" name="delay" value="{{ form.delay }}" min="0" step="0.1">
+        </div>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" name="complete_only" value="1" {% if form.complete_only %}checked{% endif %}>
+        Only include works with all chapters posted (7/7, not 7/? or 7/10)
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Quality score settings</legend>
+      <label class="checkbox">
+        <input type="checkbox" name="no_normalize" value="1" {% if form.no_normalize %}checked{% endif %}>
+        Use raw score (don't normalize to 100%)
+      </label>
+      <div class="row">
+        <div>
+          <label for="max_raw_score">Max raw score (= 100% when normalizing)</label>
+          <input type="number" id="max_raw_score" name="max_raw_score" value="{{ form.max_raw_score }}" step="0.1">
+        </div>
+        <div>
+          <label for="min_kudos_for_score">Min kudos to compute score</label>
+          <input type="number" id="min_kudos_for_score" name="min_kudos_for_score" value="{{ form.min_kudos_for_score }}" min="0">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>AO3 login (optional)</legend>
+      <div class="row">
+        <div>
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" value="{{ form.username }}" autocomplete="username">
+        </div>
+        <div>
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password">
+        </div>
+      </div>
+      <p class="hint">Leave blank for anonymous access. Env vars AO3_USERNAME / AO3_PASSWORD are used if set.</p>
+    </fieldset>
+
+    <button type="submit" id="submit-btn">Run scrape</button>
+  </form>
+
+  <div id="results-section">
+    <h2>Results (<span id="result-count">0</span> works)</h2>
+    <div class="summary" id="results-summary"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Score</th>
+          <th>Title</th>
+          <th>Author</th>
+          <th>Chapters</th>
+          <th>Words</th>
+          <th>Kudos</th>
+          <th>Hits</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+
+    <h2 id="json-output">JSONL output</h2>
+    <textarea id="jsonl-output" readonly rows="12"></textarea>
+  </div>
+
+  <script>
+    const form = document.getElementById("scrape-form");
+    const urlInput = document.getElementById("url");
+    const useFormCriteriaInput = document.getElementById("use_form_criteria");
+    const submitBtn = document.getElementById("submit-btn");
+    const statusPanel = document.getElementById("status-panel");
+    const resultsSection = document.getElementById("results-section");
+    const resultsBody = document.getElementById("results-body");
+    const resultCount = document.getElementById("result-count");
+    const resultsSummary = document.getElementById("results-summary");
+    const jsonlOutput = document.getElementById("jsonl-output");
+
+    const FIELD_DEFAULTS = {
+      sort_column: "kudos_count",
+      language_id: "en",
+      start_page: "1",
+      complete: "",
+    };
+
+    const userEditedFields = new Set();
+    const autoFilledValues = {};
+    let urlParseTimer = null;
+
+    function markManualCriteria(name) {
+      userEditedFields.add(name);
+      useFormCriteriaInput.value = "1";
+    }
+
+    function fieldValue(name) {
+      const el = form.elements[name];
+      if (!el) return "";
+      return String(el.value).trim();
+    }
+
+    function isUnfilled(name) {
+      const value = fieldValue(name);
+      if (value === "") return true;
+      if (Object.prototype.hasOwnProperty.call(FIELD_DEFAULTS, name)) {
+        return value === FIELD_DEFAULTS[name];
+      }
+      return false;
+    }
+
+    function shouldFillFromUrl(name) {
+      if (userEditedFields.has(name)) return false;
+      const current = fieldValue(name);
+      if (isUnfilled(name)) return true;
+      return Object.prototype.hasOwnProperty.call(autoFilledValues, name)
+        && autoFilledValues[name] === current;
+    }
+
+    function applyParsedUrl(fields) {
+      let filled = 0;
+      for (const [name, value] of Object.entries(fields)) {
+        if (!form.elements[name] || !shouldFillFromUrl(name)) continue;
+        form.elements[name].value = value;
+        autoFilledValues[name] = value;
+        filled += 1;
+      }
+      if (filled > 0 && userEditedFields.size === 0) {
+        useFormCriteriaInput.value = "0";
+      }
+      return filled;
+    }
+
+    async function parseUrlIntoForm() {
+      const url = urlInput.value.trim();
+      if (!url) {
+        userEditedFields.clear();
+        Object.keys(autoFilledValues).forEach((key) => delete autoFilledValues[key]);
+        useFormCriteriaInput.value = "0";
+        return;
+      }
+
+      const body = new FormData();
+      body.append("url", url);
+
+      try {
+        const response = await fetch("/parse-url", { method: "POST", body });
+        const data = await response.json();
+        if (!response.ok) {
+          setStatus(data.error || "Could not parse URL", "error");
+          return;
+        }
+        const filled = applyParsedUrl(data);
+        if (filled > 0) {
+          setStatus(`Filled ${filled} field(s) from URL.`, "done");
+        }
+      } catch (err) {
+        setStatus(err.message || String(err), "error");
+      }
+    }
+
+    urlInput.addEventListener("input", () => {
+      clearTimeout(urlParseTimer);
+      urlParseTimer = setTimeout(parseUrlIntoForm, 400);
+    });
+
+    document.querySelectorAll(".criteria-field").forEach((el) => {
+      el.addEventListener("input", () => markManualCriteria(el.name));
+      el.addEventListener("change", () => markManualCriteria(el.name));
+    });
+
+    function setStatus(message, kind) {
+      statusPanel.textContent = message;
+      statusPanel.className = "visible" + (kind ? " " + kind : "");
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text ?? "";
+      return div.innerHTML;
+    }
+
+    function appendWorkRow(row) {
+      const tr = document.createElement("tr");
+      const scoreHtml = row.score_class
+        ? `<span class="score score-${row.score_class}">${escapeHtml(String(row.quality_score))}</span>`
+        : `<span class="score score-none">—</span>`;
+      const chapterClass = row.chapters_complete
+        ? "complete"
+        : row.chapters_display
+          ? "incomplete"
+          : "";
+      tr.innerHTML = `
+        <td>${scoreHtml}</td>
+        <td><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener">${escapeHtml(row.title)}</a></td>
+        <td>${escapeHtml(row.author || "—")}</td>
+        <td class="${chapterClass}">${escapeHtml(row.chapters_display || "—")}</td>
+        <td>${escapeHtml(row.words_fmt)}</td>
+        <td>${escapeHtml(row.kudos_fmt)}</td>
+        <td>${escapeHtml(row.hits_fmt)}</td>
+      `;
+      resultsBody.appendChild(tr);
+    }
+
+    function handleEvent(event) {
+      if (event.type === "start") {
+        resultsSection.classList.add("visible");
+        resultsBody.innerHTML = "";
+        jsonlOutput.value = "";
+        resultCount.textContent = "0";
+        resultsSummary.innerHTML = event.search_url
+          ? `Search URL: <a href="${escapeHtml(event.search_url)}" target="_blank" rel="noopener">${escapeHtml(event.search_url)}</a>`
+          : "";
+        setStatus(event.message || "Starting…");
+      } else if (event.type === "status") {
+        setStatus(event.message);
+      } else if (event.type === "page") {
+        const total = event.total_results != null ? event.total_results : "?";
+        setStatus(
+          `Page ${event.page}: fetched ${event.works_on_page} works (${total} total on AO3), ${event.matched_so_far} matched so far…`
+        );
+      } else if (event.type === "work") {
+        appendWorkRow(event.row);
+        resultCount.textContent = String(resultsBody.rows.length);
+        jsonlOutput.value += (jsonlOutput.value ? "\n" : "") + event.jsonl;
+        jsonlOutput.scrollTop = jsonlOutput.scrollHeight;
+      } else if (event.type === "done") {
+        setStatus(`Done — ${event.count} work(s) matched.`, "done");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Run scrape";
+      } else if (event.type === "error") {
+        setStatus(event.message, "error");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Run scrape";
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Scraping…";
+      setStatus("Connecting…");
+
+      try {
+        const response = await fetch("/scrape/stream", {
+          method: "POST",
+          body: new FormData(form),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (!line.startsWith("data: ")) continue;
+            try {
+              handleEvent(JSON.parse(line.slice(6)));
+            } catch (err) {
+              console.error("Bad event:", line, err);
+            }
+          }
+        }
+
+        if (buffer.trim()) {
+          const line = buffer.trim();
+          if (line.startsWith("data: ")) {
+            handleEvent(JSON.parse(line.slice(6)));
+          }
+        }
+      } catch (err) {
+        setStatus(err.message || String(err), "error");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Run scrape";
+      }
+    });
+  </script>
+</body>
+</html>
