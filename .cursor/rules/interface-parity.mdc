@@ -1,0 +1,47 @@
+---
+description: Keep web UI, REST API, CLI, and Calibre plugin in relative feature parity
+alwaysApply: true
+---
+
+# Interface parity (CLI · Web · API · Plugin)
+
+ao3kit exposes the same core capabilities through four surfaces. When you change one, keep the others in **relative feature parity** — not identical UX, but the same user-facing abilities and shared data contracts.
+
+| Surface | Entry | Role |
+|---|---|---|
+| CLI | `python -m ao3kit …` | Scriptable full toolkit |
+| Web UI | `ao3kit.webapp` (`/`) | HTMX forms + SSE progress |
+| REST API | `ao3kit.api` (`/api/v1`) | JSON jobs + OpenAPI |
+| Calibre plugin | `calibre-plugin/` | Import JSONL/zip + cleaned metadata columns |
+
+## Shared core first
+
+- Put behavior in library modules (`scrape`, `tags`, `epubs`, `config`, `http`, `rate`) — not only in one UI.
+- Surfaces should call those modules; avoid copy-pasted scrape/tag/download logic.
+- Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI, API, web download, and the plugin.
+- **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). Every interface must go through `ao3kit.http` (or `wait_for_request`) so CLI, web, API, and plugin enrich share one limiter. Do not add per-interface sleeps or separate request paths that bypass it.
+
+## When adding or changing a feature
+
+1. Implement (or extend) the **library** API.
+2. Expose it on every surface that reasonably applies:
+   - **CLI** subcommand/flags
+   - **REST** JSON endpoint (and job pattern if long-running)
+   - **Web UI** control + progress if users need it interactively
+   - **Plugin** only when the feature affects import, columns, enrich-on-import, or bundle layout
+3. Update **AGENTS.md** / **README** endpoint or CLI examples if the public surface changed.
+4. Add **pytest** coverage at the library layer; surface tests where behavior diverges (API `TestClient`, etc.).
+
+## Relative, not identical
+
+- OK: different UX (SSE HTML vs JSON poll vs CLI stdout).
+- OK: plugin stays import-focused and does not re-implement full AO3 search UI.
+- Not OK: scrape filter exists only in the web form; tag resolve only on CLI; enrich shape differs between API and plugin.
+- Not OK: changing JSONL/`cleaned` fields or zip layout without updating the plugin importer and docs.
+
+## Checklist before finishing a feature PR/change
+
+- [ ] Core logic lives under `ao3kit/` (not only templates or `api.py` handlers)
+- [ ] CLI / API / web updated where the feature is user-facing
+- [ ] Plugin updated if import, metadata columns, or enrich path is affected
+- [ ] Docs mention the new capability on each relevant surface

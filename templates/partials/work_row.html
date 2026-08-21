@@ -1,0 +1,20 @@
+<tr>
+  <td>
+    {% if row.score_class %}
+    <span class="score score-{{ row.score_class }}">{{ row.quality_score }}</span>
+    {% else %}
+    <span class="score score-none">—</span>
+    {% endif %}
+  </td>
+  <td><a href="{{ row.url }}" target="_blank" rel="noopener">{{ row.title }}</a></td>
+  <td>{{ row.author or "—" }}</td>
+  <td class="{% if row.chapters_complete %}complete{% elif row.chapters_display %}incomplete{% endif %}">
+    {{ row.chapters_display or "—" }}
+  </td>
+  <td>{{ row.words_fmt }}</td>
+  <td>{{ row.kudos_fmt }}</td>
+  <td>{{ row.hits_fmt }}</td>
+</tr>
+<span id="result-count" hx-swap-oob="innerHTML">{{ count }}</span>
+<pre id="jsonl-output" hx-swap-oob="beforeend">{{ jsonl_line }}
+</pre>

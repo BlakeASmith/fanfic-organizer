@@ -1,0 +1,9 @@
+<div
+  id="download-session"
+  hx-ext="sse"
+  sse-connect="/download/events/{{ download_id }}"
+  sse-close="done"
+>
+  <div hidden sse-swap="status error"></div>
+  <div sse-swap="done">Starting EPUB download for {{ count }} work(s)…</div>
+</div>

@@ -1,0 +1,65 @@
+<fieldset id="search-criteria">
+  <legend>Search criteria</legend>
+  <div class="row">
+    <div>
+      <label for="tag_id">Fandom / tag</label>
+      <input type="text" id="tag_id" name="tag_id" class="criteria-field" value="{{ form.tag_id }}" placeholder="Harry Potter - J. K. Rowling">
+    </div>
+    <div>
+      <label for="sort_column">Sort by</label>
+      <select id="sort_column" name="sort_column" class="criteria-field">
+        {% for col, label in sort_options %}
+        <option value="{{ col }}" {% if form.sort_column == col %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="complete">Complete works (AO3 filter)</label>
+      <select id="complete" name="complete" class="criteria-field">
+        <option value="" {% if form.complete == '' %}selected{% endif %}>Any</option>
+        <option value="true" {% if form.complete == 'true' %}selected{% endif %}>Complete only</option>
+        <option value="false" {% if form.complete == 'false' %}selected{% endif %}>In progress only</option>
+      </select>
+    </div>
+    <div>
+      <label for="language_id">Language</label>
+      <input type="text" id="language_id" name="language_id" class="criteria-field" value="{{ form.language_id }}">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="words_from">Words from</label>
+      <input type="number" id="words_from" name="words_from" class="criteria-field" value="{{ form.words_from }}" min="0">
+    </div>
+    <div>
+      <label for="words_to">Words to</label>
+      <input type="number" id="words_to" name="words_to" class="criteria-field" value="{{ form.words_to }}" min="0">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="date_from">Date from</label>
+      <input type="text" id="date_from" name="date_from" class="criteria-field" value="{{ form.date_from }}" placeholder="YYYY-MM-DD">
+    </div>
+    <div>
+      <label for="date_to">Date to</label>
+      <input type="text" id="date_to" name="date_to" class="criteria-field" value="{{ form.date_to }}" placeholder="YYYY-MM-DD">
+    </div>
+  </div>
+  <label for="query">Search query</label>
+  <input type="text" id="query" name="query" class="criteria-field" value="{{ form.query }}">
+  <div class="row">
+    <div>
+      <label for="relationship_ids">Relationship IDs (comma-separated)</label>
+      <input type="text" id="relationship_ids" name="relationship_ids" class="criteria-field" value="{{ form.relationship_ids }}" placeholder="1110">
+    </div>
+    <div>
+      <label for="freeform_ids">Freeform tag IDs (comma-separated)</label>
+      <input type="text" id="freeform_ids" name="freeform_ids" class="criteria-field" value="{{ form.freeform_ids }}" placeholder="27594097">
+    </div>
+  </div>
+  <label for="character_ids">Character IDs (comma-separated)</label>
+  <input type="text" id="character_ids" name="character_ids" class="criteria-field" value="{{ form.character_ids }}">
+</fieldset>

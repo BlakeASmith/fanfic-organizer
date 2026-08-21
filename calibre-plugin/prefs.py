@@ -8,4 +8,7 @@ prefs = JSONConfig(PREFS_NAMESPACE)
 prefs.defaults = {
     'setup_complete': False,
     'last_jsonl_path': '',
+    'simplify_tags': True,
+    'ao3kit_project': '',
+    'ao3kit_python': '',
 }

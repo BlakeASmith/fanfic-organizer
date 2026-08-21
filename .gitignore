@@ -1,0 +1,29 @@
+# Local secrets — never commit
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local scrape / download artifacts
+results*.jsonl
+*-epubs/
+ao3-import.zip
+.cache/
+.ao3kit/

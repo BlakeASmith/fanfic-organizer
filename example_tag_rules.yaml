@@ -1,0 +1,35 @@
+# Optional YAML wiring for simple cases.
+# Prefer example_tag_rules.py for real / custom logic.
+#
+# Each rule needs ``use:`` — a registry alias (keep_separate, collect, map_to,
+# drop, match) or an import path ``module:Class``.
+
+version: 1
+resolve_canonical: true
+drop_unmarked: false
+
+rules:
+  - use: keep_separate
+    id: keep-jegulus
+    priority: 100
+    tags_ci: [Jegulus]
+    collections: [Jegulus]
+    stop: true
+
+  - use: map_to
+    id: melody-pond-to-river
+    priority: 80
+    map_to: River Song
+    tags_ci: ["Melody Pond"]
+    collections: [River Song]
+
+  - use: collect
+    id: river-song-collection
+    priority: 50
+    collections: [River Song]
+    contains_ci: ["River Song"]
+    canonical_ci: ["River Song"]
+
+  # Code rule from a module (same class as in example_tag_rules.py):
+  # - use: example_tag_rules:RiverSongCollection
+  #   priority: 50

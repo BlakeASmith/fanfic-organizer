@@ -2,12 +2,12 @@
 
 from calibre.customize import InterfaceActionBase
 
-__version__ = (0, 1, 0)
+__version__ = (0, 3, 1)
 
 
 class AO3ScraperBase(InterfaceActionBase):
     name = 'AO3 Scraper'
-    description = 'Import AO3 JSONL metadata into Calibre.'
+    description = 'Import AO3 JSONL metadata and native EPUB files into Calibre.'
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Emily'
     version = __version__

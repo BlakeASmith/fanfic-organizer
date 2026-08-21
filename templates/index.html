@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AO3 Scraper</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -38,14 +40,25 @@
     input[type="url"],
     input[type="number"],
     input[type="password"],
-    select,
-    textarea {
+    select {
       width: 100%;
       padding: 0.4rem 0.5rem;
       border: 1px solid #aaa;
       font: inherit;
     }
-    textarea { min-height: 4rem; font-family: monospace; font-size: 0.85rem; }
+    .jsonl-output {
+      width: 100%;
+      min-height: 12rem;
+      max-height: 24rem;
+      overflow: auto;
+      padding: 0.5rem;
+      border: 1px solid #aaa;
+      background: #fff;
+      font-family: monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -65,12 +78,6 @@
       margin-top: 0.5rem;
     }
     button:hover { background: #5a0018; }
-    .error {
-      background: #fde8ec;
-      border: 1px solid #eb6f92;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-    }
     .summary {
       background: #eef6f9;
       border: 1px solid #3e8fb0;
@@ -106,7 +113,6 @@
     .incomplete { color: #a04000; }
     .complete { color: #2d6a4f; }
     a { color: #7b0022; }
-    #json-output { margin-top: 1rem; }
     #results-section { display: none; margin-top: 1.5rem; }
     #results-section.visible { display: block; }
     #status-panel {
@@ -125,88 +131,83 @@
       background: #eef6f9;
       border-color: #3e8fb0;
     }
-    button:disabled { opacity: 0.6; cursor: wait; }
+    button:disabled, button.htmx-request {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .copy-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 0.75rem 0;
+    }
+    .copy-btn {
+      background: #3e8fb0;
+      margin-top: 0;
+    }
+    .copy-btn:hover:not(:disabled) { background: #2f7391; }
+    .copy-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .zip-btn {
+      background: #7b0022;
+      margin-top: 0;
+    }
+    .zip-btn:hover:not(:disabled) { background: #5a0018; }
+    .zip-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .delay-inline {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.9rem;
+      margin: 0;
+    }
+    .delay-inline input { width: 4.5rem; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline; }
   </style>
 </head>
-<body>
+<body hx-ext="sse">
+  <nav style="margin-bottom:1rem;font-size:0.95rem">
+    <a href="/" style="color:#7b0022;margin-right:1rem">Scraper</a>
+    <a href="/settings" style="color:#7b0022">Settings</a>
+  </nav>
   <h1>AO3 Search Scraper</h1>
 
   <div id="status-panel"></div>
 
-  <form id="scrape-form" method="post" action="/scrape/stream">
+  <form
+    id="scrape-form"
+    hx-post="/scrape/start"
+    hx-target="#scrape-live"
+    hx-swap="innerHTML"
+    hx-on:htmx:before-request="document.getElementById('submit-btn').disabled = true"
+    hx-on:htmx:after-request="document.getElementById('submit-btn').disabled = false"
+  >
     <input type="hidden" id="use_form_criteria" name="use_form_criteria" value="0">
+
     <fieldset>
       <legend>Search source</legend>
       <label for="url">AO3 search URL</label>
-      <input type="url" id="url" name="url" value="{{ form.url }}" placeholder="https://archiveofourown.org/works?...">
+      <input
+        type="url"
+        id="url"
+        name="url"
+        value="{{ form.url }}"
+        placeholder="https://archiveofourown.org/works?..."
+        hx-post="/parse-url/fill"
+        hx-trigger="input changed delay:400ms, paste"
+        hx-target="#search-criteria"
+        hx-swap="outerHTML"
+        hx-include="#use_form_criteria, #search-criteria"
+      >
       <p class="hint">Paste a URL to auto-fill empty fields below. Edit any field to use the form as the source of truth instead.</p>
     </fieldset>
 
-    <fieldset>
-      <legend>Search criteria</legend>
-      <div class="row">
-        <div>
-          <label for="tag_id">Fandom / tag</label>
-          <input type="text" id="tag_id" name="tag_id" class="criteria-field" value="{{ form.tag_id }}" placeholder="Harry Potter - J. K. Rowling">
-        </div>
-        <div>
-          <label for="sort_column">Sort by</label>
-          <select id="sort_column" name="sort_column" class="criteria-field">
-            {% for col, label in sort_options %}
-            <option value="{{ col }}" {% if form.sort_column == col %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label for="complete">Complete works (AO3 filter)</label>
-          <select id="complete" name="complete" class="criteria-field">
-            <option value="" {% if form.complete == '' %}selected{% endif %}>Any</option>
-            <option value="true" {% if form.complete == 'true' %}selected{% endif %}>Complete only</option>
-            <option value="false" {% if form.complete == 'false' %}selected{% endif %}>In progress only</option>
-          </select>
-        </div>
-        <div>
-          <label for="language_id">Language</label>
-          <input type="text" id="language_id" name="language_id" class="criteria-field" value="{{ form.language_id }}">
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label for="words_from">Words from</label>
-          <input type="number" id="words_from" name="words_from" class="criteria-field" value="{{ form.words_from }}" min="0">
-        </div>
-        <div>
-          <label for="words_to">Words to</label>
-          <input type="number" id="words_to" name="words_to" class="criteria-field" value="{{ form.words_to }}" min="0">
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label for="date_from">Date from</label>
-          <input type="text" id="date_from" name="date_from" class="criteria-field" value="{{ form.date_from }}" placeholder="YYYY-MM-DD">
-        </div>
-        <div>
-          <label for="date_to">Date to</label>
-          <input type="text" id="date_to" name="date_to" class="criteria-field" value="{{ form.date_to }}" placeholder="YYYY-MM-DD">
-        </div>
-      </div>
-      <label for="query">Search query</label>
-      <input type="text" id="query" name="query" class="criteria-field" value="{{ form.query }}">
-      <div class="row">
-        <div>
-          <label for="relationship_ids">Relationship IDs (comma-separated)</label>
-          <input type="text" id="relationship_ids" name="relationship_ids" class="criteria-field" value="{{ form.relationship_ids }}" placeholder="1110">
-        </div>
-        <div>
-          <label for="freeform_ids">Freeform tag IDs (comma-separated)</label>
-          <input type="text" id="freeform_ids" name="freeform_ids" class="criteria-field" value="{{ form.freeform_ids }}" placeholder="27594097">
-        </div>
-      </div>
-      <label for="character_ids">Character IDs (comma-separated)</label>
-      <input type="text" id="character_ids" name="character_ids" class="criteria-field" value="{{ form.character_ids }}">
-    </fieldset>
+    <div
+      hx-on:input="if (event.target.classList.contains('criteria-field')) document.getElementById('use_form_criteria').value='1'"
+      hx-on:change="if (event.target.classList.contains('criteria-field')) document.getElementById('use_form_criteria').value='1'"
+    >
+      {% include "partials/search_criteria.html" %}
+    </div>
 
     <fieldset>
       <legend>Result filters</legend>
@@ -224,7 +225,7 @@
         <div>
           <label for="min_score">Min quality score</label>
           <input type="number" id="min_score" name="min_score" value="{{ form.min_score }}" step="0.1" placeholder="none">
-          <p class="hint">Normalized 0–100 by default (40=yellow, 60=green)</p>
+          <p class="hint">Raw score (8=yellow, 14=green)</p>
         </div>
         <div>
           <label for="min_kudos">Min kudos</label>
@@ -237,32 +238,15 @@
           <input type="number" id="min_words" name="min_words" value="{{ form.min_words }}" min="0">
         </div>
         <div>
-          <label for="delay">Delay between pages (seconds)</label>
+          <label for="delay">Min seconds between AO3 requests</label>
           <input type="number" id="delay" name="delay" value="{{ form.delay }}" min="0" step="0.1">
+          <p class="hint">App-wide (scrape + EPUB). Floor is 5s, or robots.txt crawl-delay if larger. Search and /downloads/ wait at least 8s.</p>
         </div>
       </div>
       <label class="checkbox">
         <input type="checkbox" name="complete_only" value="1" {% if form.complete_only %}checked{% endif %}>
         Only include works with all chapters posted (7/7, not 7/? or 7/10)
       </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Quality score settings</legend>
-      <label class="checkbox">
-        <input type="checkbox" name="no_normalize" value="1" {% if form.no_normalize %}checked{% endif %}>
-        Use raw score (don't normalize to 100%)
-      </label>
-      <div class="row">
-        <div>
-          <label for="max_raw_score">Max raw score (= 100% when normalizing)</label>
-          <input type="number" id="max_raw_score" name="max_raw_score" value="{{ form.max_raw_score }}" step="0.1">
-        </div>
-        <div>
-          <label for="min_kudos_for_score">Min kudos to compute score</label>
-          <input type="number" id="min_kudos_for_score" name="min_kudos_for_score" value="{{ form.min_kudos_for_score }}" min="0">
-        </div>
-      </div>
     </fieldset>
 
     <fieldset>
@@ -277,255 +261,55 @@
           <input type="password" id="password" name="password" autocomplete="current-password">
         </div>
       </div>
-      <p class="hint">Leave blank for anonymous access. Env vars AO3_USERNAME / AO3_PASSWORD are used if set.</p>
+      <p class="hint">Password can stay blank if set in local <code>.env</code> (AO3_USERNAME / AO3_PASSWORD). Leave both blank for anonymous access.</p>
     </fieldset>
 
-    <button type="submit" id="submit-btn">Run scrape</button>
+    <button type="submit" id="submit-btn">
+      Run scrape <span class="htmx-indicator">…</span>
+    </button>
   </form>
 
-  <div id="results-section">
-    <h2>Results (<span id="result-count">0</span> works)</h2>
-    <div class="summary" id="results-summary"></div>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Score</th>
-          <th>Title</th>
-          <th>Author</th>
-          <th>Chapters</th>
-          <th>Words</th>
-          <th>Kudos</th>
-          <th>Hits</th>
-        </tr>
-      </thead>
-      <tbody id="results-body"></tbody>
-    </table>
-
-    <h2 id="json-output">JSONL output</h2>
-    <textarea id="jsonl-output" readonly rows="12"></textarea>
-  </div>
+  <div id="scrape-live"></div>
 
   <script>
-    const form = document.getElementById("scrape-form");
-    const urlInput = document.getElementById("url");
-    const useFormCriteriaInput = document.getElementById("use_form_criteria");
-    const submitBtn = document.getElementById("submit-btn");
-    const statusPanel = document.getElementById("status-panel");
-    const resultsSection = document.getElementById("results-section");
-    const resultsBody = document.getElementById("results-body");
-    const resultCount = document.getElementById("result-count");
-    const resultsSummary = document.getElementById("results-summary");
-    const jsonlOutput = document.getElementById("jsonl-output");
+    function updateCopyButtons() {
+      const copyLinksBtn = document.getElementById("copy-links-btn");
+      const copyDataBtn = document.getElementById("copy-data-btn");
+      const downloadZipBtn = document.getElementById("download-zip-btn");
+      if (!copyLinksBtn || !copyDataBtn) return;
 
-    const FIELD_DEFAULTS = {
-      sort_column: "kudos_count",
-      language_id: "en",
-      start_page: "1",
-      complete: "",
-    };
+      const links = [...document.querySelectorAll("#results-body a[href*='/works/']")]
+        .map((a) => a.href);
+      const jsonl = document.getElementById("jsonl-output")?.textContent || "";
 
-    const userEditedFields = new Set();
-    const autoFilledValues = {};
-    let urlParseTimer = null;
-
-    function markManualCriteria(name) {
-      userEditedFields.add(name);
-      useFormCriteriaInput.value = "1";
+      copyLinksBtn.disabled = links.length === 0;
+      copyDataBtn.disabled = !jsonl.trim();
+      if (downloadZipBtn) downloadZipBtn.disabled = !jsonl.trim();
+      copyLinksBtn.onclick = () => copyText(links.join("\n"), copyLinksBtn);
+      copyDataBtn.onclick = () => copyText(jsonl, copyDataBtn);
     }
 
-    function fieldValue(name) {
-      const el = form.elements[name];
-      if (!el) return "";
-      return String(el.value).trim();
-    }
-
-    function isUnfilled(name) {
-      const value = fieldValue(name);
-      if (value === "") return true;
-      if (Object.prototype.hasOwnProperty.call(FIELD_DEFAULTS, name)) {
-        return value === FIELD_DEFAULTS[name];
-      }
-      return false;
-    }
-
-    function shouldFillFromUrl(name) {
-      if (userEditedFields.has(name)) return false;
-      const current = fieldValue(name);
-      if (isUnfilled(name)) return true;
-      return Object.prototype.hasOwnProperty.call(autoFilledValues, name)
-        && autoFilledValues[name] === current;
-    }
-
-    function applyParsedUrl(fields) {
-      let filled = 0;
-      for (const [name, value] of Object.entries(fields)) {
-        if (!form.elements[name] || !shouldFillFromUrl(name)) continue;
-        form.elements[name].value = value;
-        autoFilledValues[name] = value;
-        filled += 1;
-      }
-      if (filled > 0 && userEditedFields.size === 0) {
-        useFormCriteriaInput.value = "0";
-      }
-      return filled;
-    }
-
-    async function parseUrlIntoForm() {
-      const url = urlInput.value.trim();
-      if (!url) {
-        userEditedFields.clear();
-        Object.keys(autoFilledValues).forEach((key) => delete autoFilledValues[key]);
-        useFormCriteriaInput.value = "0";
-        return;
-      }
-
-      const body = new FormData();
-      body.append("url", url);
-
+    async function copyText(text, button) {
+      if (!text.trim()) return;
       try {
-        const response = await fetch("/parse-url", { method: "POST", body });
-        const data = await response.json();
-        if (!response.ok) {
-          setStatus(data.error || "Could not parse URL", "error");
-          return;
-        }
-        const filled = applyParsedUrl(data);
-        if (filled > 0) {
-          setStatus(`Filled ${filled} field(s) from URL.`, "done");
-        }
-      } catch (err) {
-        setStatus(err.message || String(err), "error");
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        helper.style.position = "fixed";
+        helper.style.left = "-9999px";
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        document.body.removeChild(helper);
       }
+      const original = button.textContent;
+      button.textContent = "Copied!";
+      setTimeout(() => { button.textContent = original; }, 1500);
     }
 
-    urlInput.addEventListener("input", () => {
-      clearTimeout(urlParseTimer);
-      urlParseTimer = setTimeout(parseUrlIntoForm, 400);
-    });
-
-    document.querySelectorAll(".criteria-field").forEach((el) => {
-      el.addEventListener("input", () => markManualCriteria(el.name));
-      el.addEventListener("change", () => markManualCriteria(el.name));
-    });
-
-    function setStatus(message, kind) {
-      statusPanel.textContent = message;
-      statusPanel.className = "visible" + (kind ? " " + kind : "");
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement("div");
-      div.textContent = text ?? "";
-      return div.innerHTML;
-    }
-
-    function appendWorkRow(row) {
-      const tr = document.createElement("tr");
-      const scoreHtml = row.score_class
-        ? `<span class="score score-${row.score_class}">${escapeHtml(String(row.quality_score))}</span>`
-        : `<span class="score score-none">—</span>`;
-      const chapterClass = row.chapters_complete
-        ? "complete"
-        : row.chapters_display
-          ? "incomplete"
-          : "";
-      tr.innerHTML = `
-        <td>${scoreHtml}</td>
-        <td><a href="${escapeHtml(row.url)}" target="_blank" rel="noopener">${escapeHtml(row.title)}</a></td>
-        <td>${escapeHtml(row.author || "—")}</td>
-        <td class="${chapterClass}">${escapeHtml(row.chapters_display || "—")}</td>
-        <td>${escapeHtml(row.words_fmt)}</td>
-        <td>${escapeHtml(row.kudos_fmt)}</td>
-        <td>${escapeHtml(row.hits_fmt)}</td>
-      `;
-      resultsBody.appendChild(tr);
-    }
-
-    function handleEvent(event) {
-      if (event.type === "start") {
-        resultsSection.classList.add("visible");
-        resultsBody.innerHTML = "";
-        jsonlOutput.value = "";
-        resultCount.textContent = "0";
-        resultsSummary.innerHTML = event.search_url
-          ? `Search URL: <a href="${escapeHtml(event.search_url)}" target="_blank" rel="noopener">${escapeHtml(event.search_url)}</a>`
-          : "";
-        setStatus(event.message || "Starting…");
-      } else if (event.type === "status") {
-        setStatus(event.message);
-      } else if (event.type === "page") {
-        const total = event.total_results != null ? event.total_results : "?";
-        setStatus(
-          `Page ${event.page}: fetched ${event.works_on_page} works (${total} total on AO3), ${event.matched_so_far} matched so far…`
-        );
-      } else if (event.type === "work") {
-        appendWorkRow(event.row);
-        resultCount.textContent = String(resultsBody.rows.length);
-        jsonlOutput.value += (jsonlOutput.value ? "\n" : "") + event.jsonl;
-        jsonlOutput.scrollTop = jsonlOutput.scrollHeight;
-      } else if (event.type === "done") {
-        setStatus(`Done — ${event.count} work(s) matched.`, "done");
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Run scrape";
-      } else if (event.type === "error") {
-        setStatus(event.message, "error");
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Run scrape";
-      }
-    }
-
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Scraping…";
-      setStatus("Connecting…");
-
-      try {
-        const response = await fetch("/scrape/stream", {
-          method: "POST",
-          body: new FormData(form),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server returned ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() || "";
-
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line.startsWith("data: ")) continue;
-            try {
-              handleEvent(JSON.parse(line.slice(6)));
-            } catch (err) {
-              console.error("Bad event:", line, err);
-            }
-          }
-        }
-
-        if (buffer.trim()) {
-          const line = buffer.trim();
-          if (line.startsWith("data: ")) {
-            handleEvent(JSON.parse(line.slice(6)));
-          }
-        }
-      } catch (err) {
-        setStatus(err.message || String(err), "error");
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Run scrape";
-      }
-    });
+    document.body.addEventListener("htmx:oobAfterSwap", updateCopyButtons);
+    document.body.addEventListener("htmx:sseMessage", updateCopyButtons);
   </script>
 </body>
 </html>
