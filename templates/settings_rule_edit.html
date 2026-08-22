@@ -49,6 +49,12 @@
     .hint { font-size: 0.85rem; color: #666; }
     .path { font-family: monospace; font-size: 0.85rem; }
     .checkbox { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+    .deprecation {
+      background: #fde8ec;
+      border: 1px solid #eb6f92;
+      padding: 0.75rem 1rem;
+      margin: 0 0 1rem;
+    }
   </style>
 </head>
 <body>
@@ -56,6 +62,10 @@
     <a href="/">Scraper</a>
     <a href="/settings">Settings</a>
   </nav>
+  <p class="deprecation" role="status">
+    The web UI and REST API are <strong>deprecated</strong> and no longer updated.
+    Use the CLI (<code>python -m ao3kit</code>) or the Calibre plugin.
+  </p>
   <h1>Edit rule: {{ name }}.py</h1>
   <p class="hint path">{{ path }}</p>
 

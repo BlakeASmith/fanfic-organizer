@@ -1,47 +1,51 @@
 ---
-description: Keep web UI, REST API, CLI, and Calibre plugin in relative feature parity
+description: Keep CLI and Calibre plugin in relative feature parity; web UI and REST API are deprecated
 alwaysApply: true
 ---
 
-# Interface parity (CLI · Web · API · Plugin)
+# Interface parity (CLI · Plugin)
 
-ao3kit exposes the same core capabilities through four surfaces. When you change one, keep the others in **relative feature parity** — not identical UX, but the same user-facing abilities and shared data contracts.
+ao3kit’s supported surfaces are the **CLI** and the **Calibre plugin**. When you change one, keep the other in **relative feature parity** — not identical UX, but the same user-facing abilities and shared data contracts.
+
+The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecated and frozen**. Leave them in place; do not add features, endpoints, templates, or docs to keep them current.
 
 | Surface | Entry | Role |
 |---|---|---|
-| CLI | `python -m ao3kit …` | Scriptable full toolkit |
-| Web UI | `ao3kit.webapp` (`/`) | HTMX forms + SSE progress |
-| REST API | `ao3kit.api` (`/api/v1`) | JSON jobs + OpenAPI |
-| Calibre plugin | `calibre-plugin/` | Import JSONL/zip + cleaned metadata columns |
+| CLI | `python -m ao3kit …` | Scriptable full toolkit (supported) |
+| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via `python -m ao3kit` subprocess + import JSONL/zip + background tag cache + tag graph + fanfic layout columns (Fandom, Relationships, Collections, Original Tags, word count) + built-in Series |
+| Web UI (deprecated) | `ao3kit.webapp` (`/`) | Frozen HTMX forms + SSE; `python -m ao3kit serve` |
+| REST API (deprecated) | `ao3kit.api` (`/api/v1`) | Frozen JSON jobs + OpenAPI |
 
 ## Shared core first
 
-- Put behavior in library modules (`scrape`, `tags`, `epubs`, `config`, `http`, `rate`) — not only in one UI.
+- Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `config`, `http`, `rate`) — not only in one UI.
 - Surfaces should call those modules; avoid copy-pasted scrape/tag/download logic.
-- Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI, API, web download, and the plugin.
-- **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). Every interface must go through `ao3kit.http` (or `wait_for_request`) so CLI, web, API, and plugin enrich share one limiter. Do not add per-interface sleeps or separate request paths that bypass it.
+- Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI and the plugin.
+- **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). CLI, plugin, and the frozen web/API paths must go through `ao3kit.http` (or `wait_for_request`). Do not add per-interface sleeps or separate request paths that bypass it.
 
 ## When adding or changing a feature
 
 1. Implement (or extend) the **library** API.
-2. Expose it on every surface that reasonably applies:
+2. Expose it on the supported surfaces that reasonably apply:
    - **CLI** subcommand/flags
-   - **REST** JSON endpoint (and job pattern if long-running)
-   - **Web UI** control + progress if users need it interactively
-   - **Plugin** only when the feature affects import, columns, enrich-on-import, or bundle layout
-3. Update **AGENTS.md** / **README** endpoint or CLI examples if the public surface changed.
-4. Add **pytest** coverage at the library layer; surface tests where behavior diverges (API `TestClient`, etc.).
+   - **Plugin** when it is user-facing in Calibre (search/scrape/import, columns, enrich-on-import, bundle layout)
+3. Do **not** add matching web UI controls, REST endpoints, or OpenAPI/docs updates for new features.
+4. Update **AGENTS.md** / **README** CLI or plugin examples if the public supported surface changed.
+5. Add **pytest** coverage at the library layer; plugin/CLI tests where behavior diverges. Do not add new API/web tests unless you are fixing a bug in the frozen surfaces.
 
 ## Relative, not identical
 
-- OK: different UX (SSE HTML vs JSON poll vs CLI stdout).
-- OK: plugin stays import-focused and does not re-implement full AO3 search UI.
-- Not OK: scrape filter exists only in the web form; tag resolve only on CLI; enrich shape differs between API and plugin.
+- OK: CLI stdout vs Qt dialogs.
+- OK: plugin search UI is Qt and shells out to `python -m ao3kit scrape` (optional `--download`) / `download` / `tags enrich` / `tags collections` instead of importing `ao3kit` inside Calibre’s Python.
+- Not OK: a scrape filter or tag resolve path that exists on only one of CLI / plugin.
+- Not OK: plugin scraping AO3 with raw `requests` that bypass `ao3kit.http` / the host-wide limiter.
 - Not OK: changing JSONL/`cleaned` fields or zip layout without updating the plugin importer and docs.
+- Not OK: extending `ao3kit.webapp`, `ao3kit.api`, or `templates/` to match a new CLI/plugin feature.
 
 ## Checklist before finishing a feature PR/change
 
-- [ ] Core logic lives under `ao3kit/` (not only templates or `api.py` handlers)
-- [ ] CLI / API / web updated where the feature is user-facing
+- [ ] Core logic lives under `ao3kit/` (not only the plugin or a CLI wrapper)
+- [ ] CLI updated where the feature is user-facing
 - [ ] Plugin updated if import, metadata columns, or enrich path is affected
-- [ ] Docs mention the new capability on each relevant surface
+- [ ] Web UI / REST API left unchanged (unless fixing a critical bug in existing frozen behavior)
+- [ ] Docs mention the new capability on CLI and plugin, not as a new API/web feature

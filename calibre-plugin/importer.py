@@ -3,111 +3,242 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from calibre.ebooks.metadata import MetaInformation
 
 from calibre_plugins.ao3_scraper.cleaned import (
-    build_cleaned_payload,
-    cleaned_collection_names,
-    cleaned_tag_names,
+    book_matches_work,
+    calibre_fields_for_record,
+    canonical_work_id,
+    canonical_work_url,
+    tags_for_calibre_library,
+    work_url,
 )
 from calibre_plugins.ao3_scraper.columns import (
-    CLEANED_METADATA_LABEL,
-    RAW_METADATA_LABEL,
+    custom_label_is_live,
+    layout_columns_present,
 )
 from calibre_plugins.ao3_scraper.jsonl_loader import resolve_epub_path
 
 
-def record_to_json(record: dict[str, Any]) -> str:
-    return json.dumps(record, ensure_ascii=False, indent=2)
-
-
-def cleaned_record_to_json(record: dict[str, Any]) -> str:
-    return json.dumps(build_cleaned_payload(record), ensure_ascii=False, indent=2)
-
-
-def _meta_value(record: dict[str, Any], key: str, default=None):
-    metadata = record.get('metadata') or {}
-    return metadata.get(key, default)
-
-
-def build_metadata(record: dict[str, Any]) -> MetaInformation:
-    work_id = str(record.get('work_id') or '')
+def build_metadata(
+    record: dict[str, Any],
+    *,
+    layout: dict[str, bool] | None = None,
+    existing_identifiers: dict[str, Any] | None = None,
+    existing_comments: str | None = None,
+) -> MetaInformation:
+    fields = calibre_fields_for_record(record)
+    work_id = fields['work_id']
     title = record.get('title') or f'AO3 work {work_id or "?"}'
     author = record.get('author')
     authors = [author] if author else ['Unknown']
 
     mi = MetaInformation(title, authors)
-    identifiers = {'url': record.get('url', '')}
-    if work_id:
-        identifiers['ao3'] = work_id
+    identifiers = dict(existing_identifiers or {})
+    identifiers.update(fields['identifiers'])
     mi.set_identifiers(identifiers)
 
-    tag_parts: list[str] = []
-    fandoms = record.get('fandoms')
-    if isinstance(fandoms, dict):
-        fandom_names = list(fandoms.get('simplified') or [])
-    else:
-        fandom_names = list(fandoms or [])
-    for fandom in fandom_names[:5]:
-        tag_parts.append(f'fandom:{fandom}')
+    if fields.get('series'):
+        mi.series = fields['series']
+        index = fields.get('series_index')
+        mi.series_index = float(index) if index is not None else 1.0
 
-    for collection in cleaned_collection_names(record)[:20]:
-        tag_parts.append(f'collection:{collection}')
+    present = layout or {}
+    mi.tags = tags_for_calibre_library(
+        record,
+        has_fandom_column=bool(present.get('fandom')),
+        has_relationships_column=bool(present.get('relationships')),
+        has_collections_column=bool(present.get('collections')),
+    )
 
-    quality_score = _meta_value(record, 'quality_score')
-    if quality_score is not None:
-        tag_parts.append(f'ao3-score:{quality_score}')
-
-    chapters = _meta_value(record, 'chapters') or {}
-    if chapters.get('is_complete'):
-        tag_parts.append('complete')
-
-    tags = cleaned_tag_names(record)
-    mi.tags = tag_parts + tags[:50]
-
-    summary_lines = [
-        f"URL: {record.get('url', '?')}",
-        f"Words: {_meta_value(record, 'words', '?')}",
-        f"Kudos: {_meta_value(record, 'kudos', '?')}",
-        f"Quality score: {quality_score if quality_score is not None else '?'}",
-    ]
-    if record.get('date'):
-        summary_lines.append(f"Date: {record['date']}")
-    collections = cleaned_collection_names(record)
-    if collections:
-        summary_lines.append('Collections: ' + ', '.join(collections))
-    mi.comments = '\n'.join(summary_lines)
+    # Leave Comments alone (AO3 summaries live there; scrape records have no summary).
+    if existing_comments:
+        mi.comments = existing_comments
     return mi
 
 
-def find_book_by_work_id(db, work_id: str) -> int | None:
-    work_id = str(work_id)
+def find_existing_book(db, record: dict[str, Any]) -> int | None:
+    work_id = canonical_work_id(record)
+    url = canonical_work_url(record)
     search = getattr(db, 'search_getting_ids', None)
+    queries: list[str] = []
+    if work_id:
+        queries.append(f'identifiers:ao3:{work_id}')
+        queries.append(f'identifiers:url:"{work_url(work_id)}"')
+        queries.append(
+            f'identifiers:url:"https://www.archiveofourown.org/works/{work_id}"'
+        )
+    if url:
+        queries.append(f'identifiers:url:"{url}"')
+
     if search is not None:
-        try:
-            ids = search(
-                f'identifiers:ao3:{work_id}',
-                None,
-                use_virtual_library=False,
-            )
+        for query in queries:
+            try:
+                ids = search(query, None, use_virtual_library=False)
+            except Exception:
+                continue
             if ids:
                 return ids[0]
-        except Exception:
-            pass
+
     for book_id in db.all_ids():
-        ids = db.get_identifiers(book_id, index_is_id=True)
-        if ids.get('ao3') == work_id:
+        ids = db.get_identifiers(book_id, index_is_id=True) or {}
+        if book_matches_work(ids, work_id=work_id, url=url):
             return book_id
     return None
+
+
+def find_book_by_work_id(db, work_id: str) -> int | None:
+    return find_existing_book(db, {'work_id': work_id})
 
 
 def add_epub_format(db, book_id: int, epub_path: Path) -> bool:
     db.add_format(book_id, 'EPUB', str(epub_path), index_is_id=True)
     return True
+
+
+def attach_downloaded_epubs(
+    db,
+    items: list[dict[str, Any]],
+    *,
+    bundle_root: str | Path | None,
+) -> list[dict[str, Any]]:
+    """Add downloaded EPUB files onto existing books. Does not rewrite metadata."""
+    outcomes: list[dict[str, Any]] = []
+    for item in items:
+        book_id = item['book_id']
+        record = item.get('record') or {}
+        title = record.get('title') or item.get('title')
+        if bundle_root is None:
+            outcomes.append(
+                {
+                    'book_id': book_id,
+                    'title': title,
+                    'action': 'failed',
+                    'reason': 'no download folder',
+                    'epub': False,
+                }
+            )
+            continue
+        epub_path = resolve_epub_path(record, bundle_root)
+        if epub_path is None:
+            outcomes.append(
+                {
+                    'book_id': book_id,
+                    'title': title,
+                    'action': 'failed',
+                    'reason': record.get('epub_error') or 'no EPUB file',
+                    'epub': False,
+                }
+            )
+            continue
+        add_epub_format(db, book_id, epub_path)
+        outcomes.append(
+            {
+                'book_id': book_id,
+                'title': title,
+                'action': 'added',
+                'epub': True,
+            }
+        )
+    return outcomes
+
+
+def set_book_tags(db, book_id: int, tags: list[str]) -> None:
+    """Replace the standard Tags field used by Calibre's tag browser."""
+    cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
+    api = getattr(db, 'new_api', None)
+    if api is not None and hasattr(api, 'set_field'):
+        api.set_field('tags', {int(book_id): cleaned})
+        return
+    setter = getattr(db, 'set_tags', None)
+    if setter is not None:
+        setter(book_id, cleaned, append=False)
+        commit = getattr(db, 'commit', None)
+        if callable(commit):
+            commit()
+        return
+    mi = db.get_metadata(book_id, index_is_id=True)
+    mi.tags = cleaned
+    try:
+        db.set_metadata(book_id, mi, force_changes=True)
+    except TypeError:
+        db.set_metadata(book_id, mi)
+
+
+def _set_custom(db, book_id: int, label: str, value: Any, *, commit: bool) -> bool:
+    """Write a custom column if it is live. Skip rather than KeyError."""
+    label = str(label).lstrip('#')
+    if not custom_label_is_live(db, label):
+        return False
+    lookup = f'#{label}'
+    api = getattr(db, 'new_api', None)
+    if api is not None and hasattr(api, 'set_field'):
+        api.set_field(lookup, {int(book_id): value})
+        return True
+    db.set_custom(book_id, value, label=label, commit=commit)
+    return True
+
+
+def write_layout_fields(db, book_id: int, record: dict[str, Any]) -> None:
+    """Write FanFicFare-style columns when they exist. Skip missing columns."""
+    fields = calibre_fields_for_record(record)
+    present = layout_columns_present(db)
+    cleaned = record.get('cleaned') if isinstance(record.get('cleaned'), dict) else {}
+
+    if present.get('fandom') and (
+        fields['fandoms'] or isinstance(cleaned.get('fandoms'), list)
+    ):
+        _set_custom(db, book_id, 'fandom', fields['fandoms'], commit=False)
+    if present.get('relationships') and (
+        fields['relationships'] or isinstance(cleaned.get('relationships'), list)
+    ):
+        _set_custom(
+            db, book_id, 'relationships', fields['relationships'], commit=False
+        )
+    if present.get('collections') and fields['collections']:
+        _set_custom(
+            db, book_id, 'collections', fields['collections'], commit=False
+        )
+    if present.get('wordcount') and fields['wordcount'] is not None:
+        _set_custom(db, book_id, 'wordcount', fields['wordcount'], commit=False)
+    if present.get('originaltags') and fields['original_tags']:
+        _set_custom(
+            db, book_id, 'originaltags', fields['original_tags'], commit=False
+        )
+
+    commit = getattr(db, 'commit', None)
+    if callable(commit):
+        commit()
+
+
+def write_collections_field(db, book_id: int, names: list[str]) -> bool:
+    """Replace the Collections column when it exists. Tags are left unchanged."""
+    present = layout_columns_present(db)
+    if not present.get('collections'):
+        return False
+    wrote = _set_custom(db, book_id, 'collections', list(names), commit=False)
+    commit = getattr(db, 'commit', None)
+    if callable(commit):
+        commit()
+    return wrote
+
+
+def refresh_library_ui(gui, book_ids: list[int] | None = None) -> None:
+    """Refresh the book list and tag browser after Tags field changes."""
+    model = gui.library_view.model()
+    if book_ids and hasattr(model, 'refresh_ids'):
+        try:
+            model.refresh_ids(list(book_ids))
+        except Exception:
+            model.refresh()
+    else:
+        model.refresh()
+    tags_view = getattr(gui, 'tags_view', None)
+    if tags_view is not None and hasattr(tags_view, 'recount'):
+        tags_view.recount()
 
 
 def import_record(
@@ -116,12 +247,10 @@ def import_record(
     *,
     update_existing: bool = True,
     bundle_root: str | Path | None = None,
+    skip_existing_epub: bool = False,
 ) -> dict[str, Any]:
-    work_id = str(record.get('work_id') or '')
-    raw_json = record_to_json(record)
-    cleaned_json = cleaned_record_to_json(record)
-    mi = build_metadata(record)
-    existing_id = find_book_by_work_id(db, work_id) if work_id else None
+    layout = layout_columns_present(db)
+    existing_id = find_existing_book(db, record)
 
     if existing_id is not None and not update_existing:
         return {
@@ -131,22 +260,51 @@ def import_record(
             'epub': False,
         }
 
+    existing_identifiers = None
+    existing_comments = None
+    if existing_id is not None:
+        try:
+            existing = db.get_metadata(existing_id, index_is_id=True)
+            existing_identifiers = existing.get_identifiers()
+            existing_comments = existing.comments
+        except Exception:
+            pass
+
+    mi = build_metadata(
+        record,
+        layout=layout,
+        existing_identifiers=existing_identifiers,
+        existing_comments=existing_comments,
+    )
+
     if existing_id is None:
         book_id = db.create_book_entry(mi, add_duplicates=True)
         action = 'added'
     else:
         book_id = existing_id
-        db.set_metadata(book_id, mi)
+        try:
+            db.set_metadata(book_id, mi, force_changes=True)
+        except TypeError:
+            db.set_metadata(book_id, mi)
         action = 'updated'
 
-    db.set_custom(book_id, raw_json, label=RAW_METADATA_LABEL, commit=False)
-    db.set_custom(book_id, cleaned_json, label=CLEANED_METADATA_LABEL, commit=True)
+    write_layout_fields(db, book_id, record)
+    set_book_tags(db, book_id, mi.tags)
 
     attached = False
     if bundle_root is not None:
-        epub_path = resolve_epub_path(record, bundle_root)
-        if epub_path is not None:
-            attached = add_epub_format(db, book_id, epub_path)
+        already_has_epub = False
+        if skip_existing_epub:
+            try:
+                already_has_epub = bool(
+                    db.has_format(book_id, 'EPUB', index_is_id=True)
+                )
+            except Exception:
+                already_has_epub = False
+        if not already_has_epub:
+            epub_path = resolve_epub_path(record, bundle_root)
+            if epub_path is not None:
+                attached = add_epub_format(db, book_id, epub_path)
 
     return {
         'book_id': book_id,
@@ -162,6 +320,7 @@ def import_records(
     *,
     update_existing: bool = True,
     bundle_root: str | Path | None = None,
+    skip_existing_epub: bool = False,
 ) -> list[dict[str, Any]]:
     return [
         import_record(
@@ -169,6 +328,7 @@ def import_records(
             record,
             update_existing=update_existing,
             bundle_root=bundle_root,
+            skip_existing_epub=skip_existing_epub,
         )
         for record in records
     ]

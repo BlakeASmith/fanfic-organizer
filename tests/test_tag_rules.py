@@ -7,6 +7,7 @@ from pathlib import Path
 from ao3kit.tags.metadata import ResolvedTag, TagResolver
 from ao3kit.tags.rules import (
     CollectRule,
+    DropRule,
     KeepSeparateRule,
     MapToRule,
     MatchSpec,
@@ -224,3 +225,101 @@ def test_match_spec_and_vs_any():
     assert and_spec.matches(synonym)
     assert not and_spec.matches(canonical)
     assert any_spec.matches(canonical)  # contains alone enough
+
+
+def _warmed_resolver(*profiles):
+    resolver = TagResolver(
+        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+    )
+    for profile in profiles:
+        resolver.warm(profile)
+    return resolver
+
+
+def _fandom_profile(name: str, *, metatags: list[str] | None = None, synonym_of: str | None = None):
+    from ao3kit.tags.metadata import TagProfile, TagRef
+
+    return TagProfile(
+        name=name,
+        url=f"https://archiveofourown.org/tags/{name}",
+        category="Fandom",
+        canonical=synonym_of is None,
+        filterable=True,
+        description="",
+        synonym_of=(
+            TagRef(name=synonym_of, url=f"https://archiveofourown.org/tags/{synonym_of}")
+            if synonym_of
+            else None
+        ),
+        metatags=[
+            TagRef(name=m, url=f"https://archiveofourown.org/tags/{m}")
+            for m in (metatags or [])
+        ],
+    )
+
+
+def test_engine_appends_metatags_after_original_tags():
+    resolver = _warmed_resolver(
+        _fandom_profile("Spider-Man - All Media Types", metatags=["Marvel"]),
+        _fandom_profile("Marvel"),
+        _fandom_profile("Fluff"),
+    )
+    result = TagRulesEngine(TagRulesConfig(), resolver).apply(
+        ["Spider-Man - All Media Types", "Fluff"]
+    )
+    assert result.simplified == [
+        "Spider-Man - All Media Types",
+        "Fluff",
+        "Marvel",
+    ]
+    spider = next(t for t in result.tags if t.original == "Spider-Man - All Media Types")
+    assert spider.metatags == ["Marvel"]
+    assert result.inserted_metatags == ["Marvel"]
+
+
+def test_engine_skips_metatags_when_source_tag_is_dropped():
+    resolver = _warmed_resolver(
+        _fandom_profile("Spider-Man - All Media Types", metatags=["Marvel"]),
+        _fandom_profile("Marvel"),
+    )
+    config = TagRulesConfig(
+        rules=[DropRule(id="drop-spider", tags=["Spider-Man - All Media Types"])]
+    )
+    result = TagRulesEngine(config, resolver).apply(["Spider-Man - All Media Types"])
+    assert result.simplified == []
+    assert result.inserted_metatags == []
+
+
+def test_engine_respects_include_metatags_false():
+    resolver = _warmed_resolver(
+        _fandom_profile("Spider-Man - All Media Types", metatags=["Marvel"]),
+        _fandom_profile("Marvel"),
+    )
+    result = TagRulesEngine(
+        TagRulesConfig(include_metatags=False), resolver
+    ).apply(["Spider-Man - All Media Types"])
+    assert result.simplified == ["Spider-Man - All Media Types"]
+    assert result.inserted_metatags == []
+
+
+def test_engine_skips_metatags_for_non_fandom_tags():
+    from ao3kit.tags.metadata import TagProfile, TagRef
+
+    resolver = _warmed_resolver(
+        TagProfile(
+            name="Amy Pond (Doctor Who)",
+            url="https://archiveofourown.org/tags/Amy Pond (Doctor Who)",
+            category="Character",
+            canonical=True,
+            filterable=True,
+            description="",
+            metatags=[
+                TagRef(name="Amy", url="https://archiveofourown.org/tags/Amy")
+            ],
+        )
+    )
+    result = TagRulesEngine(TagRulesConfig(), resolver).apply(
+        ["Amy Pond (Doctor Who)"]
+    )
+    assert result.simplified == ["Amy Pond (Doctor Who)"]
+    assert result.inserted_metatags == []

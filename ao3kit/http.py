@@ -13,12 +13,21 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from ao3kit.rate import (
+    TAG_DEFAULT_RETRY_AFTER,
     USER_AGENT,
     ensure_robots,
+    interval_for_url,
     note_request_pressure,
     note_request_success,
     note_retry_after,
+    record_request_event,
+    url_kind,
     wait_for_request,
+)
+from ao3kit.session_cache import (
+    clear_session_cache,
+    load_session_cookies,
+    persist_session,
 )
 
 # Load project-local `.env` once (gitignored secrets such as AO3 login).
@@ -28,6 +37,8 @@ load_dotenv(_PROJECT_ROOT / ".env")
 AO3_BASE = "https://archiveofourown.org"
 AO3_DOMAIN = "archiveofourown.org"
 AO3_LOGIN_URL = f"{AO3_BASE}/users/login"
+# Login page GET sometimes hangs until the default 60s timeout; retry sooner.
+LOGIN_REQUEST_TIMEOUT = 20.0
 
 DEFAULT_HEADERS = {
     "User-Agent": USER_AGENT,
@@ -134,6 +145,33 @@ def parse_retry_after(
     return max(wait, 1.0), True
 
 
+def _log_attempt(
+    *,
+    url: str,
+    method: str,
+    outcome: str,
+    wait_s: float,
+    interval_s: float,
+    elapsed_s: float,
+    attempt: int,
+    status: int | None = None,
+    retry_after_s: float | None = None,
+    retry_after_from_header: bool | None = None,
+) -> None:
+    record_request_event(
+        url=url,
+        method=method,
+        outcome=outcome,
+        wait_s=wait_s,
+        interval_s=interval_s,
+        elapsed_s=elapsed_s,
+        status=status,
+        retry_after_s=retry_after_s,
+        retry_after_from_header=retry_after_from_header,
+        attempt=attempt + 1,
+    )
+
+
 def request(
     session: requests.Session,
     method: str,
@@ -152,14 +190,16 @@ def request(
     if view_adult and AO3_DOMAIN in url.lower():
         url = with_view_adult(url)
 
-    ensure_robots()
+    on_status = on_status or getattr(session, "_ao3_on_status", None)
+    ensure_robots(on_status=on_status)
     attempt = 0
     timeouts = 0
-    on_status = on_status or getattr(session, "_ao3_on_status", None)
 
     while True:
-        wait_for_request(url, on_status=on_status)
+        interval = interval_for_url(url)
+        waited = wait_for_request(url, on_status=on_status)
         retry_delay = _retry_delay(attempt)
+        started = time.monotonic()
         try:
             response = session.request(
                 method,
@@ -169,7 +209,17 @@ def request(
                 stream=stream,
             )
         except requests.Timeout as exc:
+            elapsed = time.monotonic() - started
             timeouts += 1
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="timeout",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+            )
             if timeouts >= max_timeouts or attempt >= max_retries:
                 raise Ao3HttpError(
                     f"Timed out after {timeouts} attempt(s) fetching {url}"
@@ -179,6 +229,16 @@ def request(
             time.sleep(retry_delay)
             continue
         except requests.RequestException as exc:
+            elapsed = time.monotonic() - started
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="error",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+            )
             if attempt >= max_retries:
                 raise Ao3HttpError(f"Request failed for {url}: {exc}") from exc
             attempt += 1
@@ -186,13 +246,28 @@ def request(
             time.sleep(retry_delay)
             continue
 
+        elapsed = time.monotonic() - started
         timeouts = 0
 
         if response.status_code == 429:
             pause, from_header = parse_retry_after(
                 response.headers.get("Retry-After")
             )
-            note_retry_after(pause)
+            if not from_header and url_kind(url) == "tag":
+                pause = min(pause, TAG_DEFAULT_RETRY_AFTER)
+            note_retry_after(pause, url=url)
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="429",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+                status=429,
+                retry_after_s=pause,
+                retry_after_from_header=from_header,
+            )
             response.close()
             if attempt >= max_retries:
                 raise Ao3HttpError(
@@ -216,6 +291,16 @@ def request(
             continue
 
         if response.status_code in RETRY_STATUSES:
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="5xx",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+                status=response.status_code,
+            )
             if attempt >= max_retries:
                 response.raise_for_status()
             note_request_pressure(status_code=response.status_code)
@@ -228,6 +313,16 @@ def request(
             continue
 
         if is_cloudflare_response(response):
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="cloudflare",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+                status=response.status_code,
+            )
             if attempt >= max_retries:
                 raise CloudflareError(
                     "Cloudflare is blocking or challenging this connection. "
@@ -242,8 +337,31 @@ def request(
             time.sleep(retry_delay)
             continue
 
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except Exception:
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="error",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+                status=response.status_code,
+            )
+            raise
         note_request_success(url)
+        _log_attempt(
+            url=url,
+            method=method,
+            outcome="ok",
+            wait_s=waited,
+            interval_s=interval,
+            elapsed_s=elapsed,
+            attempt=attempt,
+            status=response.status_code,
+        )
         return response
 
 
@@ -252,11 +370,133 @@ def get(
     url: str,
     **kwargs: Any,
 ) -> requests.Response:
-    return request(session, "GET", url, **kwargs)
+    response = request(session, "GET", url, **kwargs)
+    if kwargs.get("stream"):
+        return response
+    if _should_refresh_login(session, url, response):
+        response.close()
+        session._ao3_logged_in = False  # type: ignore[attr-defined]
+        clear_session_cache()
+        _emit(
+            kwargs.get("on_status") or getattr(session, "_ao3_on_status", None),
+            "Saved AO3 session expired — logging in again…",
+        )
+        if ensure_logged_in(session, on_status=kwargs.get("on_status")):
+            return request(session, "GET", url, **kwargs)
+        return response
+    if is_session_logged_in(session) and _html_is_logged_in(response):
+        persist_session(session)
+    return response
 
 
-def get_text(session: requests.Session, url: str, **kwargs: Any) -> str:
-    return get(session, url, **kwargs).text
+def _response_html(response: requests.Response) -> str | None:
+    headers = getattr(response, "headers", None) or {}
+    content_type = str(headers.get("Content-Type") or "").lower()
+    if content_type and "html" not in content_type and not content_type.startswith("text/"):
+        return None
+    try:
+        text = response.text
+    except Exception:
+        return None
+    return text if text else None
+
+
+def _body_classes(html: str) -> list[str]:
+    soup = BeautifulSoup(html, "lxml")
+    body = soup.find("body")
+    if body is None:
+        return []
+    classes = body.get("class") or []
+    if isinstance(classes, str):
+        return classes.split()
+    return [str(item) for item in classes]
+
+
+def _html_is_logged_in(response: requests.Response) -> bool:
+    html = _response_html(response)
+    if html is None:
+        return False
+    return "logged-in" in _body_classes(html)
+
+
+def _should_refresh_login(
+    session: requests.Session, url: str, response: requests.Response
+) -> bool:
+    if not is_session_logged_in(session):
+        return False
+    if AO3_DOMAIN not in url.lower():
+        return False
+    if "/users/login" in urlparse(url).path:
+        return False
+    html = _response_html(response)
+    if html is None:
+        return False
+    if "logged-out" in _body_classes(html):
+        return True
+    return is_login_wall(html)
+
+
+def is_login_wall(html: str) -> bool:
+    """True when AO3 served the registered-users login interstitial."""
+    soup = BeautifulSoup(html, "lxml")
+    main = soup.find("div", id="main")
+    classes = main.get("class", []) if main else []
+    if "sessions-new" in classes:
+        return True
+    text = soup.get_text(" ", strip=True)
+    return "only available to registered users" in text.lower()
+
+
+def attach_credentials(
+    session: requests.Session, username: str, password: str
+) -> None:
+    """Remember AO3 credentials on the session for a later login."""
+    session._ao3_username = username  # type: ignore[attr-defined]
+    session._ao3_password = password  # type: ignore[attr-defined]
+
+
+def is_session_logged_in(session: requests.Session) -> bool:
+    return bool(getattr(session, "_ao3_logged_in", False))
+
+
+def ensure_logged_in(
+    session: requests.Session,
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    on_status: StatusCallback | None = None,
+) -> bool:
+    """Log in if credentials are available and the session is anonymous.
+
+    Returns True if the session is (now) logged in.
+    """
+    if is_session_logged_in(session):
+        return True
+    user = username or getattr(session, "_ao3_username", None)
+    pwd = password or getattr(session, "_ao3_password", None)
+    if user is not None:
+        user = str(user).strip() or None
+    if not user or not pwd:
+        return False
+    login_to_ao3(session, str(user), str(pwd), on_status=on_status)
+    return True
+
+
+def get_text(
+    session: requests.Session,
+    url: str,
+    *,
+    login_if_needed: bool = False,
+    **kwargs: Any,
+) -> str:
+    html = get(session, url, **kwargs).text
+    if (
+        login_if_needed
+        and is_login_wall(html)
+        and ensure_logged_in(session, on_status=kwargs.get("on_status"))
+    ):
+        html = get(session, url, **kwargs).text
+    return html
 
 
 def login_to_ao3(
@@ -270,7 +510,9 @@ def login_to_ao3(
     on_status = on_status or getattr(session, "_ao3_on_status", None)
     _emit(on_status, "Logging in to AO3…")
 
-    response = get(session, AO3_LOGIN_URL, on_status=on_status)
+    response = get(
+        session, AO3_LOGIN_URL, on_status=on_status, timeout=LOGIN_REQUEST_TIMEOUT
+    )
     soup = BeautifulSoup(response.text, "lxml")
     form = soup.find("form", id="new_user")
     if not form:
@@ -295,11 +537,15 @@ def login_to_ao3(
         AO3_LOGIN_URL,
         data=payload,
         on_status=on_status,
+        timeout=LOGIN_REQUEST_TIMEOUT,
     )
     soup = BeautifulSoup(response.text, "lxml")
     if soup.find("body", class_="logged-in") is None:
         raise LoginError("AO3 login failed: invalid username or password")
 
+    attach_credentials(session, username, password)
+    session._ao3_logged_in = True  # type: ignore[attr-defined]
+    persist_session(session)
     _emit(on_status, "Logged in to AO3")
 
 
@@ -309,14 +555,90 @@ def create_session(
     *,
     on_status: StatusCallback | None = None,
     headers: MutableMapping[str, str] | None = None,
+    login: bool = True,
+    use_session_cache: bool = True,
 ) -> requests.Session:
-    """Create a requests session, optionally logging in to AO3."""
+    """Create a requests session, optionally logging in to AO3.
+
+    Credentials are stored on the session when both are provided.
+    ``login=True`` (default) authenticates immediately — scrape and EPUB
+    download need this for restricted works. ``login=False`` stays anonymous
+    until a page returns a login wall (tag lookups), unless a saved session
+    for this username is restored.
+
+    ``use_session_cache`` reuses cookies from ``.ao3kit/ao3_session.json`` so
+    plugin/CLI subprocesses skip the login GET+POST. ``verify_login`` turns
+    this off so Test login always hits AO3.
+    """
     session = requests.Session()
     session.headers.update(headers or DEFAULT_HEADERS)
+    session._ao3_logged_in = False  # type: ignore[attr-defined]
     if on_status is not None:
         session._ao3_on_status = on_status  # type: ignore[attr-defined]
     if username and password:
-        login_to_ao3(session, username, password, on_status=on_status)
+        attach_credentials(session, username, password)
+        restored = False
+        if use_session_cache:
+            jar = load_session_cookies(username)
+            if jar is not None:
+                session.cookies.update(jar)
+                session._ao3_logged_in = True  # type: ignore[attr-defined]
+                restored = True
+                _emit(on_status, "Using saved AO3 session")
+        if login and not restored:
+            login_to_ao3(session, username, password, on_status=on_status)
     elif username or password:
         raise LoginError("Both username and password are required to log in to AO3")
     return session
+
+
+def verify_login(
+    username: str | None,
+    password: str | None,
+    *,
+    on_status: StatusCallback | None = None,
+) -> str:
+    """Attempt AO3 login and return the username on success.
+
+    Unlike ``create_session``, empty credentials are an error (anonymous
+    access is not treated as a successful login test).
+    """
+    user = (username or "").strip() or None
+    pwd = password or None
+    if pwd is not None and not str(pwd):
+        pwd = None
+    if not user or not pwd:
+        raise LoginError("Both username and password are required to log in to AO3")
+    session = create_session(
+        user, pwd, on_status=on_status, use_session_cache=False
+    )
+    session.close()
+    return user
+
+
+def login_main(argv: list[str] | None = None) -> int:
+    """CLI: ``python -m ao3kit login`` — verify AO3 credentials."""
+    import argparse
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(description="Test AO3 login credentials.")
+    parser.add_argument("--username", help="AO3 username (or set AO3_USERNAME)")
+    parser.add_argument("--password", help="AO3 password (or set AO3_PASSWORD)")
+    args = parser.parse_args(argv)
+    username = args.username or os.environ.get("AO3_USERNAME")
+    password = args.password or os.environ.get("AO3_PASSWORD")
+    try:
+        user = verify_login(
+            username,
+            password,
+            on_status=lambda msg: print(msg, file=sys.stderr),
+        )
+    except LoginError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Ao3HttpError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"AO3 login succeeded for {user}")
+    return 0

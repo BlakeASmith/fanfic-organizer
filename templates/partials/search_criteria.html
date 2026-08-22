@@ -50,6 +50,18 @@
   </div>
   <label for="query">Search query</label>
   <input type="text" id="query" name="query" class="criteria-field" value="{{ form.query }}">
+  <label for="creators">Creator / author</label>
+  <input type="text" id="creators" name="creators" class="criteria-field" value="{{ form.creators }}" placeholder="AO3 username">
+  <div class="row">
+    <div>
+      <label for="other_tag_names">Other tags (comma-separated names)</label>
+      <input type="text" id="other_tag_names" name="other_tag_names" class="criteria-field" value="{{ form.other_tag_names }}" placeholder="Slow Burn, Fluff">
+    </div>
+    <div>
+      <label for="excluded_tag_names">Excluded tags</label>
+      <input type="text" id="excluded_tag_names" name="excluded_tag_names" class="criteria-field" value="{{ form.excluded_tag_names }}">
+    </div>
+  </div>
   <div class="row">
     <div>
       <label for="relationship_ids">Relationship IDs (comma-separated)</label>

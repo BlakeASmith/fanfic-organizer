@@ -17,6 +17,7 @@ from ao3kit.tags.metadata import (
     parse_tag_sets_search_page,
     tag_url,
 )
+from ao3kit.tags.mappings import TagMapping, load_mappings, merge_mapping_rules
 from ao3kit.tags.rules import (
     TagRule,
     TagRulesConfig,
@@ -31,13 +32,16 @@ __all__ = [
     "TagProfile",
     "TagRef",
     "TagResolver",
+    "TagMapping",
     "TagRule",
     "TagRulesConfig",
     "TagRulesEngine",
     "TagSearchCriteria",
     "build_tag_search_url",
     "fetch_tag_profile",
+    "load_mappings",
     "load_tag_rules",
+    "merge_mapping_rules",
     "parse_tag_page",
     "parse_tag_search_page",
     "parse_tag_search_url",

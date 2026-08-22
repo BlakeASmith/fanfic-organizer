@@ -16,8 +16,8 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from ao3kit.http import AO3_BASE, Ao3HttpError, create_session, get
-from ao3kit.rate import configure_min_interval
+from ao3kit.http import AO3_BASE, Ao3HttpError, create_session, get, is_login_wall
+from ao3kit.rate import apply_request_delay
 
 EPUB_DIRNAME = "epubs"
 MANIFEST_NAME = "results.jsonl"
@@ -56,6 +56,67 @@ class DownloadReport:
     @property
     def failed(self) -> int:
         return sum(1 for item in self.outcomes if item.status == "failed")
+
+
+DOWNLOAD_STATUS_LABELS = {
+    "downloaded": "Downloaded",
+    "skipped": "Skipped",
+    "failed": "Failed",
+}
+
+DOWNLOAD_ERROR_LABELS = {
+    "no_epub": "no EPUB download link on the work page",
+    "locked": "restricted — log in to AO3 and retry",
+    "deleted": "not found (deleted or hidden)",
+    "hidden": "hidden or unrevealed",
+    "adult": "adult confirmation still required",
+    "not_epub": "AO3 did not return an EPUB file",
+    "http": "network error",
+    "missing_id": "missing work id and URL",
+}
+
+
+def format_download_work_label(record: dict[str, Any]) -> str:
+    title = str(record.get("title") or "").strip()
+    if title:
+        return title
+    work_id = str(record.get("work_id") or "").strip()
+    if work_id:
+        return f"AO3 work {work_id}"
+    return "unknown work"
+
+
+def format_download_outcome_line(
+    outcome: DownloadOutcome, index: int, total: int
+) -> str:
+    """Human status line for one EPUB download (no temp paths)."""
+    status = DOWNLOAD_STATUS_LABELS.get(outcome.status, str(outcome.status).capitalize())
+    name = format_download_work_label(outcome.record)
+    prefix = f"[{index}/{total}] {status} {name}"
+    if outcome.status == "failed":
+        code = outcome.error or "unknown error"
+        detail = DOWNLOAD_ERROR_LABELS.get(code, code)
+        return f"{prefix}: {detail}"
+    if outcome.status == "skipped":
+        return f"{prefix} (already on disk)"
+    return prefix
+
+
+def format_download_report_line(
+    report: DownloadReport, dest: str | Path | None = None
+) -> str:
+    """Summary of a download batch. Omits zero skipped/failed counts."""
+    n = report.downloaded
+    noun = "EPUB" if n == 1 else "EPUBs"
+    parts = [f"Downloaded {n} {noun}"]
+    if report.skipped:
+        parts.append(f"skipped {report.skipped}")
+    if report.failed:
+        parts.append(f"failed {report.failed}")
+    text = ", ".join(parts)
+    if dest is not None:
+        text += f" → {dest}"
+    return text
 
 
 def parse_jsonl_line(line: str, *, source: str, line_no: int) -> dict[str, Any]:
@@ -129,16 +190,6 @@ def parse_epub_download_href(html: str) -> str | None:
         if href and href != "#":
             return str(href)
     return None
-
-
-def is_login_wall(html: str) -> bool:
-    soup = BeautifulSoup(html, "lxml")
-    main = soup.find("div", id="main")
-    classes = main.get("class", []) if main else []
-    if "sessions-new" in classes:
-        return True
-    text = soup.get_text(" ", strip=True)
-    return "only available to registered users" in text.lower()
 
 
 def is_deleted(html: str) -> bool:
@@ -298,9 +349,11 @@ def download_record_epub(
 
 def write_manifest(records: list[dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    tmp.replace(path)
 
 
 def pack_import_zip(dest_dir: Path, zip_path: Path | None = None) -> Path:
@@ -324,7 +377,7 @@ def download_records(
     dest_dir: str | Path,
     session: requests.Session,
     *,
-    request_delay: float = 5.0,
+    request_delay: float | None = None,
     skip_existing: bool = True,
     make_zip: bool = True,
     zip_path: str | Path | None = None,
@@ -334,7 +387,7 @@ def download_records(
 ) -> DownloadReport:
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    configure_min_interval(request_delay)
+    apply_request_delay(request_delay)
     report = DownloadReport()
     total = len(records)
     manifest_path = dest / MANIFEST_NAME
@@ -366,7 +419,7 @@ def download_records(
 
     if simplify_tags and report.outcomes:
         if on_status:
-            on_status("Simplifying tags with user rules…")
+            on_status("Simplifying tags, fandoms, and relationships with user rules…")
         from ao3kit.tags.clean import enrich_records
 
         enriched = enrich_records(
@@ -388,11 +441,13 @@ def download_from_jsonl(
     dest_dir: str | Path,
     session: requests.Session,
     *,
-    request_delay: float = 5.0,
+    request_delay: float | None = None,
     skip_existing: bool = True,
     make_zip: bool = True,
     zip_path: str | Path | None = None,
     on_outcome: Callable[[DownloadOutcome, int, int], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
+    simplify_tags: bool = True,
 ) -> DownloadReport:
     return download_records(
         load_jsonl_records(jsonl_path),
@@ -403,6 +458,8 @@ def download_from_jsonl(
         make_zip=make_zip,
         zip_path=zip_path,
         on_outcome=on_outcome,
+        on_status=on_status,
+        simplify_tags=simplify_tags,
     )
 
 
@@ -429,8 +486,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--delay",
         type=float,
-        default=5.0,
-        help="Minimum seconds between AO3 requests (app-wide; download paths use a heavier floor)",
+        default=None,
+        help=(
+            "Seconds between AO3 requests (default: config request_delay, 1.5). "
+            "Tag profiles use a faster adaptive lane."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -440,6 +500,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--username", help="AO3 username (or set AO3_USERNAME)")
     parser.add_argument("--password", help="AO3 password (or set AO3_PASSWORD)")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--simplify",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run tag/fandom/relationship enrich after download (default: yes). Pass --no-simplify to skip.",
+    )
     args = parser.parse_args(argv)
 
     jsonl_path = Path(args.input)
@@ -460,14 +526,12 @@ def main(argv: list[str] | None = None) -> int:
     def on_outcome(outcome: DownloadOutcome, index: int, total: int) -> None:
         if not args.verbose:
             return
-        work_id = outcome.record.get("work_id") or "?"
-        title = outcome.record.get("title") or ""
-        extra = outcome.epub_file or outcome.error or ""
-        print(f"[{index}/{total}] {outcome.status} {work_id} {title} {extra}".rstrip(), file=sys.stderr)
+        print(format_download_outcome_line(outcome, index, total), file=sys.stderr)
 
     if args.verbose and username:
         print("Logged in to AO3", file=sys.stderr)
 
+    on_status = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
     report = download_from_jsonl(
         jsonl_path,
         dest_dir,
@@ -477,14 +541,19 @@ def main(argv: list[str] | None = None) -> int:
         make_zip=make_zip,
         zip_path=zip_path,
         on_outcome=on_outcome,
+        on_status=on_status,
+        simplify_tags=args.simplify,
     )
-    print(
-        f"Downloaded {report.downloaded}, skipped {report.skipped}, "
-        f"failed {report.failed} → {dest_dir}",
-        file=sys.stderr,
-    )
+    print(format_download_report_line(report, dest_dir), file=sys.stderr)
     if make_zip:
         print(f"Import zip: {zip_path or dest_dir / ZIP_NAME}", file=sys.stderr)
+    if args.simplify:
+        from ao3kit.tags.clean import emit_remapping_summary
+
+        emit_remapping_summary(
+            [item.record for item in report.outcomes],
+            lambda msg: print(msg, file=sys.stderr),
+        )
     return 1 if report.failed and not report.downloaded and not report.skipped else 0
 
 

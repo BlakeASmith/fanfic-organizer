@@ -5,17 +5,19 @@ AO3's robots.txt (User-agent: *) has no Crawl-delay, but disallows
 This tool still fetches work pages, user-requested search listings, and
 native EPUB files for personal library backup.
 
-All interfaces (CLI, web UI, REST API, Calibre→ao3kit subprocess) share one
+All interfaces (CLI, Calibre→ao3kit subprocess, and the frozen web UI / REST API) share one
 on-disk limiter (see ``ao3kit.rate_store``) so concurrent processes on the
 same host pace together:
 
 - adaptive spacing for light paths (tag profiles) — start fast, back off on pressure
-- longer gaps for paths robots.txt marks Disallow (search / downloads)
-- 429 / Cloudflare pressure raises the floor for every interface
+- a short dedicated interval for login (GET form + POST)
+- work, search, and EPUB downloads share config request_delay (default 1.5s)
+- 429 + Retry-After pause every interface for that cooldown (not a new cruise interval)
 """
 
 from __future__ import annotations
 
+import os
 import random
 import threading
 import time
@@ -26,6 +28,7 @@ from urllib.parse import urlparse
 
 from ao3kit.rate_store import (
     DEFAULT_RATE_DB_PATH,
+    RateEvent,
     RateSnapshot,
     SharedRateStore,
     default_rate_db_path,
@@ -38,13 +41,35 @@ ABSOLUTE_MIN_INTERVAL = 0.4
 # Tag profiles start here and adapt up/down based on AO3 responses.
 TAG_SOFT_INTERVAL = 0.5
 TAG_MAX_INTERVAL = 8.0
-# Search listings and /downloads/ — keep a wider gap.
-HEAVY_MIN_INTERVAL = 5.0
+# Tag 429 without Retry-After: brief pause; the tag lane already doubles.
+TAG_DEFAULT_RETRY_AFTER = 2.0
+# Login is two light requests; never inherit a leftover 429 wait.
+LOGIN_MIN_INTERVAL = 1.0
+LOGIN_MAX_WAIT = 2.0
+# Leftover next_allowed_at beyond this is treated as a stuck lock (crash /
+# cancelled wait), not a live Retry-After. Must stay above typical Cloudflare
+# headers (~2–3 min) so another process does not punch through the cooldown.
+STALE_LOCK_SECONDS = 360.0
+STALE_LOCK_WAIT = 15.0
 MAX_MIN_INTERVAL = 60.0
 JITTER = 0.08
-ROBOTS_TTL_SECONDS = 3600.0
+ROBOTS_TTL_SECONDS = 24 * 3600.0
 SUCCESS_STREAK_TO_SPEED_UP = 8
 USER_AGENT = "ao3-scraper/0.1 (+personal library backup; respects crawl-delay)"
+
+# AO3 User-agent: * (no Crawl-delay). Used when the on-disk cache is cold so a
+# new CLI/plugin process does not block on fetching robots.txt.
+DEFAULT_AO3_ROBOTS = """\
+User-agent: *
+Disallow: /works?
+Disallow: /autocomplete/
+Disallow: /downloads/
+Disallow: /external_works/
+Disallow: /bookmarks/search?
+Disallow: /people/search?
+Disallow: /tags/search?
+Disallow: /works/search?
+"""
 
 StatusCallback = Callable[[str], None]
 
@@ -59,6 +84,7 @@ class RateLimitState:
         self.robots_loaded_at = 0.0
         self.robots_text = ""
         self.skip_wait = False
+        self._robots_refreshing = False
 
     @property
     def crawl_delay(self) -> float | None:
@@ -202,6 +228,13 @@ def _floor(crawl_delay: float | None) -> float:
     return floor
 
 
+def apply_request_delay(requested: float | None = None) -> float:
+    """Set the shared work/search/download interval from config ``request_delay``."""
+    from ao3kit.config import resolve_request_delay
+
+    return configure_min_interval(resolve_request_delay(requested))
+
+
 def configure_min_interval(requested: float | None) -> float:
     """Set the shared host-wide general interval (tag lane keeps its own pace)."""
 
@@ -230,15 +263,23 @@ def current_tag_interval() -> float:
     return _STATE.store.read().tag_interval
 
 
-def note_retry_after(seconds: float) -> None:
-    """AO3 sent 429 — wait at least this long and raise the shared floor."""
+def note_retry_after(seconds: float, *, url: str | None = None) -> None:
+    """AO3 sent 429 — pause the whole host for ``seconds``.
+
+    Retry-After is a one-shot IP cooldown (often Cloudflare ~2–3 min). It must
+    block scrape, tags, and download together. It is not a new cruise interval:
+    ``base_interval`` stays put so a 178s header does not become a 60s floor.
+    ``url`` is the 429'd path (for callers/logs); the pause is per-IP, not
+    per-route. The tag lane still doubles its adaptive interval.
+    """
     pause = max(float(seconds), 1.0)
     now = time.time()
+    _ = url  # per-IP cooldown; path does not change the host pause
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
         return RateSnapshot(
             next_allowed_at=max(snap.next_allowed_at, now + pause),
-            base_interval=min(max(snap.base_interval * 1.5, pause), MAX_MIN_INTERVAL),
+            base_interval=snap.base_interval,
             tag_interval=min(max(snap.tag_interval * 2.0, 2.0), TAG_MAX_INTERVAL),
             success_streak=0,
             crawl_delay=snap.crawl_delay,
@@ -319,6 +360,272 @@ def _is_tag_profile_url(url: str) -> bool:
     return path != "/tags/search" and not path.startswith("/tags/search/")
 
 
+def _is_login_url(url: str) -> bool:
+    path = urlparse(url).path or "/"
+    return path.startswith("/users/login") or path.startswith("/users/sign_in")
+
+
+def url_kind(url: str) -> str:
+    """Coarse path class for the request log (query strings are not stored)."""
+    parsed = urlparse(url)
+    path = parsed.path or "/"
+    if _is_login_url(url):
+        return "login"
+    if path.startswith("/downloads/"):
+        return "download"
+    if _is_tag_profile_url(url):
+        return "tag"
+    if path_is_robots_disallow(url):
+        return "search"
+    if path.startswith("/works"):
+        return "work"
+    if path.startswith("/tags"):
+        return "tag"
+    return "other"
+
+
+def record_request_event(
+    *,
+    url: str,
+    method: str,
+    outcome: str,
+    wait_s: float = 0.0,
+    interval_s: float | None = None,
+    elapsed_s: float | None = None,
+    status: int | None = None,
+    retry_after_s: float | None = None,
+    retry_after_from_header: bool | None = None,
+    attempt: int = 1,
+) -> None:
+    """Append one AO3 attempt to the shared request log. Never raises."""
+    parsed = urlparse(url)
+    try:
+        snap = _STATE.store.read()
+    except Exception:
+        snap = None
+    event = RateEvent(
+        ts=time.time(),
+        kind=url_kind(url),
+        method=(method or "GET").upper(),
+        path=parsed.path or "/",
+        status=status,
+        outcome=outcome,
+        wait_s=float(wait_s),
+        interval_s=interval_s,
+        elapsed_s=elapsed_s,
+        retry_after_s=retry_after_s,
+        retry_after_from_header=retry_after_from_header,
+        attempt=int(attempt),
+        base_interval=None if snap is None else snap.base_interval,
+        tag_interval=None if snap is None else snap.tag_interval,
+        success_streak=None if snap is None else snap.success_streak,
+        pid=os.getpid(),
+    )
+    try:
+        _STATE.store.record_event(event)
+    except Exception:
+        return
+
+
+def rate_report(
+    *,
+    since_hours: float | None = None,
+    recent: int = 20,
+    hourly_hours: float = 48.0,
+) -> dict:
+    """Current limiter snapshot, request stats, and tuning analysis."""
+    snap = _STATE.store.read()
+    now = time.time()
+    since = None
+    if since_hours is not None:
+        since = now - max(float(since_hours), 0.0) * 3600.0
+    stats = _STATE.store.event_stats(since=since)
+    stats_24h = _STATE.store.event_stats(since=now - 24 * 3600)
+    stats_7d = _STATE.store.event_stats(since=now - 7 * 24 * 3600)
+    hourly_since = now - max(float(hourly_hours), 0.0) * 3600.0
+    hourly = _STATE.store.hourly_series(since=hourly_since)
+    db_path = str(_STATE.store.path) if _STATE.store.path else ":memory:"
+    return {
+        "db": db_path,
+        "snapshot": {
+            "base_interval": snap.base_interval,
+            "tag_interval": snap.tag_interval,
+            "success_streak": snap.success_streak,
+            "crawl_delay": snap.crawl_delay,
+            "next_allowed_in_s": round(max(0.0, snap.next_allowed_at - now), 3),
+        },
+        "retention": {
+            "raw_events_days": 30,
+            "hourly_days": 180,
+            "raw_event_cap": 50_000,
+        },
+        "window_hours": since_hours,
+        "stats": stats,
+        "windows": {"24h": stats_24h, "7d": stats_7d},
+        "interval_vs_429": _STATE.store.interval_outcome_table(
+            since=since if since is not None else now - 7 * 24 * 3600
+        ),
+        "hourly": hourly,
+        "hourly_totals": _hourly_totals(hourly),
+        "suggestions": rate_suggestions(snap, stats_24h),
+        "recent": [
+            event.to_dict()
+            for event in _STATE.store.recent_events(limit=recent, since=since)
+        ],
+    }
+
+
+def _hourly_totals(rows: list[dict]) -> list[dict]:
+    by_hour: dict[int, dict] = {}
+    for row in rows:
+        hour = int(row["hour_ts"])
+        bucket = by_hour.get(hour)
+        if bucket is None:
+            bucket = {
+                "hour_ts": hour,
+                "at": row["at"],
+                "requests": 0,
+                "ok": 0,
+                "429": 0,
+                "5xx": 0,
+                "cloudflare": 0,
+            }
+            by_hour[hour] = bucket
+        for key in ("requests", "ok", "429", "5xx", "cloudflare"):
+            bucket[key] += int(row.get(key) or 0)
+    totals = sorted(by_hour.values(), key=lambda item: item["hour_ts"], reverse=True)
+    for bucket in totals:
+        n = bucket["requests"]
+        bucket["429_rate"] = round((bucket["429"] / n) if n else 0.0, 4)
+    return totals
+
+
+def _lane_interval(kind: str, snap: RateSnapshot) -> float:
+    if kind == "tag":
+        return snap.tag_interval
+    if kind == "login":
+        return max(LOGIN_MIN_INTERVAL, snap.crawl_delay or 0.0)
+    return snap.base_interval
+
+
+def rate_suggestions(snap: RateSnapshot, stats_24h: dict) -> list[dict]:
+    """Human-readable hints for retuning lanes. Does not change intervals."""
+    hints: list[dict] = []
+    by_kind = stats_24h.get("by_kind") or {}
+    min_sample = 20
+    for kind in ("tag", "work", "search", "download"):
+        row = by_kind.get(kind)
+        current = _lane_interval(kind, snap)
+        if not row:
+            continue
+        n = int(row.get("requests") or 0)
+        n429 = int(row.get("429") or 0)
+        pressure = n429 + int(row.get("cloudflare") or 0) + int(row.get("5xx") or 0)
+        if n < min_sample:
+            if n429:
+                hints.append(
+                    {
+                        "kind": kind,
+                        "severity": "watch",
+                        "text": (
+                            f"{kind}: {n429} 429(s) in {n} request(s) at ~{current:.1f}s "
+                            "— too few samples to retune yet."
+                        ),
+                    }
+                )
+            continue
+        rate_429 = n429 / n
+        if rate_429 >= 0.05:
+            hints.append(
+                {
+                    "kind": kind,
+                    "severity": "raise",
+                    "text": (
+                        f"{kind}: {rate_429:.1%} 429 rate over {n} requests "
+                        f"(lane ~{current:.1f}s). Raise this interval before going faster."
+                    ),
+                }
+            )
+        elif pressure / n >= 0.05:
+            hints.append(
+                {
+                    "kind": kind,
+                    "severity": "watch",
+                    "text": (
+                        f"{kind}: {pressure} pressure responses "
+                        f"(429/5xx/Cloudflare) in {n} at ~{current:.1f}s."
+                    ),
+                }
+            )
+        elif n429 == 0 and int(row.get("cloudflare") or 0) == 0:
+            hints.append(
+                {
+                    "kind": kind,
+                    "severity": "ok",
+                    "text": (
+                        f"{kind}: 0 429s in {n} requests at ~{current:.1f}s. "
+                        "Current pace looks comfortable."
+                    ),
+                }
+            )
+    retry = stats_24h.get("retry_after") or {}
+    values = [
+        item
+        for item in (retry.get("values") or [])
+        if item.get("from_header") and item.get("seconds")
+    ]
+    if values:
+        top = values[0]
+        hints.append(
+            {
+                "kind": "retry_after",
+                "severity": "info",
+                "text": (
+                    f"AO3 sent Retry-After={float(top['seconds']):.0f}s on "
+                    f"{top['count']} 429(s) (60s is used when the header is missing)."
+                ),
+            }
+        )
+    if not hints:
+        hints.append(
+            {
+                "kind": "all",
+                "severity": "info",
+                "text": (
+                    "Not enough AO3 traffic yet. After scrape/download/tag enrich, "
+                    "hourly rollups and interval-vs-429 tables fill in."
+                ),
+            }
+        )
+    return hints
+
+
+def export_rate_log(
+    *,
+    hourly: bool = False,
+    since_hours: float | None = None,
+    since_days: float | None = None,
+) -> list[dict]:
+    """JSON-serializable rows for long-term analysis (events or hourly rollups)."""
+    now = time.time()
+    since = None
+    if since_hours is not None:
+        since = now - max(float(since_hours), 0.0) * 3600.0
+    elif since_days is not None:
+        since = now - max(float(since_days), 0.0) * 86400.0
+    if hourly:
+        return _STATE.store.hourly_series(since=since)
+    return _STATE.store.export_events(since=since)
+
+
+def clear_rate_events() -> int:
+    return _STATE.store.clear_events()
+
+
+def clear_rate_hourly() -> int:
+    return _STATE.store.clear_hourly()
+
+
 def interval_for_url(url: str) -> float:
     snap = _STATE.store.read()
     base = snap.base_interval
@@ -327,8 +634,8 @@ def interval_for_url(url: str) -> float:
     if crawl:
         base = max(base, crawl)
         tag = max(tag, crawl)
-    if path_is_robots_disallow(url):
-        return max(base, HEAVY_MIN_INTERVAL, crawl or 0.0)
+    if _is_login_url(url):
+        return max(LOGIN_MIN_INTERVAL, crawl or 0.0)
     if _is_tag_profile_url(url):
         return tag
     return base
@@ -344,36 +651,200 @@ def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> fl
         return 0.0
     interval = interval_for_url(url)
     jittered = interval * random.uniform(1.0 - JITTER, 1.0 + JITTER)
-    wait, _snap = _STATE.store.claim_slot(jittered)
+    leftover = max(0.0, _STATE.store.read().next_allowed_at - time.time())
+    max_wait: float | None = None
+    if _is_login_url(url) and leftover > LOGIN_MAX_WAIT:
+        max_wait = LOGIN_MAX_WAIT
+    elif leftover > STALE_LOCK_SECONDS:
+        max_wait = STALE_LOCK_WAIT
+        _emit(
+            on_status,
+            f"Stale AO3 rate lock ({leftover:.0f}s left from an earlier 429) — "
+            f"waiting {STALE_LOCK_WAIT:.0f}s instead…",
+        )
+    wait, _snap = _STATE.store.claim_slot(jittered, max_wait=max_wait)
     if wait > 0.05:
         _emit(on_status, f"Rate limit: waiting {wait:.1f}s before AO3 request…")
         time.sleep(wait)
     return wait
 
 
-def ensure_robots(*, fetcher: Callable[[], str] | None = None) -> None:
-    """Load robots.txt once (or after TTL). Fail open with defaults."""
+def _disk_robots_fresh(fetched_at: float) -> bool:
+    return (time.time() - fetched_at) < ROBOTS_TTL_SECONDS
+
+
+def _fetch_robots_text(fetcher: Callable[[], str] | None) -> str:
+    if fetcher is not None:
+        return fetcher()
+    import requests
+
+    response = requests.get(
+        ROBOTS_URL,
+        timeout=15,
+        headers={"User-Agent": USER_AGENT},
+    )
+    response.raise_for_status()
+    return response.text
+
+
+def _refresh_robots_in_background() -> None:
+    if _STATE.skip_wait or _STATE._robots_refreshing:
+        return
+    _STATE._robots_refreshing = True
+
+    def worker() -> None:
+        try:
+            text = _fetch_robots_text(None)
+            load_robots_text(text)
+            _STATE.store.write_robots(text, time.time())
+        except Exception:
+            pass
+        finally:
+            _STATE._robots_refreshing = False
+
+    threading.Thread(target=worker, daemon=True, name="ao3-robots-refresh").start()
+
+
+def ensure_robots(
+    *,
+    fetcher: Callable[[], str] | None = None,
+    on_status: StatusCallback | None = None,
+) -> None:
+    """Load robots.txt without blocking a scrape on the network.
+
+    Process memory and the host-wide rate DB cache are reused across CLI / web /
+    plugin subprocesses. A new process uses the disk cache or baked-in AO3
+    defaults immediately; a live fetch only runs in the background (or
+    synchronously when ``fetcher`` is passed, for tests).
+    """
     now = time.monotonic()
     with _STATE.lock:
         if _STATE.robots is not None and (now - _STATE.robots_loaded_at) < ROBOTS_TTL_SECONDS:
             return
-    try:
-        if fetcher is not None:
-            text = fetcher()
-        else:
-            import requests
 
-            response = requests.get(
-                ROBOTS_URL,
-                timeout=30,
-                headers={"User-Agent": USER_AGENT},
-            )
-            response.raise_for_status()
-            text = response.text
-        load_robots_text(text)
-    except Exception:
-        if _STATE.robots is None:
-            load_robots_text("User-agent: *\nDisallow:\n")
+    if fetcher is not None:
+        try:
+            text = _fetch_robots_text(fetcher)
+            load_robots_text(text)
+            _STATE.store.write_robots(text, time.time())
+        except Exception:
+            _emit(on_status, "Could not load robots.txt — using defaults.")
+            if _STATE.robots is None:
+                load_robots_text(DEFAULT_AO3_ROBOTS)
+        return
+
+    cached = _STATE.store.read_robots()
+    if cached is not None:
+        body, fetched_at = cached
+        load_robots_text(body)
+        if _disk_robots_fresh(fetched_at):
+            return
+        _refresh_robots_in_background()
+        return
+
+    load_robots_text(DEFAULT_AO3_ROBOTS)
+    _refresh_robots_in_background()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI: ``python -m ao3kit rate`` — snapshot, analysis, JSONL export."""
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="ao3kit rate",
+        description=(
+            "Host-wide AO3 rate-limit snapshot, request log, and hourly rollups "
+            "for tuning pacing over time."
+        ),
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["export"],
+        help="export — write JSONL (raw events or --hourly rollups)",
+    )
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=None,
+        help="Only rows in the last N hours (default: all retained)",
+    )
+    parser.add_argument(
+        "--days",
+        type=float,
+        default=None,
+        help="With export --hourly: only rollups in the last N days",
+    )
+    parser.add_argument(
+        "--recent",
+        type=int,
+        default=20,
+        help="How many recent raw events to include in the JSON report",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="With export: write JSONL to this path (default: stdout)",
+    )
+    parser.add_argument(
+        "--hourly",
+        action="store_true",
+        help="With export: write hourly rollups instead of raw events",
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Delete raw request events (keeps hourly rollups)",
+    )
+    parser.add_argument(
+        "--clear-hourly",
+        action="store_true",
+        help="Delete hourly rollups",
+    )
+    parser.add_argument(
+        "--clear-all",
+        action="store_true",
+        help="Delete raw events and hourly rollups (does not reset intervals)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.clear_all or args.clear or args.clear_hourly:
+        payload: dict[str, int] = {}
+        if args.clear_all or args.clear:
+            payload["cleared_events"] = clear_rate_events()
+        if args.clear_all or args.clear_hourly:
+            payload["cleared_hourly"] = clear_rate_hourly()
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    if args.command == "export":
+        rows = export_rate_log(
+            hourly=args.hourly,
+            since_hours=args.hours,
+            since_days=None if args.hours is not None else args.days,
+        )
+        handle = args.output.open("w", encoding="utf-8") if args.output else sys.stdout
+        try:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+        finally:
+            if args.output:
+                handle.close()
+        return 0
+
+    json.dump(
+        rate_report(since_hours=args.hours, recent=args.recent),
+        sys.stdout,
+        indent=2,
+        ensure_ascii=False,
+    )
+    sys.stdout.write("\n")
+    return 0
 
 
 # Re-exports for callers / docs.
@@ -381,23 +852,33 @@ __all__ = [
     "ABSOLUTE_MIN_INTERVAL",
     "DEFAULT_MIN_INTERVAL",
     "DEFAULT_RATE_DB_PATH",
-    "HEAVY_MIN_INTERVAL",
+    "LOGIN_MAX_WAIT",
+    "LOGIN_MIN_INTERVAL",
     "MAX_MIN_INTERVAL",
     "ROBOTS_URL",
+    "TAG_DEFAULT_RETRY_AFTER",
     "TAG_MAX_INTERVAL",
     "TAG_SOFT_INTERVAL",
     "USER_AGENT",
+    "clear_rate_events",
+    "clear_rate_hourly",
+    "apply_request_delay",
     "configure_min_interval",
     "current_tag_interval",
     "default_rate_db_path",
     "ensure_robots",
+    "export_rate_log",
     "interval_for_url",
     "load_robots_text",
     "note_request_pressure",
     "note_request_success",
     "note_retry_after",
     "path_is_robots_disallow",
+    "rate_report",
+    "rate_suggestions",
+    "record_request_event",
     "reset_rate_limit_state",
     "robots_loaded",
+    "url_kind",
     "wait_for_request",
 ]

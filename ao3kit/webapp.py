@@ -73,7 +73,7 @@ DEFAULT_FORM = {
     "min_score": "",
     "min_kudos": "",
     "min_words": "",
-    "delay": "5.0",
+    "delay": "1.5",
     "complete_only": False,
     "username": _ENV_USERNAME,
 }
@@ -398,7 +398,7 @@ def run_scrape_job(scrape_id: str, event_queue: queue.SimpleQueue[Any]) -> None:
             min_kudos=optional_int(str(form.get("min_kudos", ""))),
             min_words=optional_int(str(form.get("min_words", ""))),
             complete_only=bool(form.get("complete_only")),
-            request_delay=float(form.get("delay") or 5.0),
+            request_delay=float(form.get("delay") or 1.5),
             start_page=start_page_num,
             score_config=score_config,
             session=session,
@@ -503,7 +503,7 @@ def run_download_job(download_id: str, event_queue: queue.SimpleQueue[Any]) -> N
             records,
             dest,
             session,
-            request_delay=float(job.get("delay") or 5.0),
+            request_delay=float(job.get("delay") or 1.5),
             skip_existing=True,
             make_zip=True,
             zip_path=zip_path,
@@ -687,7 +687,7 @@ async def scrape_start(
     min_score: str = Form(""),
     min_kudos: str = Form(""),
     min_words: str = Form(""),
-    delay: str = Form("5.0"),
+    delay: str = Form("1.5"),
     complete_only: str | None = Form(None),
     username: str = Form(""),
     password: str = Form(""),
@@ -746,7 +746,7 @@ async def download_start(
     jsonl: str = Form(""),
     username: str = Form(""),
     password: str = Form(""),
-    epub_delay: str = Form("5.0"),
+    epub_delay: str = Form("1.5"),
 ) -> HTMLResponse:
     try:
         records = parse_jsonl_text(jsonl)
@@ -774,7 +774,7 @@ async def download_start(
             "jsonl": jsonl,
             "username": username,
             "password": password,
-            "delay": optional_float(epub_delay) or 5.0,
+            "delay": optional_float(epub_delay) or 1.5,
             "dest": str(dest),
             "zip_path": None,
         }
@@ -851,7 +851,7 @@ async def settings_page(request: Request) -> HTMLResponse:
 @app.post("/settings/config", response_class=HTMLResponse)
 async def settings_save_config(
     request: Request,
-    request_delay: str = Form("5.0"),
+    request_delay: str = Form("1.5"),
     active_rules: str = Form("rules/default.py"),
     notes: str = Form(""),
     resolve_canonical: str | None = Form(None),
@@ -1000,3 +1000,4 @@ async def settings_install_example(request: Request) -> HTMLResponse:
         "settings.html",
         _settings_context(request, message=message, error=error),
     )
+

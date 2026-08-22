@@ -21,6 +21,11 @@ Disallow: /works/search?
 
 
 @pytest.fixture(autouse=True)
+def isolate_ao3_session_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AO3KIT_SESSION_CACHE", "0")
+
+
+@pytest.fixture(autouse=True)
 def isolate_ao3_rate() -> None:
     ao3_rate.reset_rate_limit_state()
     ao3_rate.load_robots_text(AO3_ROBOTS_STAR)

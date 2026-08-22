@@ -5,13 +5,18 @@ Usage:
   python -m ao3kit tags ...
   python -m ao3kit download ...
   python -m ao3kit config ...
-  python -m ao3kit serve   # web UI + REST API (/api/v1, docs at /api/v1/docs)
+  python -m ao3kit login    # test AO3 username/password
+  python -m ao3kit rate     # limiter snapshot + AO3 request log
+  python -m ao3kit serve    # deprecated: frozen web UI + REST API
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import warnings
+
+from ao3kit import DEPRECATED_WEB_AND_API
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,17 +24,29 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="ao3kit",
-        description="AO3 scrape, tag wrangling, EPUB download, web UI, and REST API.",
+        description="AO3 scrape, tag wrangling, EPUB download, and Calibre plugin toolkit.",
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("scrape", help="Scrape AO3 search results to JSONL")
-    sub.add_parser("tags", help="Tag profiles, search, resolve, tag sets")
+    sub.add_parser(
+        "scrape",
+        help="Scrape AO3 search results to JSONL (optionally download EPUBs)",
+    )
+    sub.add_parser(
+        "tags",
+        help="Tag profiles, search, resolve, tag sets, graph, background cache",
+    )
     sub.add_parser("download", help="Download EPUBs from JSONL results")
     sub.add_parser("config", help="User settings and rule files (.ao3kit/)")
+    sub.add_parser("login", help="Test AO3 username and password")
+    sub.add_parser(
+        "rate",
+        help="Host-wide AO3 rate-limit snapshot and collected request log",
+    )
     serve_p = sub.add_parser(
         "serve",
-        help="Run the FastAPI web UI and REST API (/api/v1; docs at /api/v1/docs)",
+        help="Deprecated: frozen web UI and REST API (use CLI or Calibre plugin)",
+        description=DEPRECATED_WEB_AND_API,
     )
     serve_p.add_argument("--host", default="127.0.0.1")
     serve_p.add_argument("--port", type=int, default=8000)
@@ -66,8 +83,20 @@ def main(argv: list[str] | None = None) -> int:
 
         return config_main(rest)
 
+    if command == "login":
+        from ao3kit.http import login_main
+
+        return login_main(rest)
+
+    if command == "rate":
+        from ao3kit.rate import main as rate_main
+
+        return rate_main(rest)
+
     if command == "serve":
         serve_ns = serve_p.parse_args(rest)
+        print(f"warning: {DEPRECATED_WEB_AND_API}", file=sys.stderr)
+        warnings.warn(DEPRECATED_WEB_AND_API, DeprecationWarning, stacklevel=2)
         import uvicorn
 
         uvicorn.run(

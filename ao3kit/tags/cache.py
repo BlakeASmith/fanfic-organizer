@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal
 
 if TYPE_CHECKING:
     from ao3kit.tags.metadata import ResolveStatus, TagProfile
 
-TAG_CACHE_VERSION = 2
+TAG_CACHE_VERSION = 3
 DEFAULT_TAG_CACHE_TTL_DAYS = 90.0
 
 DEFAULT_TAG_CACHE_PATH = (
@@ -39,12 +40,49 @@ CREATE TABLE IF NOT EXISTS entries (
   status TEXT NOT NULL CHECK (status IN ('canonical', 'synonym', 'unmarked')),
   category TEXT,
   root TEXT NOT NULL,
-  fetched_at TEXT NOT NULL
+  fetched_at TEXT NOT NULL,
+  metatags TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_root ON entries(root);
 CREATE INDEX IF NOT EXISTS idx_entries_fetched_at ON entries(fetched_at);
 """
+
+_LOOKUP_CHUNK = 400
+
+
+@dataclass(frozen=True)
+class CacheRow:
+    """One tag-cache row (name → canonical, plus stored metatags)."""
+
+    name: str
+    canonical: str
+    status: str
+    category: str | None
+    metatags: list[str] | None
+
+
+def _parse_metatags_json(raw: Any) -> list[str] | None:
+    if raw is None:
+        return None
+    try:
+        names = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(names, list):
+        return None
+    return [str(item) for item in names if str(item).strip()]
+
+
+def _row_to_cache_row(row: sqlite3.Row) -> CacheRow:
+    category = row["category"]
+    return CacheRow(
+        name=str(row["name"]),
+        canonical=str(row["canonical"]),
+        status=str(row["status"]),
+        category=str(category) if category else None,
+        metatags=_parse_metatags_json(row["metatags"]),
+    )
 
 
 def _utc_now() -> datetime:
@@ -59,6 +97,30 @@ def _parse_iso(value: str) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _synonym_map_from_profile(profile: Any) -> dict[str, str]:
+    """Name → canonical map from a profile, without requiring TagProfile methods."""
+    method = getattr(profile, "synonym_map", None)
+    if callable(method):
+        mapping = method()
+        if isinstance(mapping, dict):
+            return {str(key): str(value) for key, value in mapping.items()}
+    synonym_of = getattr(profile, "synonym_of", None)
+    if synonym_of is not None:
+        canonical_name = str(getattr(synonym_of, "name", "") or synonym_of)
+    elif getattr(profile, "canonical", False):
+        canonical_name = str(getattr(profile, "name", "") or "")
+    else:
+        return {}
+    if not canonical_name:
+        return {}
+    mapping = {str(profile.name): canonical_name}
+    for syn in getattr(profile, "synonyms", None) or []:
+        syn_name = str(getattr(syn, "name", "") or syn)
+        if syn_name:
+            mapping[syn_name] = canonical_name
+    return mapping
 
 
 def resolve_cache_path(path: Path | None) -> Path | None:
@@ -129,8 +191,25 @@ class TagCache:
                 (str(TAG_CACHE_VERSION),),
             )
             conn.commit()
+        self._migrate_schema(conn)
         self._conn = conn
         return conn
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the original SQLite cache."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)").fetchall()}
+        if "metatags" not in cols:
+            conn.execute("ALTER TABLE entries ADD COLUMN metatags TEXT")
+        version_row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'version'"
+        ).fetchone()
+        current = int(version_row["value"]) if version_row else 0
+        if current < TAG_CACHE_VERSION:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('version', ?)",
+                (str(TAG_CACHE_VERSION),),
+            )
+        conn.commit()
 
     def _maybe_migrate_legacy_json(self) -> None:
         """Import v1 JSON cache once if present beside the sqlite file."""
@@ -180,7 +259,7 @@ class TagCache:
         }
         fallback_ts = data.get("updated_at") or _utc_now().isoformat()
 
-        rows: list[tuple[str, str, str, str | None, str, str]] = []
+        rows: list[tuple[str, str, str, str | None, str, str, str | None]] = []
         seen: set[str] = set()
 
         for name, canonical in canonical_for.items():
@@ -188,7 +267,7 @@ class TagCache:
             root = canonical
             ts = fetched_at.get(name) or fetched_at.get(canonical) or fallback_ts
             rows.append(
-                (name, canonical, status, categories.get(name), root, ts)
+                (name, canonical, status, categories.get(name), root, ts, None)
             )
             seen.add(name)
 
@@ -197,7 +276,7 @@ class TagCache:
                 continue
             ts = fetched_at.get(name) or fallback_ts
             rows.append(
-                (name, name, "unmarked", categories.get(name), name, ts)
+                (name, name, "unmarked", categories.get(name), name, ts, None)
             )
 
         if not rows:
@@ -205,8 +284,8 @@ class TagCache:
         conn.executemany(
             """
             INSERT OR REPLACE INTO entries
-              (name, canonical, status, category, root, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+              (name, canonical, status, category, root, fetched_at, metatags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -290,6 +369,97 @@ class TagCache:
         value = row["category"]
         return str(value) if value else None
 
+    def metatags_for(self, name: str) -> list[str] | None:
+        """Return stored metatag names, or ``None`` if unknown / not cached.
+
+        ``None`` means we have never recorded metatags (legacy rows). An empty
+        list means the profile was fetched and had no Metatags section.
+        Looked up on the canonical/root row so synonyms share one list.
+        """
+        conn = self._open()
+        row = conn.execute(
+            "SELECT canonical, metatags FROM entries WHERE name = ?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            return None
+        canonical = str(row["canonical"])
+        raw = row["metatags"]
+        if canonical != name:
+            canon_row = conn.execute(
+                "SELECT metatags FROM entries WHERE name = ?",
+                (canonical,),
+            ).fetchone()
+            if canon_row is not None:
+                raw = canon_row["metatags"]
+        return _parse_metatags_json(raw)
+
+    def get_row(self, name: str) -> CacheRow | None:
+        """Return the cache row for ``name``, or ``None`` if uncached."""
+        rows = self.get_rows([name])
+        return rows.get(name)
+
+    def get_rows(self, names: Iterable[str]) -> dict[str, CacheRow]:
+        """Lookup many names. Missing names are omitted."""
+        wanted: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            text = str(name).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            wanted.append(text)
+        if not wanted:
+            return {}
+        conn = self._open()
+        found: dict[str, CacheRow] = {}
+        for start in range(0, len(wanted), _LOOKUP_CHUNK):
+            chunk = wanted[start : start + _LOOKUP_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                f"""
+                SELECT name, canonical, status, category, metatags
+                FROM entries
+                WHERE name IN ({placeholders})
+                """,
+                chunk,
+            ):
+                parsed = _row_to_cache_row(row)
+                found[parsed.name] = parsed
+        return found
+
+    def rows_for_canonical(self, canonical: str) -> list[CacheRow]:
+        """Canonical row plus every cached synonym of that name."""
+        text = str(canonical).strip()
+        if not text:
+            return []
+        conn = self._open()
+        return [
+            _row_to_cache_row(row)
+            for row in conn.execute(
+                """
+                SELECT name, canonical, status, category, metatags
+                FROM entries
+                WHERE canonical = ?
+                ORDER BY name
+                """,
+                (text,),
+            )
+        ]
+
+    def iter_root_rows(self) -> Iterator[CacheRow]:
+        """Canonical and unmarked rows (one per synonym tree)."""
+        conn = self._open()
+        for row in conn.execute(
+            """
+            SELECT name, canonical, status, category, metatags
+            FROM entries
+            WHERE status != 'synonym'
+            ORDER BY name
+            """
+        ):
+            yield _row_to_cache_row(row)
+
     def _row_expired(self, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
         if self.ttl_days is None or self.ttl_days <= 0:
             return False
@@ -307,7 +477,10 @@ class TagCache:
         """Index a fetched profile; synonym lists form one expiry tree."""
         conn = self._open()
         now = _utc_now().isoformat()
-        rows: list[tuple[str, str, str, str | None, str, str]] = []
+        rows: list[tuple[str, str, str, str | None, str, str, str | None]] = []
+        meta_json = json.dumps(
+            [t.name for t in profile.metatags], ensure_ascii=False
+        )
 
         if profile.synonym_of is not None:
             canonical = profile.synonym_of.name
@@ -320,6 +493,7 @@ class TagCache:
                     profile.category,
                     root,
                     now,
+                    None,
                 )
             )
             # Ensure root row exists (may be filled when canonical is followed).
@@ -328,17 +502,44 @@ class TagCache:
             ).fetchone()
             if existing is None:
                 rows.append(
-                    (canonical, canonical, "canonical", profile.category, root, now)
+                    (
+                        canonical,
+                        canonical,
+                        "canonical",
+                        profile.category,
+                        root,
+                        now,
+                        None,
+                    )
                 )
         elif profile.canonical:
             root = profile.name
+            # Keep queried synonyms that AO3 redirected here but did not list
+            # on the canonical page (otherwise follow-canonical deletes them
+            # and the warmer treats the same name as uncached forever).
+            extras = [
+                (str(row["name"]), row["category"])
+                for row in conn.execute(
+                    "SELECT name, category FROM entries WHERE root = ?",
+                    (root,),
+                ).fetchall()
+            ]
             # Replace prior tree for this canonical so synonym list stays fresh.
             conn.execute("DELETE FROM entries WHERE root = ?", (root,))
-            mapping = profile.synonym_map()
+            mapping = _synonym_map_from_profile(profile)
             for name, canonical in mapping.items():
                 status = "canonical" if name == canonical else "synonym"
+                stored_meta = meta_json if status == "canonical" else None
                 rows.append(
-                    (name, canonical, status, profile.category, root, now)
+                    (
+                        name,
+                        canonical,
+                        status,
+                        profile.category,
+                        root,
+                        now,
+                        stored_meta,
+                    )
                 )
             if profile.name not in mapping:
                 rows.append(
@@ -349,6 +550,22 @@ class TagCache:
                         profile.category,
                         root,
                         now,
+                        meta_json,
+                    )
+                )
+            covered = set(mapping) | {profile.name}
+            for extra_name, extra_cat in extras:
+                if extra_name in covered:
+                    continue
+                rows.append(
+                    (
+                        extra_name,
+                        profile.name,
+                        "synonym",
+                        extra_cat or profile.category,
+                        root,
+                        now,
+                        None,
                     )
                 )
         else:
@@ -362,16 +579,58 @@ class TagCache:
                     profile.category,
                     root,
                     now,
+                    meta_json,
                 )
             )
 
         conn.executemany(
             """
             INSERT OR REPLACE INTO entries
-              (name, canonical, status, category, root, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+              (name, canonical, status, category, root, fetched_at, metatags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
+        )
+        conn.commit()
+        self.dirty = True
+
+    def remember_alias(
+        self,
+        name: str,
+        canonical: str,
+        *,
+        status: str = "synonym",
+        category: str | None = None,
+    ) -> None:
+        """Keep a queried form on the canonical tree if AO3 omitted it.
+
+        No-op when ``name`` is already cached. Used after follow-canonical so
+        a redirect that is not listed as a synonym still counts as cached.
+        """
+        name = (name or "").strip()
+        canonical = (canonical or "").strip()
+        if not name or not canonical:
+            return
+        if self.lookup(name) is not None:
+            return
+        if name != canonical:
+            stored_status = "synonym"
+            root = canonical
+        elif status == "unmarked":
+            stored_status = "unmarked"
+            root = name
+        else:
+            stored_status = "canonical"
+            root = name
+        conn = self._open()
+        now = _utc_now().isoformat()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO entries
+              (name, canonical, status, category, root, fetched_at, metatags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, canonical, stored_status, category, root, now, None),
         )
         conn.commit()
         self.dirty = True

@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Sequence
 
-from ao3kit.tags.metadata import ResolvedTag, TagResolver
+from ao3kit.tags.metadata import ResolvedTag, TagResolver, is_fandom_category
 
 MappingAction = Literal["default", "keep_separate", "map_to", "drop"]
 
@@ -316,6 +316,7 @@ class TagRulesConfig:
     resolve_canonical: bool = True
     drop_unmarked: bool = False
     drop_errors: bool = False
+    include_metatags: bool = True
     rules: list[TagRule] = field(default_factory=list)
 
     def sorted_rules(self) -> list[TagRule]:
@@ -337,6 +338,7 @@ class RuledTag:
     mapping_action: MappingAction = "default"
     mapping_rule: str | None = None
     dropped: bool = False
+    metatags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -349,6 +351,7 @@ class RuledTagsResult:
     simplified: list[str]
     dropped: list[str] = field(default_factory=list)
     collections: dict[str, list[str]] = field(default_factory=dict)
+    inserted_metatags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -357,6 +360,7 @@ class RuledTagsResult:
             "simplified": self.simplified,
             "dropped": self.dropped,
             "collections": self.collections,
+            "inserted_metatags": list(self.inserted_metatags),
         }
 
 
@@ -430,7 +434,12 @@ class TagRulesEngine:
             dropped=dropped,
         )
 
-    def apply(self, names: list[str]) -> RuledTagsResult:
+    def apply(
+        self,
+        names: list[str],
+        *,
+        include_metatags: bool | None = None,
+    ) -> RuledTagsResult:
         original = list(names)
         tags = [self.apply_one(name) for name in original]
         simplified: list[str] = []
@@ -452,12 +461,44 @@ class TagRulesEngine:
             seen.add(item.mapped)
             simplified.append(item.mapped)
 
+        insert = (
+            self.config.include_metatags
+            if include_metatags is None
+            else include_metatags
+        )
+        inserted: list[str] = []
+        if insert:
+            for item in tags:
+                if item.dropped or item.mapped is None:
+                    continue
+                if not is_fandom_category(item.category):
+                    continue
+                contributed: list[str] = []
+                for meta in self.resolver.metatags_for(item.original):
+                    if not meta or meta in seen or meta == item.mapped:
+                        continue
+                    ruled = self.apply_one(meta)
+                    if ruled.dropped or ruled.mapped is None:
+                        continue
+                    if ruled.mapped in seen:
+                        continue
+                    seen.add(ruled.mapped)
+                    simplified.append(ruled.mapped)
+                    inserted.append(ruled.mapped)
+                    contributed.append(ruled.mapped)
+                    for collection in ruled.collections:
+                        bucket = collections.setdefault(collection, [])
+                        if ruled.original not in bucket:
+                            bucket.append(ruled.original)
+                item.metatags = contributed
+
         return RuledTagsResult(
             original=original,
             tags=tags,
             simplified=simplified,
             dropped=dropped,
             collections=collections,
+            inserted_metatags=inserted,
         )
 
 
@@ -498,6 +539,7 @@ def _config_from_mapping(data: dict[str, Any]) -> TagRulesConfig:
         resolve_canonical=bool(data.get("resolve_canonical", True)),
         drop_unmarked=bool(data.get("drop_unmarked", False)),
         drop_errors=bool(data.get("drop_errors", False)),
+        include_metatags=bool(data.get("include_metatags", True)),
         rules=rules,
     )
 

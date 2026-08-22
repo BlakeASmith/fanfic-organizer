@@ -3,7 +3,7 @@
 Making this for my wife. She is using multiple different tools and having to do a lot of manual
 work to manage fan-fiction and metadata cleaning etc.
 
-**Interfaces:** CLI (`python -m ao3kit …`), web UI, JSON REST API (`/api/v1`), and the Calibre plugin — keep them in [relative feature parity](#interface-parity).
+**Interfaces:** CLI (`python -m ao3kit …`) and the Calibre plugin — keep them in [relative feature parity](#interface-parity). The web UI and REST API are [deprecated and frozen](#deprecated-web-ui-and-rest-api).
 
 ## Resources
 
@@ -14,14 +14,16 @@ work to manage fan-fiction and metadata cleaning etc.
 
 ```
 ao3kit/                 # Application package
-  http.py / rate.py / rate_store.py / scrape.py / epubs.py / webapp.py / api.py
+  http.py / rate.py / rate_store.py / scrape.py / series.py / similar.py / epubs.py
+  webapp.py / api.py     # deprecated frozen web UI + REST API
   config.py             # User settings + rule file storage (.ao3kit/)
   tags/                 # Tag profiles, resolver, SQLite cache, code-first rules
   cli.py                # Unified CLI (python -m ao3kit …)
 .ao3kit/                # User config home (gitignored; AO3KIT_HOME override)
+                          # config.yaml, mappings.yaml, collections.yaml, ao3_session.json, rules/*.py
 .cache/                 # Tag cache + host-wide rate limiter DB (gitignored)
-templates/              # Jinja2 templates for the web UI
-calibre-plugin/         # Calibre importer (raw + cleaned metadata columns)
+templates/              # Deprecated Jinja2 templates for the frozen web UI
+calibre-plugin/         # Calibre plugin (search/scrape via ao3kit + JSONL/zip import)
 ```
 
 Root `scrape_ao3.py`, `tag_metadata.py`, `download_epubs.py`, `web.py`, `ao3_http.py`,
@@ -30,22 +32,64 @@ running `python -m ao3kit …`.
 
 ## Interface parity
 
-Four surfaces share one core. Prefer implementing behavior in `ao3kit` library modules, then wiring every relevant surface. Cursor agents: see `.cursor/rules/interface-parity.mdc`.
+The CLI and Calibre plugin share one core. Prefer implementing behavior in `ao3kit` library modules, then wiring those two surfaces. Cursor agents: see `.cursor/rules/interface-parity.mdc`.
 
 | Surface | Entry | Owns |
 |---|---|---|
-| CLI | `python -m ao3kit …` | Full toolkit (scrape, tags, download, config, serve) |
-| Web UI | `ao3kit.webapp` `/` | Interactive scrape/download/settings (HTMX + SSE) |
-| REST API | `ao3kit.api` `/api/v1` | Same capabilities as JSON (jobs for long runs) |
-| Calibre plugin | `calibre-plugin/` | Import JSONL/zip; raw + cleaned metadata columns |
+| CLI | `python -m ao3kit …` | Full toolkit (scrape, tags, download, config, login, rate) |
+| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via ao3kit subprocess; import JSONL/zip; import series; simplify selected tags, fandoms, and relationships; edit collections of selected books (which rules, pins, excludes); recompute collections from rules (hand-adds become per-work pins); background tag cache; tag graph; collections & tag rules; Tag Purge of rare Tags-column values |
+| Web UI (deprecated) | `ao3kit.webapp` `/` | Frozen HTMX scrape/download/settings — do not extend |
+| REST API (deprecated) | `ao3kit.api` `/api/v1` | Frozen JSON jobs — do not extend |
 
-**Relative parity** means the same capabilities and data contracts, not the same UX:
+**Relative parity** means the same capabilities and data contracts on the **supported** surfaces, not the same UX:
 
 - Put new logic in `scrape` / `tags` / `epubs` / `config` / `http` / `rate`, not only in one UI.
-- When adding a user-facing feature, update CLI, API, and web where it applies; update the plugin when import, columns, enrich-on-import, or zip/JSONL layout changes.
+- When adding a user-facing feature, update CLI and the plugin where it applies. Do **not** add matching web UI controls or REST endpoints.
 - Work record JSON, `cleaned` enrich shape, and `ao3-import.zip` layout are shared contracts — do not diverge them per surface.
-- AO3 traffic must use `ao3kit.http` so host-wide rate limiting (`.cache/ao3_rate.sqlite`) applies across every interface.
-- OK: SSE HTML vs JSON job polling vs CLI stdout. Not OK: a scrape filter or tag resolve path that exists on only one of CLI / API / web.
+- AO3 traffic must use `ao3kit.http` so host-wide rate limiting (`.cache/ao3_rate.sqlite`) applies across every interface, including the frozen web/API if someone still runs `serve`.
+- OK: CLI stdout vs Qt dialogs. Not OK: a scrape filter or tag resolve path that exists on only one of CLI / plugin.
+
+## Calibre plugin (new library)
+
+The plugin is for a **new** Calibre library that should look like the existing FanFicFare fanfic library. Do not run Search AO3 / Import / Download EPUB / Import series / Fill series / Simplify / Tag Purge / “create columns” against a library you want left untouched — those actions write to whichever library is currently open. Installing the plugin does not modify a library by itself.
+
+**Search similar** (actions menu) builds an AO3 search from the selected library book(s). Fandoms, authors, relationships, characters, and additional tags are merged across the selection and shown in dropdowns so you can add a fandom plus a ship or two. AO3 ANDs every selected tag — pick a few. Then Search and import runs the same scrape/download path as Search AO3. Work id is optional; FanFicFare `#characters` is used when that column exists.
+
+**Search AO3 and import** (toolbar button and first menu item) uses the same scrape criteria and filters as the CLI. It shells out to `python -m ao3kit scrape` (with `--download` when EPUBs are requested) so search and native EPUB download share one process, one login, and the host-wide rate limiter. Optional `tags enrich` still runs afterward when Simplify is checked. Paste a works-search URL or an AO3 **series** URL (`/series/ID`), or fill the form; **Fill from URL** runs `scrape --parse-only` (no network scrape) to populate fields. A series URL imports every work on that series page. JSONL/zip import remains available for files produced outside Calibre.
+
+**Download EPUB for selected books** (actions menu) downloads the native AO3 EPUB for selected library books that have an AO3 work id / URL and do not already have an EPUB format. It shells out to `python -m ao3kit download` (same host-wide limiter) and attaches each file with Calibre `add_format` as soon as that download finishes, so earlier books are readable in the library while later ones are still fetching. Books that already have an EPUB are skipped; existing files are never replaced. Metadata and tags are left unchanged.
+
+**Import rest of series for selected books** (actions menu) looks up the AO3 series for the selection (from stored series metadata, the `ao3series` identifier, or a work-page fetch) and imports every other part. It shells out to `python -m ao3kit scrape --series-from`. Existing books are updated with series metadata; existing EPUBs are left unchanged. Native EPUB download and tag simplify follow plugin settings.
+
+**Fill series for selected books** (actions menu) looks up AO3 series membership for books already in the library and writes Calibre’s Series field, series index, and `ao3series`. It shells out to `python -m ao3kit scrape --fill-series-from`. Other works in the series are not imported. Tags and EPUBs are left unchanged. Books that are not in a series are left as they are. Works that already have a complete series id + name + part number are skipped on AO3 (no extra fetch).
+
+**Plugin settings** hold optional AO3 login and import defaults (download native EPUBs, simplify tags/fandoms/relationships, update existing books, **always import the rest of the series**). When that series option is on, Search AO3, Search similar, a series URL, and JSONL/zip import also fetch every other work in the same series (`scrape --include-series` / `--series-from`). Search filters apply only to the original matches; series-mates are added in full. **Test login** on that page checks the username and password against AO3 (via `python -m ao3kit login`) without saving yet. Leave login blank for anonymous access or to use the ao3kit project `.env`. Request pacing is the host-wide rate limiter, not a plugin delay setting. Search / Import dialogs still let you override download, simplify, and update-existing for that run. Download native EPUBs is on by default; simplification and full-series auto-import stay off unless enabled in settings (or simplify is checked on the dialog).
+
+On first import into an empty library (or via the settings checkbox) it creates and fills:
+
+| Lookup | Name | Source |
+|---|---|---|
+| `#fandom` | Fandom | cleaned fandoms (canonical + metatags) |
+| `#relationships` | Relationships | cleaned AO3 Relationship tags |
+| `#collections` | Collections | computed from collection rules |
+| `#originaltags` | Original Tags | pre-clean AO3 tags |
+| `#wordcount` | word count | AO3 word count |
+| Series | Series | first AO3 series name (built-in Calibre field) |
+| series index | | AO3 part number |
+| Tags | Tags | remaining cleaned tags + `Completed` |
+| identifiers | `url`, `ao3`, `ao3series` | work URL, work id, first series id |
+
+Count Pages columns (page count / readability) are not created. There is no separate cleaned-tags custom column — Calibre's standard Tags field is the cleaned set. Series is always written from work metadata when present, even if auto-import of the rest of the series is off. JSONL/zip extra parts are metadata (EPUBs already in the zip stay attached); Search/series-URL with download fetches EPUBs for extra parts too.
+
+After **Import** (with simplify) or **Simplify tags, fandoms & relationships for selected books**, the plugin prints a unique `before → after` remapping summary in the progress log and in the completion dialog (Show details). The same AO3 synonym collapse and user tag rules run on Tags, Fandom, and Relationships. Fandom metatags (e.g. Marvel) are appended to Fandom only.
+
+**Edit collections of selected books** (actions menu, and a button on **Collections & tag rules**) lists each selected book and collection, shows which rules put it there or keep it out, and lets you Always / Never pin, add a book to an existing or new collection (even when no rule matches, or it already belongs to a different one), keep an unexplained membership as a pin, edit or turn off shared rules, or write the computed set back to Calibre. It does not fetch AO3 or change tags. **Recompute collections for selected books** and **Add selected books to a collection** remain shortcuts. **Collections & tag rules** has two tabs. **Collections** are computed from rules (tag contains / is exactly, fandom, author, or a single AO3 work). Recompute and add use those rules only — they do not fetch AO3 or run tag keep/rename/drop. Recompute replaces the Collections column. Adding a book to a collection by hand — in Calibre, or **Add selected books to a collection** — is saved as a per-work pin so the next recompute puts it back. Use a **Never** rule to keep matching books out; removing a collection in Calibre alone does not stick. Plugin settings can turn off remembering hand-adds (`collections_remember_manual_adds`). **Tag rules** keep / rename / remove tags. Uncheck **On** to ignore a rule; double-click a row to edit. **Try a tag** shows AO3’s usual name plus tag rules. Older mapping rows that named a collection still apply on Simplify until you move them to the Collections tab.
+
+**Warm tag cache in background** (actions menu) collects unique tags / fandoms / ships / characters from the **whole open library**, writes them to `.cache/tag_warm_names.txt`, and shells out to `python -m ao3kit tags warm start`. The daemon fetches uncached AO3 mappings slowly so Search / Download / Simplify can still run; it does not write Calibre metadata. If a warmer is already running, this updates the names file and the daemon picks it up on the next poll. **Background tag cache log** tails `.cache/tag_warm.log` (same as `python -m ao3kit tags warm log --follow`). **Stop background tag cache** sends `tags warm stop` and shows which tags were cached this run (Show details for the full list).
+
+**Tag graph** (actions menu) shells out to `python -m ao3kit tags graph`. If more than one book is selected, only those books seed the graph; otherwise it uses the whole open library. Each book is a work node linked to all of its tags, fandoms, ships, and characters; tags that share a work are connected through that work. Synonym and metatag links from the cache are included. Uncached names show as missing. It does not change the library or fetch AO3. Warm the tag cache first for a fuller picture.
+
+**Tag Purge** (actions menu) lists Tags-column values that appear on at most *N* works **in the whole library** (default *N* = 1). The opening list can be *seeded* from the current selection or currently shown books; the count beside each tag is still library-wide, and **Purge removes those tags from every book in the open library**. A **Filter tags** box fuzzy-matches tag names (comma-separated terms are OR). The dialog states that purge is library-wide. **Show tags** refreshes the checklist after changing the max-works seed. Fandom / Relationships / Collections / Original Tags are unchanged.
 
 ## Setup
 
@@ -59,12 +103,42 @@ Unified entry point:
 
 ```bash
 python -m ao3kit scrape --url "https://archiveofourown.org/works?..." -o results.jsonl
+python -m ao3kit scrape --url "https://archiveofourown.org/works?..." -o results.jsonl --download
+python -m ao3kit scrape --url "https://archiveofourown.org/works?..." -o results.jsonl --include-series
+python -m ao3kit scrape --url "https://archiveofourown.org/series/6133236" -o series.jsonl
+python -m ao3kit scrape --series-id 6133236 -o series.jsonl --download
+python -m ao3kit scrape --series-from results.jsonl -o series.jsonl
+python -m ao3kit scrape --fill-series-from results.jsonl -o filled.jsonl
+python -m ao3kit scrape --parse-only --url "https://archiveofourown.org/works?..."
+python -m ao3kit scrape --parse-only --url "https://archiveofourown.org/series/6133236"
+python -m ao3kit scrape --parse-similar --similar-from results.jsonl
+python -m ao3kit scrape --similar-from results.jsonl --similar-work-id 50448730 --similar-include relationships -o similar.jsonl
 python -m ao3kit scrape --criteria-file example_criteria.json -o results.jsonl --verbose
 python -m ao3kit tags tag "Doctor Who (2005)"
 python -m ao3kit tags resolve --jsonl results.jsonl --work-id 50448730 --verbose
+python -m ao3kit tags warm start --jsonl results.jsonl
+python -m ao3kit tags warm status
+python -m ao3kit tags warm log
+python -m ao3kit tags warm log --follow
+python -m ao3kit tags warm stop
+python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
+python -m ao3kit tags graph --jsonl results.jsonl -o tag-graph.html
 python -m ao3kit download -i results.jsonl -o epubs/
 python -m ao3kit config init
-python -m ao3kit serve --reload
+python -m ao3kit config collections add --match mentions --values "River Song" --collection "River Song"
+python -m ao3kit config collections pin --work-id 50448730 --collection Jegulus
+python -m ao3kit config collections unpin --work-id 50448730 --collection Jegulus
+python -m ao3kit config mappings add --values Jegulus --action keep_separate --stop
+python -m ao3kit config mappings add --values "Melody Pond" --action map_to --map-to "River Song"
+python -m ao3kit config mappings list
+python -m ao3kit config mappings preview "Jegulus"
+python -m ao3kit tags collections --jsonl results.jsonl -o cleaned.jsonl
+python -m ao3kit tags collections --jsonl results.jsonl -o explain.json --explain
+python -m ao3kit login --username YOUR_NAME --password YOUR_PASSWORD
+python -m ao3kit rate
+python -m ao3kit rate --hours 24
+python -m ao3kit rate export -o rate-events.jsonl
+python -m ao3kit rate export --hourly --days 30 -o rate-hourly.jsonl
 ```
 
 Optional AO3 login via `--username` / `--password`, or a local gitignored `.env` file:
@@ -73,7 +147,18 @@ Optional AO3 login via `--username` / `--password`, or a local gitignored `.env`
 cp .env.example .env   # then edit AO3_USERNAME / AO3_PASSWORD
 ```
 
-Env vars `AO3_USERNAME` / `AO3_PASSWORD` are loaded automatically by `ao3kit.http`.
+Env vars `AO3_USERNAME` / `AO3_PASSWORD` are loaded automatically by `ao3kit.http`. Test them with `python -m ao3kit login` (or the plugin settings **Test login** button).
+
+### Series
+
+Work JSONL may include a `series` array (omitted when empty). Each entry is `{ "series_id", "name", "url", "position" }` from the blurb (`ul.series`) or work page. Calibre uses the first membership for the built-in Series field and `series_index`, and stores the id as identifier `ao3series`.
+
+| Flag | Purpose |
+|---|---|
+| `--url …/series/ID` or `--series-id ID` | Scrape every work on that series page |
+| `--include-series` | After a filtered search, also fetch every other part of each matched work’s series (mates are unfiltered) |
+| `--series-from JSONL` | Expand seed works to all series-mates (fetches work pages when `series` is missing) |
+| `--fill-series-from JSONL` | Look up series membership on seed works only (no extra parts) |
 
 ### Tag wrangling metadata
 
@@ -94,7 +179,7 @@ python -m ao3kit tags tag-set 3937
 
 `parse_tag_page()` returns category, canonical/filterable flags, `synonym_of`, parents, synonyms, metatags, subtags, and typed children. Use `TagProfile.synonym_map()` for name→canonical cleanup maps. Tag search and tag-set helpers mirror AO3’s `/tags/search` and `/tag_sets` URLs.
 
-Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolver` / the `resolve` subcommand. Synonyms collapse to their canonical; unmarked tags are kept unless `--drop-unmarked`.
+Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolver` / the `resolve` subcommand. Synonyms collapse to their canonical; unmarked tags are kept unless `--drop-unmarked`. **Fandoms** and **relationships** get the same treatment during `tags enrich` (and the plugin Simplify checkbox / selected-books action): AO3 synonym collapse plus user keep/rename/drop rules. Relationship tags that AO3 classifies as Relationship are stored on `cleaned.relationships` (Calibre `#relationships`) and omitted from the Tags column. After that, **fandom metatags** listed on each kept **fandom** tag’s AO3 profile (the Metatags tree, e.g. Marvel on [Spider-Man - All Media Types](https://archiveofourown.org/tags/Spider-Man%20-%20All%20Media%20Types)) are **appended to the fandom list** (Calibre `#fandom`) if they are not already present. Character and freeform metatags are ignored; nothing is added to the main Tags column. Disable fandom metatags with `python -m ao3kit config set include_metatags false` or `--no-metatags`. Skip fandom or relationship passes with `tags enrich --no-fandoms` / `--no-relationships`.
 
 **Caching strategy** (SQLite; avoids repeat AO3 hits):
 
@@ -103,19 +188,30 @@ Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolve
 3. Index every synonym listed on the canonical page as one *tree* (shared `root` + `fetched_at`) → later raw forms resolve with **zero** fetches.
 4. Persist to `.cache/ao3_tag_cache.sqlite` (gitignored; legacy `.json` is imported once on open).
 5. Trees older than `tag_cache_ttl_days` (default **90**; `0` = never) are purged automatically so wrangling stays fresh.
+6. **Background warming** (`tags warm start`) detaches a slow daemon that re-scans JSONL / names files for uncached tags and fetches them through `TagResolver` (host-wide limiter plus `tag_warm_interval`, default 10s extra between fetches). It does not raise the shared scrape/download interval. Idle-exits after a few empty polls. Calibre **Warm tag cache in background…** dumps library tags to a names file and runs the same command.
+7. **Tag graph** (`tags graph`) reads the cache (no AO3 fetch) and writes an HTML / JSON / DOT view of works plus synonym and metatag links. `--jsonl` places each work as a node linked to its tags. Calibre **Tag graph…** dumps selected books (when more than one is selected) or the whole library as JSONL, then opens the HTML.
 
 ```bash
 python -m ao3kit tags resolve "wolfstar" "Kisses" "Slow Burn"
 python -m ao3kit tags resolve --jsonl results.jsonl --work-id 50448730 --verbose
-python -m ao3kit tags resolve --jsonl results.jsonl --work-id 50448730 --drop-unmarked --include-fandoms
+python -m ao3kit tags resolve --jsonl results.jsonl --work-id 50448730 --drop-unmarked --include-fandoms --include-relationships
 python -m ao3kit tags resolve "Kisses" --cache .cache/ao3_tag_cache.sqlite --verbose
 python -m ao3kit tags resolve "Kisses" --cache-ttl-days 30 --verbose
 python -m ao3kit tags resolve "Kisses" --no-cache
 python -m ao3kit config set tag_cache_ttl_days 90
+python -m ao3kit config set tag_warm_interval 15
+python -m ao3kit config set include_metatags true
 python -m ao3kit tags apply --rules example_tag_rules.py \
   "Jegulus" "Melody Pond" "River Song - Freeform" "Fluff"
 python -m ao3kit tags apply --rules example_tag_rules.py \
   --jsonl results.jsonl --work-id 50448730 --verbose
+python -m ao3kit tags warm start --jsonl results.jsonl
+python -m ao3kit tags warm start --names-file tags.txt --foreground
+python -m ao3kit tags warm status
+python -m ao3kit tags warm log --follow
+python -m ao3kit tags warm stop
+python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
+python -m ao3kit tags graph --jsonl results.jsonl -o tag-graph.html
 ```
 
 ### User config & rules storage
@@ -126,6 +222,9 @@ User settings and rule modules live in **`.ao3kit/`** (project-local; override w
 ```
 .ao3kit/
   config.yaml           # delay, resolve flags, active_rules, …
+  mappings.yaml         # extra keep / rename / drop rows
+  collections.yaml      # collection membership rules + per-work pins
+  ao3_session.json      # cached AO3 cookies (not the password)
   rules/
     default.py          # active code-first rules (editable)
 ```
@@ -134,15 +233,57 @@ User settings and rule modules live in **`.ao3kit/`** (project-local; override w
 python -m ao3kit config init
 python -m ao3kit config show
 python -m ao3kit config set request_delay 6
+python -m ao3kit config set collections_remember_manual_adds true
+python -m ao3kit config collections list
+python -m ao3kit config collections add --match mentions --values "River Song" --collection "River Song"
+python -m ao3kit config collections add --match fandom_mentions --values "The Pitt" --collection "The Pitt"
+python -m ao3kit config collections add --match author_ci --values avocadomoon --collection Avocado
+python -m ao3kit config collections pin --work-id 50448730 --collection Jegulus
+python -m ao3kit config collections unpin --work-id 50448730 --collection Jegulus
+python -m ao3kit config mappings list
+python -m ao3kit config mappings add --values Jegulus --action keep_separate --stop
+python -m ao3kit config mappings add --match tag_ci --values "Melody Pond" --action map_to --map-to "River Song"
+python -m ao3kit config mappings preview "Jegulus"
 python -m ao3kit config rules list
 python -m ao3kit config rules new river_song
 python -m ao3kit config rules use river_song
 python -m ao3kit config rules install-example
-python -m ao3kit tags apply "Jegulus" "Fluff"   # uses active rules from config
+python -m ao3kit tags apply "Jegulus" "Fluff"   # canonical + mappings.yaml + active Python rules
+python -m ao3kit tags apply --collections-only "Melody Pond" "Fluff"
+python -m ao3kit tags apply --collections-only --jsonl results.jsonl
+python -m ao3kit tags enrich --jsonl results.jsonl -o cleaned.jsonl
+python -m ao3kit tags collections --jsonl results.jsonl -o cleaned.jsonl
+python -m ao3kit tags collections --jsonl results.jsonl -o explain.json --explain
 ```
 
-Web UI: open **Settings** (`/settings`) to edit preferences, create rule modules,
-and edit Python rule source (validated on save).
+`tags enrich` (and `download`) print a unique remapping summary when finished (tags, fandoms, and relationships). `tags collections` overlays `.ao3kit/collections.yaml` on tags already on the work — it does **not** fetch AO3 or run keep/rename/drop. Hand-added Calibre memberships can be saved as per-work pins. `--explain` writes JSON describing which rules apply to each work (no pin capture, no overlay write).
+
+Edit collection rules in the Calibre plugin (**Edit collections of selected books…** or **Collections & tag rules…**) or with `python -m ao3kit config collections`. Tag keep / rename / drop stays in **Tag rules** / `python -m ao3kit config mappings`. Python rule modules remain for custom logic the table cannot express.
+
+### Collection membership (computed)
+
+Collections on a work are a **view of rules**, not a separate stored truth. Recompute anytime (`tags collections` or the plugin action). That path does not fetch AO3 or simplify tags. Membership is **includes** (YAML rules, plus leftover mapping/Python collections already stored on the work) **minus excludes**. The plugin **Edit collections of selected books** dialog (and `tags collections --explain`) shows which rules produced each membership.
+
+| When | Then |
+|---|---|
+| tag contains | Any tag/fandom/ship/character name already on the work includes this text |
+| tag is exactly | Exact tag (or AO3’s usual name) |
+| fandom contains | Fandom name includes this text |
+| author is | Exact author name |
+| this AO3 work / this book | Per-work pin (`work_id` or Calibre UUID) |
+
+A collection you add by hand on one book becomes an include pin for that work (unless `collections_remember_manual_adds` is false). Manual removals do **not** become exclude pins — add a **Never** rule if you want a book kept out.
+
+### Extra tag mappings (on top of canonical)
+
+AO3 wrangling collapses synonyms onto the canonical tag first. Then `.ao3kit/mappings.yaml` rows run (default priority 1000, list order among themselves), then the active Python rule module.
+
+| When | Then |
+|---|---|
+| contains | Tag name includes this text, or AO3’s usual name is this |
+| is exactly | Exact tag name or exact AO3 usual name |
+
+First mapping that sets keep / rename / drop wins. `stop` skips later mappings and Python rules for that tag. Mapping rows that still list collections are unioned into the computed set.
 
 ### Tag mapping rules & collections (code-first)
 
@@ -176,282 +317,24 @@ Built-ins (`KeepSeparateRule`, `MapToRule`, `CollectRule`, `DropRule`) cover com
 
 ---
 
-## REST API
+## Deprecated: web UI and REST API
 
-JSON API implemented in `ao3kit.api` and mounted at **`/api/v1`** on the same FastAPI process as the web UI. One server serves HTML + JSON.
+`ao3kit.webapp`, `ao3kit.api`, `templates/`, and `python -m ao3kit serve` still exist but are **frozen**. Do not add features, endpoints, templates, or docs to keep them current. Use the CLI or the Calibre plugin.
 
-```bash
-python -m ao3kit serve --reload
-```
+`serve` prints a deprecation warning. HTML pages show a banner. API responses send a `Deprecation: true` header. Existing tests under `tests/test_api.py` freeze current behavior; do not add new API/web coverage unless fixing a bug in those frozen surfaces.
 
-| Surface | URL |
-|---|---|
-| Interactive OpenAPI docs | http://127.0.0.1:8000/api/v1/docs |
-| OpenAPI schema | http://127.0.0.1:8000/api/v1/openapi.json |
-| API-only (no web UI) | `uvicorn ao3kit.api:app --port 8001` — routes have **no** `/api/v1` prefix |
-
-### Authentication
-
-Optional AO3 login on endpoints that hit the site: JSON fields `username` / `password`, or env `AO3_USERNAME` / `AO3_PASSWORD` (both required if either is set). Config endpoints are local only and do not need AO3 credentials.
-
-### Jobs (scrape & download)
-
-Long-running work returns **`202`** with `{ "job_id": "…" }`. Poll status until finished:
-
-| `status` | Meaning |
-|---|---|
-| `queued` | Accepted, not started |
-| `running` | In progress (`message` updates) |
-| `done` | Finished; results in the status payload |
-| `error` | Failed; see `error` / `message` |
-
-Jobs live in memory for the process lifetime (restart clears them). Download zips are available at `GET /api/v1/download/{job_id}/zip` when `zip_ready` is true.
-
-### Endpoints
-
-Paths below are relative to `/api/v1` when using `serve` / `webapp:app`.
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/health` | `{ "status": "ok", "version": "…" }` |
-| `POST` | `/scrape/parse-url` | Body `{ "url" }` → `criteria`, `start_page`, `search_url` |
-| `POST` | `/scrape` | Start scrape (`url` **or** `criteria` + filters) → job |
-| `GET` | `/scrape/{job_id}` | Job status + matched `works[]` |
-| `GET` | `/tags/{name}` | Tag profile (`?synonym_map=true` for name→canonical map) |
-| `POST` | `/tags/search` | Tag search (`name`/`type`/`status`/… or `url`) |
-| `POST` | `/tags/resolve` | Canonicalize `tags[]` |
-| `POST` | `/tags/apply` | Resolve + active (or named) rules |
-| `POST` | `/tags/enrich` | Enrich scrape `records` / `jsonl` with `cleaned` |
-| `GET` | `/tag-sets?q=` | Search owned tag sets |
-| `GET` | `/tag-sets/{id}` | Tag set detail |
-| `POST` | `/download` | Body `records[]` or `jsonl` → download job |
-| `GET` | `/download/{job_id}` | Status, counts, enriched records, `zip_ready` |
-| `GET` | `/download/{job_id}/zip` | Import zip when ready |
-| `GET` | `/config` | User settings + config home path |
-| `PATCH` | `/config` | Partial update of `UserSettings` fields |
-| `GET` | `/config/rules` | List rule modules |
-| `POST` | `/config/rules` | Create rule (`name`, optional `source`, `make_active`) |
-| `GET`/`PUT` | `/config/rules/{name}` | Read / write rule source (PUT validates load) |
-| `POST` | `/config/rules/{name}/activate` | Set active rules module |
-| `POST` | `/config/rules/install-example` | Copy bundled `example_tag_rules.py` |
-
-**Scrape request** (either `url` or `criteria` with `tag_id` / `query`):
-
-```json
-{
-  "url": "https://archiveofourown.org/works?…",
-  "max_results": 25,
-  "min_score": 8,
-  "min_kudos": 50,
-  "min_words": 1000,
-  "complete_only": true,
-  "delay": 5.0,
-  "username": null,
-  "password": null
-}
-```
-
-Or structured criteria:
-
-```json
-{
-  "criteria": {
-    "tag_id": "Doctor Who (2005)",
-    "sort_column": "kudos_count",
-    "language_id": "en",
-    "query": "amy/rory"
-  },
-  "start_page": 1,
-  "max_results": 10
-}
-```
-
-### Examples
-
-```bash
-# Health
-curl -s http://127.0.0.1:8000/api/v1/health
-
-# Parse a search URL into criteria
-curl -s -X POST http://127.0.0.1:8000/api/v1/scrape/parse-url \
-  -H 'Content-Type: application/json' \
-  -d '{"url":"https://archiveofourown.org/works?work_search%5Bsort_column%5D=kudos_count&tag_id=Doctor+Who+%282005%29"}'
-
-# Start a scrape, then poll
-JOB=$(curl -s -X POST http://127.0.0.1:8000/api/v1/scrape \
-  -H 'Content-Type: application/json' \
-  -d '{"criteria":{"tag_id":"Doctor Who (2005)"},"max_results":5}' | jq -r .job_id)
-curl -s "http://127.0.0.1:8000/api/v1/scrape/$JOB"
-
-# Resolve tags
-curl -s -X POST http://127.0.0.1:8000/api/v1/tags/resolve \
-  -H 'Content-Type: application/json' \
-  -d '{"tags":["Kisses","wolfstar"],"use_cache":true}'
-
-# Apply active rules
-curl -s -X POST http://127.0.0.1:8000/api/v1/tags/apply \
-  -H 'Content-Type: application/json' \
-  -d '{"tags":["Jegulus","Fluff"]}'
-
-# Config
-curl -s http://127.0.0.1:8000/api/v1/config
-curl -s -X PATCH http://127.0.0.1:8000/api/v1/config \
-  -H 'Content-Type: application/json' \
-  -d '{"request_delay":6,"notes":"via API"}'
-```
-
----
-
-## Web UI
-
-The web UI is a single-page form at `/` served by `ao3kit.webapp`. It uses **HTMX** for partial page updates and the **HTMX SSE extension** for live scrape progress. There is almost no custom JavaScript beyond copy-to-clipboard buttons. The same process also serves the [REST API](#rest-api) at `/api/v1`.
-
-### Run the server
-
-```bash
-python -m ao3kit serve --reload
-# or:
-uvicorn ao3kit.webapp:app --reload
-```
-
-| Surface | URL |
-|---|---|
-| Web UI | http://127.0.0.1:8000 |
-| REST docs | http://127.0.0.1:8000/api/v1/docs |
-
-### User flow
-
-1. **Paste an AO3 search URL** (optional) — empty criteria fields are auto-filled from the URL.
-2. **Edit criteria** (optional) — changing any criteria field switches the form to “source of truth” mode so URL parsing no longer overwrites your edits.
-3. **Set result filters** — max results, min quality score, min kudos/words, complete-only, page delay, etc.
-4. **Submit** — results stream in live: status messages, a results table, and JSONL output.
-5. **Copy** — “Copy links” (one URL per line) or “Copy full data” (JSONL).
-
-### Search source: URL vs form
-
-The hidden field `use_form_criteria` controls which input wins:
-
-| Value | Behavior |
-|---|---|
-| `0` (default) | If a search URL is present, parse it and merge into empty/default criteria fields |
-| `1` | Ignore URL parsing; build the search from the form fields only |
-
-Editing any field with class `criteria-field` sets `use_form_criteria` to `1`.
-
-### HTMX interactions
-
-**URL auto-fill** — the URL input posts to `/parse-url/fill` on paste or after 400 ms of typing:
-
-```
-hx-post="/parse-url/fill"
-hx-target="#search-criteria"
-hx-swap="outerHTML"
-```
-
-The server returns the `search_criteria` partial with merged values. On parse error, it returns the criteria partial plus an out-of-band (OOB) status panel update.
-
-**Start scrape** — the form posts to `/scrape/start`:
-
-```
-hx-post="/scrape/start"
-hx-target="#scrape-live"
-hx-swap="innerHTML"
-```
-
-The response is a `scrape_session` partial containing an SSE connection to `/scrape/events/{scrape_id}`.
-
-### Live results via Server-Sent Events
-
-When a scrape starts, the server:
-
-1. Stores the form data in an in-memory job dict keyed by `scrape_id`.
-2. Returns HTML that opens an SSE connection (`sse-connect="/scrape/events/{scrape_id}"`).
-3. On connect, starts a background thread that runs `scrape_search()` from `ao3kit.scrape`.
-4. Streams **HTML fragments** (not JSON) as named SSE events.
-
-SSE event types:
-
-| Event | Template | What it updates |
-|---|---|---|
-| `start` | `partials/scrape_start.html` | Status panel, search URL summary, clears results table/JSONL |
-| `status` | `partials/status_oob.html` | Status panel (page progress, login messages) |
-| `work` | `partials/work_row.html` | Appends a table row; OOB updates result count and JSONL |
-| `done` | `partials/status_oob.html` | Final “Done — N work(s) matched” message; closes SSE |
-| `error` | `partials/status_oob.html` | Error message in status panel |
-
-OOB swaps (`hx-swap-oob`) update elements outside the SSE container:
-
-- `#status-panel` — progress and errors
-- `#results-body` — table rows (`sse-swap="work"` on tbody)
-- `#result-count` — matched work count
-- `#jsonl-output` — appended JSONL lines
-- `#results-summary` — resolved search URL link
-
-A hidden element listens for `start status error done` events so OOB-only fragments are processed.
-
-### HTTP endpoints
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/` | Main form page (`templates/index.html`) |
-| `POST` | `/parse-url/fill` | Parse AO3 URL, return updated criteria partial |
-| `POST` | `/scrape/start` | Create scrape job, return session partial with SSE hook |
-| `GET` | `/scrape/events/{scrape_id}` | SSE stream of HTML fragments for a job |
-
-Scrape jobs live in memory (`SCRAPE_JOBS` dict) and are removed when the job finishes. Restarting the server clears in-progress jobs.
-
-### Templates
-
-```
-templates/
-├── index.html                      # Full page: form, status panel, copy buttons
-└── partials/
-    ├── search_criteria.html        # Criteria fieldset (HTMX-swapped on URL paste)
-    ├── scrape_session.html         # Results area + SSE connection
-    ├── scrape_start.html           # OOB reset on scrape start
-    ├── status_oob.html             # OOB status message
-    └── work_row.html               # Table row + OOB count/jsonl append
-```
-
-HTMX and the SSE extension are loaded from CDN in `index.html` (no npm build step).
-
-### Copy buttons
-
-Copy buttons use a small inline script because the Clipboard API is not available through HTMX alone. The script listens for `htmx:oobAfterSwap` and `htmx:sseMessage` to enable/disable buttons and wire click handlers once rows or JSONL content exist.
-
-### Quality score display
-
-Works with a computed quality score show a color-coded badge in the results table:
-
-- **Green** — raw score ≥ 14
-- **Yellow** — raw score ≥ 8
-- **Red** — raw score < 8
-
-Score formula (from the Tampermonkey script):
-
-```
-eff = max(1, words / 5000)
-adjusted_hits = hits / (eff ** 0.4)
-raw_score = round(100 * kudos / adjusted_hits, 1)
-```
-
-Requires kudos ≥ 50 (default) to compute; otherwise shown as “—”.
-
-### AO3 login (optional)
-
-Username/password fields on the form, a local gitignored `.env` (`AO3_USERNAME` / `AO3_PASSWORD`), or the same env vars in the shell. Both must be set to log in. Password is kept in the in-memory job only for the duration of the scrape and is not stored server-side after completion. The form password may be left blank when `.env` provides it.
-
-### Shared HTTP layer (`ao3kit.http`)
+## Shared HTTP layer (`ao3kit.http`)
 
 Scrape, tag resolve, and EPUB download share one request path. Rate limiting is
-**host-wide** (not just process-wide): CLI, web UI, REST API, and the Calibre
-plugin’s `ao3kit` subprocess all coordinate through ``ao3kit.rate`` /
+**host-wide** (not just process-wide): CLI, the Calibre plugin’s `ao3kit`
+subprocess, and the frozen web UI / REST API all coordinate through ``ao3kit.rate`` /
 ``ao3kit.rate_store`` (SQLite at ``.cache/ao3_rate.sqlite``, override with
-``AO3KIT_RATE_DB``). If the web UI is hammering AO3, the CLI waits its turn.
+``AO3KIT_RATE_DB``). Concurrent processes on the same host wait their turn.
 
-- **Login** — form POST with authenticity token (same flow as ao3downloader)
+- **Login** — form POST with authenticity token (same flow as ao3downloader). Scrape and EPUB download log in immediately when credentials are set, then cookies are saved to ``.ao3kit/ao3_session.json`` (password is not stored). Later CLI/plugin/web processes reuse that session and skip the login GET+POST until cookies expire or AO3 returns a logged-out page. ``python -m ao3kit login`` / Test login always hit AO3, then refresh the cache. Disable with ``AO3KIT_SESSION_CACHE=0``. Login uses its own ~1s interval and a 20s request timeout so a hung login page retries instead of sitting on “Logging in to AO3…” for 60s. Tag lookups stay anonymous (and skip the network entirely on cache hits) until AO3 returns a login wall, unless a saved session for the same username is restored.
 - **Cloudflare** — detect challenge/block HTML markers; exponential backoff retries; clear error if still blocked
-- **Rate limits** — shared slot reservation before each request; honor `429` + `Retry-After` (raises the shared floor for every interface)
+- **Rate limits** — shared slot reservation before each request; honor `429` + `Retry-After` as a host-wide cooldown (every interface waits; cruise intervals stay at ``request_delay`` / the tag lane). Work pages, search listings, and EPUB downloads use config ``request_delay`` (default 1.5s). Tag profiles stay on the adaptive ~0.4s lane.
+- **Request log** — each attempt is stored in the same SQLite file (`rate_events`: kind, status, wait, claimed interval, limiter snapshot, Retry-After). Raw events are kept 30 days (cap 50k). Hourly rollups (`rate_hourly`) are kept 180 days for tuning. Inspect with `python -m ao3kit rate` or `python -m ao3kit rate export --hourly`. Query strings are not stored. The report includes 24h/7d 429 rates, interval-vs-429 buckets, and pacing hints (hints do not change intervals automatically).
 - **Adult gate** — append `view_adult=true` on work/search fetches so mature/explicit confirmation is skipped; EPUB download still falls back to the Proceed link if needed
 - **Status callback** — optional `on_status` for live UI messages during waits/retries
 

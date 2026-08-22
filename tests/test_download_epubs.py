@@ -8,15 +8,20 @@ import pytest
 import requests
 
 from download_epubs import (
+    DownloadOutcome,
+    DownloadReport,
     classify_work_page,
     download_from_jsonl,
     download_record_epub,
     download_records,
+    format_download_outcome_line,
+    format_download_report_line,
     pack_import_zip,
     parse_epub_download_href,
     parse_jsonl_text,
     proceed_href,
     write_epub,
+    write_manifest,
 )
 
 def test_parse_jsonl_text_skips_blank_and_requires_id():
@@ -354,3 +359,107 @@ def test_pack_and_download_from_jsonl(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_pack_import_zip_requires_manifest(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         pack_import_zip(tmp_path)
+
+
+def test_format_download_outcome_line_uses_title_not_path():
+    downloaded = DownloadOutcome(
+        record={
+            "work_id": "65062336",
+            "title": "The Regulus Star",
+            "epub_file": "epubs/65062336.epub",
+        },
+        status="downloaded",
+        epub_file="epubs/65062336.epub",
+    )
+    line = format_download_outcome_line(downloaded, 1, 3)
+    assert line == "[1/3] Downloaded The Regulus Star"
+    assert "epubs/" not in line
+    assert "65062336" not in line
+
+    failed = DownloadOutcome(
+        record={"work_id": "99", "title": "Locked Work"},
+        status="failed",
+        error="locked",
+    )
+    assert format_download_outcome_line(failed, 2, 3) == (
+        "[2/3] Failed Locked Work: restricted — log in to AO3 and retry"
+    )
+
+    skipped = DownloadOutcome(
+        record={"work_id": "1", "title": "Already Here"},
+        status="skipped",
+        epub_file="epubs/1.epub",
+    )
+    assert format_download_outcome_line(skipped, 3, 3).endswith("(already on disk)")
+
+
+def test_format_download_report_line_omits_zero_counts(tmp_path: Path):
+    report = DownloadReport(
+        outcomes=[
+            DownloadOutcome(record={"work_id": "1"}, status="downloaded"),
+        ]
+    )
+    assert format_download_report_line(report) == "Downloaded 1 EPUB"
+    with_dest = format_download_report_line(report, tmp_path)
+    assert with_dest.startswith("Downloaded 1 EPUB → ")
+    assert "skipped" not in with_dest
+    assert "failed" not in with_dest
+
+    mixed = DownloadReport(
+        outcomes=[
+            DownloadOutcome(record={"work_id": "1"}, status="downloaded"),
+            DownloadOutcome(record={"work_id": "2"}, status="downloaded"),
+            DownloadOutcome(record={"work_id": "3"}, status="failed", error="http"),
+        ]
+    )
+    assert format_download_report_line(mixed) == "Downloaded 2 EPUBs, failed 1"
+
+
+def test_write_manifest_replaces_atomically(tmp_path: Path):
+    path = tmp_path / "results.jsonl"
+    write_manifest([{"work_id": "1", "title": "One"}], path)
+    write_manifest(
+        [
+            {"work_id": "1", "title": "One", "epub_file": "epubs/1.epub"},
+            {"work_id": "2", "title": "Two"},
+        ],
+        path,
+    )
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(lines) == 2
+    assert "epubs/1.epub" in lines[0]
+    assert not path.with_suffix(".jsonl.tmp").exists()
+
+
+def test_download_cli_omits_remap_summary_without_simplify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    jsonl = tmp_path / "in.jsonl"
+    jsonl.write_text(
+        '{"work_id":"1","url":"https://archiveofourown.org/works/1","title":"T"}\n',
+        encoding="utf-8",
+    )
+    dest = tmp_path / "out"
+
+    def fake_download(*_args, **_kwargs):
+        return DownloadReport(
+            outcomes=[
+                DownloadOutcome(
+                    record={"work_id": "1", "title": "T"},
+                    status="downloaded",
+                    epub_file="epubs/1.epub",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("ao3kit.epubs.create_session", lambda *_a, **_k: object())
+    monkeypatch.setattr("ao3kit.epubs.download_from_jsonl", fake_download)
+    from ao3kit.epubs import main as download_main
+
+    rc = download_main(
+        ["-i", str(jsonl), "-d", str(dest), "--verbose", "--no-simplify", "--no-zip"]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Downloaded 1 EPUB" in err
+    assert "Tag remappings" not in err

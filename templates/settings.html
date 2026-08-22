@@ -75,6 +75,16 @@
     th { background: #f0ebe3; }
     .path { font-family: monospace; font-size: 0.85rem; word-break: break-all; }
     .active { font-weight: bold; color: #2d6a4f; }
+    .sev-ok { color: #2d6a4f; }
+    .sev-raise { color: #9b2226; }
+    .sev-watch { color: #9a6700; }
+    .sev-info { color: #555; }
+    .deprecation {
+      background: #fde8ec;
+      border: 1px solid #eb6f92;
+      padding: 0.75rem 1rem;
+      margin: 0 0 1rem;
+    }
   </style>
 </head>
 <body>
@@ -82,6 +92,10 @@
     <a href="/">Scraper</a>
     <a href="/settings">Settings</a>
   </nav>
+  <p class="deprecation" role="status">
+    The web UI and REST API are <strong>deprecated</strong> and no longer updated.
+    Use the CLI (<code>python -m ao3kit</code>) or the Calibre plugin.
+  </p>
   <h1>Settings &amp; rules</h1>
   <p class="hint">
     Stored in <span class="path">{{ cfg.home }}</span>
@@ -145,6 +159,161 @@
       <input type="text" name="notes" id="notes" value="{{ settings.notes }}">
       <button type="submit">Save preferences</button>
     </fieldset>
+  </form>
+
+  <h2>AO3 request log</h2>
+  <p class="hint">
+    Every CLI / web / API / plugin request through <code>ao3kit.http</code> is
+    recorded in the shared limiter DB
+    (<span class="path">{{ rate.db }}</span>). Query strings are not stored.
+    Raw events are kept {{ rate.retention.raw_events_days }} days
+    (cap {{ rate.retention.raw_event_cap }});
+    hourly rollups are kept {{ rate.retention.hourly_days }} days for tuning.
+  </p>
+  <p class="hint">
+    Current intervals: base {{ "%.1f"|format(rate.snapshot.base_interval) }}s,
+    tag {{ "%.1f"|format(rate.snapshot.tag_interval) }}s
+    {% if rate.snapshot.crawl_delay %}
+    (crawl-delay {{ "%.1f"|format(rate.snapshot.crawl_delay) }}s)
+    {% endif %}
+    · next slot in {{ "%.1f"|format(rate.snapshot.next_allowed_in_s) }}s
+  </p>
+  {% if rate.suggestions %}
+  <ul class="hint">
+    {% for hint in rate.suggestions %}
+    <li class="sev-{{ hint.severity }}">{{ hint.text }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="hint">
+    Last 24h: {{ rate.windows["24h"].totals.requests }} requests,
+    {{ rate.windows["24h"].totals["429"] }} 429s
+    ({{ "%.1f"|format(rate.windows["24h"].totals["429_rate"] * 100) }}%)
+    · 7d: {{ rate.windows["7d"].totals.requests }} requests,
+    {{ rate.windows["7d"].totals["429"] }} 429s
+    ({{ "%.1f"|format(rate.windows["7d"].totals["429_rate"] * 100) }}%)
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Kind</th>
+        <th>Requests</th>
+        <th>OK</th>
+        <th>429</th>
+        <th>5xx</th>
+        <th>Cloudflare</th>
+        <th>Avg wait (s)</th>
+        <th>Avg interval (s)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for kind, row in rate.stats.by_kind.items() %}
+      <tr>
+        <td>{{ kind }}</td>
+        <td>{{ row.requests }}</td>
+        <td>{{ row.ok }}</td>
+        <td>{{ row["429"] }}</td>
+        <td>{{ row["5xx"] }}</td>
+        <td>{{ row.cloudflare }}</td>
+        <td>{{ "%.2f"|format(row.avg_wait_s) }}</td>
+        <td>{{ "%.2f"|format(row.avg_interval_s) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8">No AO3 requests logged yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">
+    429s: {{ rate.stats.retry_after.count }}
+    ({{ rate.stats.retry_after.with_header }} with Retry-After header,
+    {{ rate.stats.retry_after.missing_header }} using the 60s default)
+  </p>
+  {% if rate.interval_vs_429 %}
+  <h2>Interval vs 429s (7 days)</h2>
+  <p class="hint">Use this to see which pacing still gets 429s before changing lane floors.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Kind</th>
+        <th>Interval (s)</th>
+        <th>Requests</th>
+        <th>429</th>
+        <th>429 rate</th>
+        <th>Cloudflare</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rate.interval_vs_429 %}
+      <tr>
+        <td>{{ row.kind }}</td>
+        <td>{{ "%.1f"|format(row.interval_s) }}</td>
+        <td>{{ row.requests }}</td>
+        <td>{{ row["429"] }}</td>
+        <td>{{ "%.1f"|format(row["429_rate"] * 100) }}%</td>
+        <td>{{ row.cloudflare }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if rate.hourly_totals %}
+  <h2>Hourly totals (48h)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Hour (UTC)</th>
+        <th>Requests</th>
+        <th>OK</th>
+        <th>429</th>
+        <th>5xx</th>
+        <th>Cloudflare</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rate.hourly_totals %}
+      <tr>
+        <td>{{ row.at }}</td>
+        <td>{{ row.requests }}</td>
+        <td>{{ row.ok }}</td>
+        <td>{{ row["429"] }}</td>
+        <td>{{ row["5xx"] }}</td>
+        <td>{{ row.cloudflare }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if rate.recent %}
+  <table>
+    <thead>
+      <tr>
+        <th>When (UTC)</th>
+        <th>Kind</th>
+        <th>Outcome</th>
+        <th>Status</th>
+        <th>Wait (s)</th>
+        <th>Interval (s)</th>
+        <th>Path</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in rate.recent %}
+      <tr>
+        <td>{{ event.at }}</td>
+        <td>{{ event.kind }}</td>
+        <td>{{ event.outcome }}</td>
+        <td>{{ event.status if event.status is not none else "—" }}</td>
+        <td>{{ "%.1f"|format(event.wait_s) }}</td>
+        <td>{% if event.interval_s is not none %}{{ "%.1f"|format(event.interval_s) }}{% else %}—{% endif %}</td>
+        <td class="path">{{ event.method }} {{ event.path }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/settings/rate/clear" style="margin-top:0.5rem">
+    <button type="submit" class="secondary">Clear raw request log</button>
+    <span class="hint">Keeps hourly rollups used for long-term tuning.</span>
   </form>
 
   <h2>Rule modules</h2>

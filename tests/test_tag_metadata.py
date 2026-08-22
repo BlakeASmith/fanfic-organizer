@@ -26,6 +26,37 @@ def _load(name: str) -> str:
     return (FIXTURES / name).read_text()
 
 
+class _HtmlResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.status_code = 200
+        self.headers = {"Content-Type": "text/html"}
+
+    def close(self) -> None:
+        return
+
+    def raise_for_status(self) -> None:
+        return
+
+
+class _TagFetchSession:
+    def __init__(self, html: str, *, wall: str | None = None) -> None:
+        self.headers: dict = {}
+        self._ao3_logged_in = False
+        self.html = html
+        self.wall = wall
+        self.calls: list[str] = []
+
+    def request(self, method, url, data=None, timeout=None, stream=False):
+        self.calls.append(url)
+        if self.wall is not None and "/tags/" in url and not self._ao3_logged_in:
+            return _HtmlResponse(self.wall)
+        return _HtmlResponse(self.html)
+
+    def close(self) -> None:
+        return
+
+
 def test_encode_decode_tag_path_roundtrip():
     assert encode_tag_path("Kissing") == "Kissing"
     encoded_hash = encode_tag_path("#kiss")
@@ -63,6 +94,10 @@ def test_parse_canonical_fandom_tag():
     mapping = profile.synonym_map()
     assert mapping["Doctor Who (2005)"] == "Doctor Who (2005)"
     assert mapping[profile.synonyms[0].name] == "Doctor Who (2005)"
+    assert [t.name for t in profile.metatags] == [
+        "Doctor Who",
+        "Doctor Who & Related Fandoms",
+    ]
 
 
 def test_parse_canonical_character_tag():
@@ -189,6 +224,7 @@ def _profile(
     canonical: bool = False,
     synonym_of: str | None = None,
     synonyms: list[str] | None = None,
+    metatags: list[str] | None = None,
     category: str = "Additional Tags",
 ) -> TagProfile:
     from tag_metadata import TagProfile, TagRef
@@ -208,6 +244,10 @@ def _profile(
         synonyms=[
             TagRef(name=s, url=f"https://archiveofourown.org/tags/{s}")
             for s in (synonyms or [])
+        ],
+        metatags=[
+            TagRef(name=m, url=f"https://archiveofourown.org/tags/{m}")
+            for m in (metatags or [])
         ],
     )
 
@@ -394,6 +434,151 @@ def test_tag_cache_migrates_legacy_json(tmp_path: Path):
     assert sqlite_path.is_file()
 
 
+def test_remember_profile_keeps_unlisted_synonym(tmp_path: Path):
+    from ao3kit.tags.cache import TagCache
+
+    cache = TagCache.load(tmp_path / "tags.sqlite", ttl_days=90)
+    cache.remember_profile(
+        _profile("super slow burn though", synonym_of="Slow Burn")
+    )
+    assert cache.lookup("super slow burn though") == ("Slow Burn", "synonym")
+    cache.remember_profile(
+        _profile("Slow Burn", canonical=True, synonyms=["Slow burn"])
+    )
+    assert cache.lookup("Slow Burn") == ("Slow Burn", "canonical")
+    assert cache.lookup("Slow burn") == ("Slow Burn", "synonym")
+    assert cache.lookup("super slow burn though") == ("Slow Burn", "synonym")
+    cache.close()
+
+
+def test_warm_persist_failure_does_not_leave_memory_hit(tmp_path: Path):
+    from tag_metadata import TagResolver
+
+    resolver = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=tmp_path / "tags.sqlite",
+        persist=True,
+        follow_canonical=False,
+        ttl_days=90,
+    )
+
+    def boom(_profile):
+        raise AttributeError("'TagProfile' object has no attribute 'synonym_map'")
+
+    resolver.cache.remember_profile = boom  # type: ignore[method-assign]
+    try:
+        resolver.warm(_profile("Rivals to Lovers", canonical=True))
+    except AttributeError:
+        pass
+    else:
+        raise AssertionError("expected persist failure")
+    assert "Rivals to Lovers" not in resolver._profiles
+    resolver.close()
+
+
+def test_tag_resolver_follow_canonical_keeps_unlisted_synonym(tmp_path: Path):
+    from ao3kit.tags.warm import uncached_names
+    from tag_metadata import TagResolver
+
+    path = tmp_path / "tags.sqlite"
+    resolver = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        follow_canonical=True,
+        ttl_days=90,
+    )
+    fetches: list[str] = []
+
+    def fake_fetch(name: str, *, followed: bool = False):
+        fetches.append(name)
+        if name == "super slow burn though":
+            profile = _profile("super slow burn though", synonym_of="Slow Burn")
+        elif name == "Slow Burn":
+            profile = _profile(
+                "Slow Burn", canonical=True, synonyms=["Slow burn"]
+            )
+        else:
+            raise AssertionError(name)
+        resolver.warm(profile)
+        resolver._profiles.setdefault(name, profile)
+        if followed:
+            resolver.stats.follow_fetches += 1
+        else:
+            resolver.stats.fetches += 1
+        return profile
+
+    resolver._fetch_profile = fake_fetch  # type: ignore[method-assign]
+    first = resolver.resolve_one("super slow burn though")
+    assert first.resolved == "Slow Burn"
+    assert first.status == "synonym"
+    assert fetches == ["super slow burn though", "Slow Burn"]
+    assert resolver.cache.lookup("super slow burn though") == (
+        "Slow Burn",
+        "synonym",
+    )
+    second = resolver.resolve_one("super slow burn though")
+    assert second.resolved == "Slow Burn"
+    assert fetches == ["super slow burn though", "Slow Burn"]
+    assert uncached_names(
+        resolver.cache, ["super slow burn though", "Other"]
+    ) == ["Other"]
+    resolver.close()
+
+
+def test_follow_canonical_skips_fetch_when_canonical_already_cached(tmp_path: Path):
+    from tag_metadata import TagResolver
+
+    path = tmp_path / "tags.sqlite"
+    seeded = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        follow_canonical=True,
+        ttl_days=90,
+    )
+    seeded.warm(
+        _profile("Slow Burn", canonical=True, synonyms=["Slow burn"])
+    )
+    seeded.close()
+
+    fetches: list[str] = []
+    resolver = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        follow_canonical=True,
+        ttl_days=90,
+    )
+
+    def fake_fetch(name: str, *, followed: bool = False):
+        fetches.append(name)
+        if name != "super slow burn though":
+            raise AssertionError(f"canonical {name!r} should have come from disk")
+        profile = _profile("super slow burn though", synonym_of="Slow Burn")
+        resolver.warm(profile)
+        resolver._profiles.setdefault(name, profile)
+        resolver.stats.fetches += 1
+        return profile
+
+    resolver._fetch_profile = fake_fetch  # type: ignore[method-assign]
+    hit = resolver.resolve_one("super slow burn though")
+    assert hit.resolved == "Slow Burn"
+    assert hit.status == "synonym"
+    assert fetches == ["super slow burn though"]
+    assert resolver.stats.follow_fetches == 0
+    assert resolver.stats.disk_hits >= 1
+    resolver.close()
+
+
 def test_tag_resolver_follow_canonical_indexes_siblings():
     from tag_metadata import TagResolver
 
@@ -441,4 +626,314 @@ def test_tag_resolver_follow_canonical_indexes_siblings():
     assert second.resolved == "Kissing"
     assert second.status == "synonym"
     assert fetches == ["Kisses", "Kissing"]  # no extra fetch
+
+
+def test_tag_resolver_skips_session_and_login_on_cache_hit(
+    tmp_path: Path, monkeypatch
+):
+    from tag_metadata import TagResolver
+
+    def boom(*_a, **_k):
+        raise AssertionError("should not open a session or log in")
+
+    monkeypatch.setattr("ao3kit.tags.metadata.create_session", boom)
+    monkeypatch.setattr("ao3kit.http.login_to_ao3", boom)
+
+    path = tmp_path / "tags.sqlite"
+    seeder = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        follow_canonical=False,
+        ttl_days=90,
+    )
+    seeder.warm(_profile("Kissing", canonical=True, synonyms=["Kisses"]))
+    seeder.close()
+
+    resolver = TagResolver(
+        username="emily",
+        password="secret",
+        delay=0,
+        cache_path=path,
+        persist=True,
+        ttl_days=90,
+    )
+    hit = resolver.resolve_one("Kisses")
+    assert hit.resolved == "Kissing"
+    assert hit.status == "synonym"
+    assert resolver.session is None
+    assert resolver.stats.fetches == 0
+    resolver.close()
+
+
+def test_tag_resolver_logs_in_only_when_tag_page_is_locked(monkeypatch):
+    from tag_metadata import TagResolver
+
+    wall = """
+    <html><body>
+    <div id="main" class="sessions-new">
+      This work is only available to registered users of the Archive.
+    </div>
+    </body></html>
+    """
+    session = _TagFetchSession(_load("tag_canonical_freeform.html"), wall=wall)
+    logins: list[str] = []
+
+    def fake_create(username=None, password=None, **_k):
+        if username and password:
+            session._ao3_username = username
+            session._ao3_password = password
+        return session
+
+    def fake_login(sess, username, password, on_status=None):
+        logins.append(username)
+        sess._ao3_logged_in = True
+
+    monkeypatch.setattr("ao3kit.tags.metadata.create_session", fake_create)
+    monkeypatch.setattr("ao3kit.http.login_to_ao3", fake_login)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+
+    resolver = TagResolver(
+        username="emily",
+        password="secret",
+        delay=0,
+        cache_path=None,
+        persist=False,
+    )
+    result = resolver.resolve_one("Kissing")
+    assert result.status == "canonical"
+    assert result.resolved == "Kissing"
+    assert logins == ["emily"]
+    assert resolver.stats.fetches == 1
+    resolver.close()
+
+
+def test_tag_resolver_does_not_login_for_public_tag_fetch(monkeypatch):
+    from tag_metadata import TagResolver
+
+    session = _TagFetchSession(_load("tag_canonical_freeform.html"))
+
+    def fake_create(username=None, password=None, **_k):
+        if username and password:
+            session._ao3_username = username
+            session._ao3_password = password
+        return session
+
+    def boom(*_a, **_k):
+        raise AssertionError("login should not run for a public tag page")
+
+    monkeypatch.setattr("ao3kit.tags.metadata.create_session", fake_create)
+    monkeypatch.setattr("ao3kit.http.login_to_ao3", boom)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+
+    resolver = TagResolver(
+        username="emily",
+        password="secret",
+        delay=0,
+        cache_path=None,
+        persist=False,
+    )
+    result = resolver.resolve_one("Kissing")
+    assert result.status == "canonical"
+    assert result.resolved == "Kissing"
+    resolver.close()
+
+
+def test_simplify_appends_metatags_without_duplicates():
+    from tag_metadata import TagResolver
+
+    resolver = TagResolver(
+        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(
+        _profile(
+            "Spider-Man - All Media Types",
+            canonical=True,
+            category="Fandom",
+            metatags=["Marvel"],
+        )
+    )
+    resolver.warm(_profile("Marvel", canonical=True, category="Fandom"))
+    resolver.warm(_profile("Fluff", canonical=True))
+
+    result = resolver.simplify(
+        ["Spider-Man - All Media Types", "Fluff", "Marvel"]
+    )
+    assert result.simplified == [
+        "Spider-Man - All Media Types",
+        "Fluff",
+        "Marvel",
+    ]
+    assert result.inserted_metatags == []
+
+    only_spiderman = resolver.simplify(["Spider-Man - All Media Types", "Fluff"])
+    assert only_spiderman.simplified == [
+        "Spider-Man - All Media Types",
+        "Fluff",
+        "Marvel",
+    ]
+    assert only_spiderman.inserted_metatags == ["Marvel"]
+
+    skipped = resolver.simplify(
+        ["Spider-Man - All Media Types"], include_metatags=False
+    )
+    assert skipped.simplified == ["Spider-Man - All Media Types"]
+    assert skipped.inserted_metatags == []
+
+
+def test_simplify_skips_metatags_for_non_fandom_tags():
+    from tag_metadata import TagResolver
+
+    resolver = TagResolver(
+        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(
+        _profile(
+            "Amy Pond (Doctor Who)",
+            canonical=True,
+            category="Character",
+            metatags=["Amy"],
+        )
+    )
+    result = resolver.simplify(["Amy Pond (Doctor Who)"])
+    assert result.simplified == ["Amy Pond (Doctor Who)"]
+    assert result.inserted_metatags == []
+
+
+def test_simplify_uses_canonical_metatags_for_synonyms():
+    from tag_metadata import TagResolver
+
+    resolver = TagResolver(
+        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(
+        _profile("spiderman", synonym_of="Spider-Man - All Media Types", category="Fandom")
+    )
+    resolver.warm(
+        _profile(
+            "Spider-Man - All Media Types",
+            canonical=True,
+            category="Fandom",
+            synonyms=["spiderman"],
+            metatags=["Marvel"],
+        )
+    )
+    result = resolver.simplify(["spiderman"])
+    assert result.simplified == ["Spider-Man - All Media Types", "Marvel"]
+    assert result.inserted_metatags == ["Marvel"]
+
+
+def test_tag_cache_persists_metatags(tmp_path: Path):
+    from ao3kit.tags.cache import TagCache
+    from tag_metadata import TagResolver
+
+    path = tmp_path / "tags.sqlite"
+    resolver = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        follow_canonical=False,
+        ttl_days=90,
+    )
+    resolver.warm(
+        _profile(
+            "Spider-Man - All Media Types",
+            canonical=True,
+            category="Fandom",
+            synonyms=["spiderman"],
+            metatags=["Marvel"],
+        )
+    )
+    resolver.close()
+
+    cache = TagCache.load(path, ttl_days=90)
+    assert cache.metatags_for("Spider-Man - All Media Types") == ["Marvel"]
+    assert cache.metatags_for("spiderman") == ["Marvel"]
+    cache.close()
+
+    resolver2 = TagResolver(
+        session=object(),
+        delay=0,
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        ttl_days=90,
+    )
+    assert resolver2.metatags_for("spiderman") == ["Marvel"]
+    assert resolver2.stats.fetches == 0
+    result = resolver2.simplify(["spiderman"])
+    assert result.simplified == ["Spider-Man - All Media Types", "Marvel"]
+    resolver2.close()
+
+
+def test_tag_cache_migrates_metatags_column(tmp_path: Path):
+    import sqlite3
+
+    from ao3kit.tags.cache import TagCache
+
+    path = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        CREATE TABLE entries (
+          name TEXT PRIMARY KEY,
+          canonical TEXT NOT NULL,
+          status TEXT NOT NULL,
+          category TEXT,
+          root TEXT NOT NULL,
+          fetched_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES ('version', '2')"
+    )
+    conn.execute(
+        """
+        INSERT INTO entries(name, canonical, status, category, root, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "Kissing",
+            "Kissing",
+            "canonical",
+            "Additional Tags",
+            "Kissing",
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    cache = TagCache.load(path, ttl_days=0)
+    assert cache.lookup("Kissing") == ("Kissing", "canonical")
+    assert cache.metatags_for("Kissing") is None
+    cache.close()
+
+
+def test_simplify_appends_nested_metatags_from_profile_page():
+    from tag_metadata import TagResolver, parse_tag_page
+
+    html = _load("tag_canonical_fandom.html")
+    profile = parse_tag_page(
+        html, url="https://archiveofourown.org/tags/Doctor%20Who%20(2005)"
+    )
+    resolver = TagResolver(
+        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(profile)
+    result = resolver.simplify(["Doctor Who (2005)"])
+    assert result.simplified == [
+        "Doctor Who (2005)",
+        "Doctor Who",
+        "Doctor Who & Related Fandoms",
+    ]
 

@@ -6,6 +6,9 @@ Layout::
 
     .ao3kit/
       config.yaml          # settings
+      mappings.yaml        # extra keep/map/drop rows
+      collections.yaml     # collection membership rules + per-work pins
+      ao3_session.json     # cached AO3 cookies (not the password)
       rules/
         default.py         # active rules module (code-first)
 """
@@ -21,6 +24,8 @@ from typing import Any
 
 DEFAULT_RULES_FILENAME = "default.py"
 CONFIG_FILENAME = "config.yaml"
+MAPPINGS_FILENAME = "mappings.yaml"
+COLLECTIONS_FILENAME = "collections.yaml"
 RULES_DIRNAME = "rules"
 
 _SAFE_RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
@@ -28,7 +33,11 @@ _SAFE_RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 DEFAULT_RULES_TEMPLATE = '''\
 """User tag rules for ao3kit.
 
-Edit this file (CLI or Settings UI), then re-run apply / use the web tools.
+Simple keep / rename / drop rows live in ``.ao3kit/mappings.yaml``
+(Calibre plugin: Collections & tag rules → Tag rules, or ``python -m ao3kit config mappings``).
+Collection membership lives in ``.ao3kit/collections.yaml``
+(``python -m ao3kit config collections``).
+Use this Python module for custom logic that YAML cannot express.
 Docs: TagRule, RuleContext, RuleEffect, KeepSeparateRule, CollectRule, …
 """
 
@@ -80,12 +89,15 @@ RULES = TagRulesConfig(
 '''
 
 
+DEFAULT_REQUEST_DELAY = 1.5
+
+
 @dataclass
 class UserSettings:
     """Serializable user preferences (config.yaml)."""
 
     version: int = 1
-    request_delay: float = 1.5
+    request_delay: float = DEFAULT_REQUEST_DELAY
     resolve_canonical: bool = True
     drop_unmarked: bool = False
     drop_errors: bool = False
@@ -95,6 +107,11 @@ class UserSettings:
     # Days before a synonym/canonical tree is purged (0 = never expire).
     tag_cache_ttl_days: float = 90.0
     follow_canonical: bool = True
+    include_metatags: bool = True
+    # Extra seconds the background tag warmer waits after each fetch.
+    tag_warm_interval: float = 10.0
+    # On recompute, collections added by hand on a book become a pin rule.
+    collections_remember_manual_adds: bool = True
     # Optional UI / scrape defaults
     default_language_id: str = "en"
     notes: str = ""
@@ -123,6 +140,14 @@ class UserConfig:
     @property
     def rules_dir(self) -> Path:
         return self.home / RULES_DIRNAME
+
+    @property
+    def mappings_path(self) -> Path:
+        return self.home / MAPPINGS_FILENAME
+
+    @property
+    def collections_path(self) -> Path:
+        return self.home / COLLECTIONS_FILENAME
 
     def active_rules_path(self) -> Path:
         raw = Path(self.settings.active_rules)
@@ -228,17 +253,44 @@ class UserConfig:
         self.save()
         return path
 
+    def load_mappings(self):
+        """Load extra tag mapping rows from ``mappings.yaml``."""
+        from ao3kit.tags.mappings import load_mappings
+
+        return load_mappings(self.mappings_path)
+
+    def save_mappings(self, mappings) -> Path:
+        from ao3kit.tags.mappings import save_mappings
+
+        return save_mappings(self.mappings_path, mappings)
+
+    def load_collection_rules(self):
+        """Load collection membership rules (``.ao3kit/collections.yaml``)."""
+        from ao3kit.tags.collections import load_collection_rules
+
+        return load_collection_rules(self.collections_path)
+
+    def save_collection_rules(self, rules) -> Path:
+        from ao3kit.tags.collections import save_collection_rules
+
+        return save_collection_rules(self.collections_path, rules)
+
+    def with_mappings(self, config):
+        """Layer extra tag mappings on top of a Python/YAML ``TagRulesConfig``."""
+        from ao3kit.tags.mappings import merge_mapping_rules
+
+        return merge_mapping_rules(config, self.load_mappings())
+
     def load_active_rules(self):
-        """Load ``TagRulesConfig`` from the active rules module."""
-        from ao3kit.tags.rules import load_tag_rules
+        """Load active Python/YAML rules plus extra tag mappings."""
+        from ao3kit.tags.rules import TagRulesConfig, load_tag_rules
 
         path = self.active_rules_path()
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"Active rules file missing: {path}. "
-                f"Run: python -m ao3kit config init"
-            )
-        return load_tag_rules(path)
+        if path.is_file():
+            config = load_tag_rules(path)
+        else:
+            config = TagRulesConfig()
+        return self.with_mappings(config)
 
 
 def default_home(project_root: Path | None = None) -> Path:
@@ -261,6 +313,18 @@ def _read_settings(path: Path) -> UserSettings:
     if not isinstance(data, dict):
         raise ValueError(f"Invalid config file (expected mapping): {path}")
     return UserSettings.from_dict(data)
+
+
+def default_request_delay() -> float:
+    """Work-page / search / download interval from ``config.yaml``."""
+    return float(load_user_config().settings.request_delay)
+
+
+def resolve_request_delay(requested: float | None) -> float:
+    """``None`` means use :func:`default_request_delay`; ``0`` is kept as-is."""
+    if requested is not None:
+        return float(requested)
+    return default_request_delay()
 
 
 def load_user_config(
