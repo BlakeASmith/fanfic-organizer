@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "calibre-dev": {
+      "command": "python3",
+      "args": ["-m", "calibre_dev"]
+    }
+  }
+}

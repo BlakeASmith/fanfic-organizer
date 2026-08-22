@@ -10,6 +10,7 @@ from ao3kit.tags.cache import TagCache
 from ao3kit.tags.graph import (
     GraphWork,
     build_tag_graph,
+    edge_weight,
     infer_format,
     main,
     render_dot,
@@ -211,6 +212,31 @@ def test_html_embeds_graph_and_escapes_script(tmp_path: Path):
     assert "show-physics" in html
     assert "names-mode" in html
     assert "p-bounce" in html
+    assert "p-spread" in html
+    assert "MIN_ZOOM" in html
+    assert "roundBlob" in html
+    assert "zoomedIn" not in html
+    assert "a.r + b.r" in html
+    assert "pullOnly" in html
+    assert "perRing" in html
+
+
+def test_edge_weight_keeps_busy_work_spokes_strong():
+    assert edge_weight("synonym") == 2.0
+    assert edge_weight("metatag") == 0.7
+    assert edge_weight("work", hub_degree=1) == 1.0
+    busy = edge_weight("work", hub_degree=80)
+    assert busy > edge_weight("work", hub_degree=4)
+    assert busy > 1.0
+
+
+def test_busy_work_edges_do_not_collapse(tmp_path: Path):
+    cache = _cache(tmp_path)
+    tags = tuple(f"tag-{i}" for i in range(40))
+    graph = build_tag_graph(cache, None, works=[GraphWork("1", "Busy", tags)])
+    weights = [edge.weight for edge in graph.edges if edge.kind == "work"]
+    assert len(weights) == 40
+    assert min(weights) >= 1.0
 
 
 def test_works_are_nodes_linked_to_every_tag(tmp_path: Path):
@@ -233,7 +259,7 @@ def test_works_are_nodes_linked_to_every_tag(tmp_path: Path):
     assert graph.work_count == 2
     assert graph.work_edges == 4
     work_edge = next(edge for edge in graph.edges if edge.kind == "work")
-    assert work_edge.weight > 0
+    assert work_edge.weight > 0.8
     syn = next(edge for edge in graph.edges if edge.kind == "synonym")
     assert syn.weight == 2.0
     alpha = next(node for node in graph.nodes if node.id == "work:1")

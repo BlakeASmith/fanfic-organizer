@@ -8,3 +8,4 @@ python-multipart>=0.0.12
 pytest>=8.0
 python-dotenv>=1.0
 pyyaml>=6.0
+fastmcp>=2.8

@@ -13,18 +13,8 @@ from calibre_plugins.ao3_scraper.dialogs import (
     SimilarSearchDialog,
     TagMappingsDialog,
     TagPurgeDialog,
-    WarmLogDialog,
 )
 from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings, prefs
-from calibre_plugins.ao3_scraper.progress import (
-    ApplyCollectionsDialog,
-    DownloadSelectedDialog,
-    FillSeriesDialog,
-    ImportProgressDialog,
-    ImportSeriesDialog,
-    ScrapeImportDialog,
-    SimplifySelectedDialog,
-)
 from calibre_plugins.ao3_scraper.scrape_run import merge_plugin_settings
 
 try:
@@ -42,12 +32,19 @@ class AO3ScraperPlugin(InterfaceAction):
         self.menu = QMenu(self.gui)
         self.qaction.setMenu(self.menu)
         self.menu.aboutToShow.connect(self.build_menu)
-        self._job_dialog = None
-        self._warm_log_dialog = None
+        self._jobs = None
+
+    def jobs(self):
+        if self._jobs is None:
+            from calibre_plugins.ao3_scraper.job_supervise import JobSupervisor
+
+            self._jobs = JobSupervisor(self)
+        return self._jobs
 
     def initialization_complete(self):
+        # Watch leftover jobs from the last session (pending Calibre ingest).
         # Do not create columns or write the open library on startup.
-        return
+        self.jobs()
 
     def build_menu(self):
         self.menu.clear()
@@ -82,6 +79,8 @@ class AO3ScraperPlugin(InterfaceAction):
             'Add selected books to a collection...',
             self.add_selected_books_to_collection,
         )
+        self.menu.addSeparator()
+        self.menu.addAction('Running jobs...', self.show_running_jobs)
         self.menu.addAction(
             'Warm tag cache in background...',
             self.warm_tag_cache,
@@ -102,29 +101,16 @@ class AO3ScraperPlugin(InterfaceAction):
         self.menu.addAction('Tag purge...', self.show_tag_purge_dialog)
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
+    def show_running_jobs(self):
+        self.jobs().show_list()
+
     def apply_settings(self):
         return
 
     def show_configuration(self):
         self.interface_action_base_plugin.do_user_config(parent=self.gui)
 
-    def _job_running(self) -> bool:
-        return self._job_dialog is not None and self._job_dialog.isVisible()
-
-    def _start_job_dialog(self, dialog) -> None:
-        self._job_dialog = dialog
-        dialog.finished.connect(self._clear_job_dialog)
-        dialog.show()
-
-    def _clear_job_dialog(self, *_args):
-        self._job_dialog = None
-
     def show_import_dialog(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         dialog = ImportJsonlDialog(self.gui)
         if not dialog.exec_():
             return
@@ -138,21 +124,43 @@ class AO3ScraperPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        progress = ImportProgressDialog(
-            self.gui,
-            path=values['path'],
-            simplify_tags=values['simplify_tags'],
-            update_existing=values['update_existing'],
-            include_series=bool(prefs.get('import_full_series', False)),
+        from calibre_plugins.ao3_scraper.job_plans import plan_import
+        from calibre_plugins.ao3_scraper.jsonl_loader import load_import_source
+
+        try:
+            records, bundle_root, cleanup = load_import_source(values['path'])
+        except Exception as exc:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Could not read that import file.',
+                det_msg=str(exc),
+                show=True,
+            )
+            return
+        if not records:
+            error_dialog(
+                self.gui, 'AO3 Scraper', 'The import file contains no records.', show=True
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('import')
+        if job_dir is None:
+            return
+        plan_import(
+            records,
+            job_dir,
+            options={
+                **merge_plugin_settings({}, plugin_runtime_settings()),
+                'simplify_tags': values['simplify_tags'],
+                'update_existing': values['update_existing'],
+                'include_series': bool(prefs.get('import_full_series', False)),
+            },
+            bundle_root=bundle_root,
+            cleanup_dir=str(cleanup) if cleanup else None,
         )
-        self._start_job_dialog(progress)
+        self.jobs().start_prepared(job_dir)
 
     def show_scrape_dialog(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         dialog = ScrapeSearchDialog(self.gui)
         if not dialog.exec_():
             return
@@ -166,18 +174,18 @@ class AO3ScraperPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        progress = ScrapeImportDialog(
-            self.gui,
-            options=merge_plugin_settings(values, plugin_runtime_settings()),
+        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
+
+        job_dir = self.jobs().prepare_job_dir('scrape')
+        if job_dir is None:
+            return
+        plan_scrape(
+            merge_plugin_settings(values, plugin_runtime_settings()),
+            job_dir,
         )
-        self._start_job_dialog(progress)
+        self.jobs().start_prepared(job_dir)
 
     def show_similar_dialog(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -222,18 +230,18 @@ class AO3ScraperPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        progress = ScrapeImportDialog(
-            self.gui,
-            options=merge_plugin_settings(values, plugin_runtime_settings()),
+        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
+
+        job_dir = self.jobs().prepare_job_dir('scrape')
+        if job_dir is None:
+            return
+        plan_scrape(
+            merge_plugin_settings(values, plugin_runtime_settings()),
+            job_dir,
         )
-        self._start_job_dialog(progress)
+        self.jobs().start_prepared(job_dir)
 
     def download_selected_epubs(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -288,15 +296,20 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        progress = DownloadSelectedDialog(self.gui, book_ids)
-        self._start_job_dialog(progress)
+        from calibre_plugins.ao3_scraper.job_plans import plan_download_selected
+
+        job_dir = self.jobs().prepare_job_dir('download')
+        if job_dir is None:
+            return
+        plan_download_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
 
     def import_series_for_selected(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -332,15 +345,37 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        progress = ImportSeriesDialog(self.gui, book_ids)
-        self._start_job_dialog(progress)
+        from calibre_plugins.ao3_scraper.job_plans import plan_import_series
+        from calibre_plugins.ao3_scraper.selected import load_selected_records
+
+        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books have an AO3 URL or work id.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('series')
+        if job_dir is None:
+            return
+        plan_import_series(
+            [item['record'] for item in ready],
+            skipped,
+            job_dir,
+            merge_plugin_settings(
+                {
+                    'download_epubs': bool(prefs.get('download_epubs', True)),
+                    'simplify_tags': bool(prefs.get('simplify_tags', False)),
+                    'update_existing': bool(prefs.get('update_existing', True)),
+                },
+                plugin_runtime_settings(),
+            ),
+        )
+        self.jobs().start_prepared(job_dir)
 
     def fill_series_for_selected(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -367,15 +402,30 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        progress = FillSeriesDialog(self.gui, book_ids)
-        self._start_job_dialog(progress)
+        from calibre_plugins.ao3_scraper.job_plans import plan_fill_series
+        from calibre_plugins.ao3_scraper.selected import load_selected_records
+
+        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books have an AO3 URL or work id.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('fill_series')
+        if job_dir is None:
+            return
+        plan_fill_series(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
 
     def simplify_selected_books(self):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -401,15 +451,30 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        progress = SimplifySelectedDialog(self.gui, book_ids)
-        self._start_job_dialog(progress)
+        from calibre_plugins.ao3_scraper.job_plans import plan_simplify_selected
+        from calibre_plugins.ao3_scraper.selected import load_selected_records
+
+        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books have an AO3 URL or work id.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('enrich')
+        if job_dir is None:
+            return
+        plan_simplify_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
 
     def recompute_collections_for_selected(self, *args, confirm=True):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -436,15 +501,31 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        progress = ApplyCollectionsDialog(self.gui, book_ids)
-        self._start_job_dialog(progress)
+        from calibre_plugins.ao3_scraper.job_plans import plan_simplify_selected
+        from calibre_plugins.ao3_scraper.selected import load_selected_for_collections
+
+        ready, skipped = load_selected_for_collections(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books could be loaded.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('collections')
+        if job_dir is None:
+            return
+        plan_simplify_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings({}, plugin_runtime_settings()),
+            collections_only=True,
+        )
+        self.jobs().start_prepared(job_dir)
 
     def edit_collections_of_selected(self, *args):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -466,11 +547,6 @@ class AO3ScraperPlugin(InterfaceAction):
         self.recompute_collections_for_selected(*args, confirm=confirm)
 
     def add_selected_books_to_collection(self, *args, collection_name='', confirm=True):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -673,6 +749,8 @@ class AO3ScraperPlugin(InterfaceAction):
             ),
             show=True,
         )
+        if status.get('running') or already:
+            self.jobs().attach('warm')
 
     def stop_tag_cache_warm(self):
         if not question_dialog(
@@ -722,41 +800,7 @@ class AO3ScraperPlugin(InterfaceAction):
             info_dialog(self.gui, 'AO3 Scraper', summary, show=True)
 
     def show_tag_cache_log(self):
-        existing = self._warm_log_dialog
-        if existing is not None:
-            try:
-                if existing.isVisible():
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-            except RuntimeError:
-                self._warm_log_dialog = None
-
-        from calibre_plugins.ao3_scraper.enrich import resolve_ao3kit_runtime
-        from calibre_plugins.ao3_scraper.tag_warm import (
-            warm_log_path,
-            warm_status_path,
-        )
-
-        project, _python, error = resolve_ao3kit_runtime()
-        if error or project is None:
-            error_dialog(
-                self.gui,
-                'AO3 Scraper',
-                'Could not find the ao3kit checkout / Python.',
-                det_msg=error or '',
-                show=True,
-            )
-            return
-
-        dialog = WarmLogDialog(
-            self.gui,
-            log_path=warm_log_path(project),
-            status_path=warm_status_path(project),
-        )
-        dialog.finished.connect(lambda *_args: setattr(self, '_warm_log_dialog', None))
-        self._warm_log_dialog = dialog
-        dialog.show()
+        self.jobs().attach('warm')
 
     def show_tag_graph(self):
         db = self.gui.current_db
@@ -879,11 +923,6 @@ class AO3ScraperPlugin(InterfaceAction):
             self.recompute_collections_for_selected(confirm=False)
 
     def show_tag_purge_dialog(self, *args):
-        if self._job_running():
-            self._job_dialog.raise_()
-            self._job_dialog.activateWindow()
-            return
-
         book_ids = []
         try:
             from calibre_plugins.ao3_scraper.tag_purge import selected_ids_from_gui

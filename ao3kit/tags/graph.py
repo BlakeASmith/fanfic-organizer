@@ -102,6 +102,19 @@ class TagGraphEdge:
         }
 
 
+def edge_weight(kind: str, *, hub_degree: int = 1) -> float:
+    """Link magnitude for the viewer: higher is a shorter, stiffer spring.
+
+    AO3 works routinely carry dozens of tags. Extra tags must not weaken
+    the spokes (that inflates a halo); busy works get a slight hold bonus.
+    """
+    if kind == "synonym":
+        return 2.0
+    if kind == "metatag":
+        return 0.7
+    return 1.0 + 0.1 * math.log(max(int(hub_degree), 1))
+
+
 @dataclass
 class TagGraphComponent:
     id: int
@@ -587,16 +600,15 @@ def build_tag_graph(
 
     weighted: list[TagGraphEdge] = []
     for edge in edges:
-        if edge.kind == "synonym":
-            weight = 2.0
-        elif edge.kind == "metatag":
-            weight = 0.5
-        else:
-            work = nodes.get(edge.source)
-            deg = work.degree if work is not None else 1
-            weight = 1.0 / math.sqrt(max(deg, 1))
+        work = nodes.get(edge.source)
+        deg = work.degree if work is not None else 1
         weighted.append(
-            TagGraphEdge(edge.source, edge.target, edge.kind, weight)
+            TagGraphEdge(
+                edge.source,
+                edge.target,
+                edge.kind,
+                edge_weight(edge.kind, hub_degree=deg),
+            )
         )
     edges = weighted
 
@@ -987,15 +999,16 @@ canvas { width: 100%; height: 100%; display: block; }
 </div>
 <div class="settings" id="phys-settings">
   <label>Bounce <input id="p-bounce" type="range" min="0" max="100" value="62"/></label>
-  <label>Stiffness <input id="p-stiff" type="range" min="20" max="200" value="115"/></label>
-  <label>Repel <input id="p-charge" type="range" min="20" max="200" value="110"/></label>
-  <label>Settle <input id="p-settle" type="range" min="10" max="200" value="70"/></label>
+  <label>Stiffness <input id="p-stiff" type="range" min="20" max="200" value="90"/></label>
+  <label>Repel <input id="p-charge" type="range" min="20" max="200" value="80"/></label>
+  <label>Cluster <input id="p-spread" type="range" min="40" max="180" value="70"/></label>
+  <label>Settle <input id="p-settle" type="range" min="10" max="200" value="80"/></label>
   <button type="button" id="p-jiggle">Jiggle</button>
 </div>
 <main>
   <div id="canvas-wrap">
     <canvas id="g"></canvas>
-    <div id="hint">Scroll to zoom · drag a node (neighbors follow) · names stay on with the Names menu</div>
+    <div id="hint">Scroll to zoom · ⤢ fits everything · drag a node · Cluster keeps the blob round</div>
     <div id="zoom">
       <button type="button" id="z-in" title="Zoom in">+</button>
       <button type="button" id="z-out" title="Zoom out">−</button>
@@ -1046,7 +1059,7 @@ function colorFor(n) {
 }
 function radiusOf(n) {
   const d = Math.log(1 + (n.degree || 0));
-  return n.kind === "work" ? 9 + d : 3.2 + d * 0.7;
+  return n.kind === "work" ? 8 + d * 0.6 : 2.6 + d * 0.45;
 }
 function kinds() {
   const set = new Set();
@@ -1066,6 +1079,9 @@ let dragging = null;
 let panning = false;
 let lastPtr = null;
 let lastHoverId = null;
+let viewLocked = false;
+const MIN_ZOOM = 0.02;
+const MAX_ZOOM = 6;
 
 function rebuildVis() {
   const cat = catSel.value;
@@ -1098,7 +1114,7 @@ function physicsOn() {
   return document.getElementById("show-physics").checked;
 }
 
-const SETTING_IDS = ["p-bounce", "p-stiff", "p-charge", "p-settle", "names-mode", "show-physics"];
+const SETTING_IDS = ["p-bounce", "p-stiff", "p-charge", "p-spread", "p-settle", "names-mode", "show-physics"];
 function saveSettings() {
   const s = {};
   for (const id of SETTING_IDS) {
@@ -1106,11 +1122,11 @@ function saveSettings() {
     if (!el) continue;
     s[id] = el.type === "checkbox" ? el.checked : el.value;
   }
-  try { localStorage.setItem("ao3kit-graph", JSON.stringify(s)); } catch (err) {}
+  try { localStorage.setItem("ao3kit-graph-v2", JSON.stringify(s)); } catch (err) {}
 }
 function loadSettings() {
   try {
-    const s = JSON.parse(localStorage.getItem("ao3kit-graph") || "{}");
+    const s = JSON.parse(localStorage.getItem("ao3kit-graph-v2") || "{}");
     for (const id of SETTING_IDS) {
       if (s[id] == null) continue;
       const el = document.getElementById(id);
@@ -1130,8 +1146,8 @@ function layoutNodes() {
   for (const n of DATA.nodes) {
     if (!vis.ids.has(n.id)) continue;
     const mass = n.kind === "work"
-      ? 8 + (n.degree || 0) * 0.12
-      : 1.2 + Math.log(1 + (n.degree || 0));
+      ? 10 + Math.log(1 + (n.degree || 0)) * 1.8
+      : 1.1 + Math.log(1 + (n.degree || 0));
     const node = {
       id: n.id, name: n.name, kind: n.kind, status: n.status, category: n.category,
       in_seed: n.in_seed, degree: n.degree, url: n.url,
@@ -1143,11 +1159,13 @@ function layoutNodes() {
     if (n.kind === "work") works.push(node); else tags.push(node);
   }
   const nW = Math.max(works.length, 1);
-  const R = 90 + nW * 16;
+  const nAll = Math.max(sim.length, 1);
+  const R = 28 + Math.sqrt(nW) * 22;
   works.forEach((n, i) => {
     const a = (i / nW) * Math.PI * 2 - Math.PI / 2;
-    n.x = Math.cos(a) * R;
-    n.y = Math.sin(a) * R;
+    const jitter = 8 + Math.sqrt(nW);
+    n.x = Math.cos(a) * R + (Math.random() - 0.5) * jitter;
+    n.y = Math.sin(a) * R + (Math.random() - 0.5) * jitter;
   });
   const slot = {};
   for (const n of tags) {
@@ -1159,15 +1177,19 @@ function layoutNodes() {
     }
     if (!hosts.length) {
       const a = hashAngle(n.id);
-      n.x = Math.cos(a) * (R + 180);
-      n.y = Math.sin(a) * (R + 180);
+      const r = Math.sqrt(nAll) * 10 * Math.random();
+      n.x = Math.cos(a) * r;
+      n.y = Math.sin(a) * r;
       continue;
     }
     if (hosts.length === 1) {
       const h = hosts[0];
-      const k = (slot[h.id] = (slot[h.id] || 0) + 1);
-      const a = hashAngle(n.id) + k * 0.35;
-      const rad = 42 + Math.min(110, Math.sqrt(h.degree || 1) * 8);
+      const k = (slot[h.id] = (slot[h.id] || 0) + 1) - 1;
+      const perRing = 12;
+      const ring = Math.floor(k / perRing);
+      const iOn = k % perRing;
+      const a = (iOn / perRing) * Math.PI * 2 + ring * 0.28;
+      const rad = h.r + 6 + ring * 7;
       n.x = h.x + Math.cos(a) * rad;
       n.y = h.y + Math.sin(a) * rad;
     } else {
@@ -1181,15 +1203,16 @@ function layoutNodes() {
     const a = sim[simIndex[e.source]], b = sim[simIndex[e.target]];
     if (!a || !b) continue;
     const w = e.weight || 1;
-    let len, str;
-    if (e.kind === "synonym") { len = 24; str = 0.95 * w; }
-    else if (e.kind === "metatag") { len = 78; str = 0.16 * w; }
-    else {
-      const deg = a.kind === "work" ? a.degree : b.degree;
-      len = 34 + Math.min(80, Math.sqrt(deg || 1) * 4);
-      str = 0.55 * w;
+    if (e.kind === "work") {
+      springs.push({
+        a, b, kind: e.kind, weight: w,
+        len: a.r + b.r + 5, str: 1.4 * w, pullOnly: true
+      });
+    } else if (e.kind === "synonym") {
+      springs.push({ a, b, kind: e.kind, weight: w, len: a.r + b.r + 4, str: 1.2 * w, pullOnly: false });
+    } else {
+      springs.push({ a, b, kind: e.kind, weight: w, len: a.r + b.r + 9, str: 0.45 * w, pullOnly: false });
     }
-    springs.push({ a, b, kind: e.kind, weight: w, len, str });
   }
 }
 
@@ -1207,14 +1230,18 @@ function kick(amount) {
 
 function tick() {
   const bounce = slider("p-bounce", 62) / 100;
-  const stiff = slider("p-stiff", 115) / 100;
-  const chargeMul = slider("p-charge", 110) / 100;
+  const stiff = slider("p-stiff", 90) / 100;
+  const chargeMul = slider("p-charge", 80) / 100;
+  const spread = slider("p-spread", 70) / 100;
   const friction = 0.78 + bounce * 0.18;
   const k = dragging ? Math.max(Math.min(alpha, 1), 0.55) : Math.min(alpha, 1);
+  const nCount = Math.max(sim.length, 1);
+  const targetR = (48 + Math.sqrt(nCount) * 13) * (0.36 + spread * 0.7);
   for (const s of springs) {
     const a = s.a, b = s.b;
     let dx = b.x - a.x, dy = b.y - a.y;
     const dist = Math.hypot(dx, dy) || 0.01;
+    if (s.pullOnly && dist <= s.len) continue;
     const f = ((dist - s.len) / dist) * s.str * stiff * k;
     dx *= f; dy *= f;
     if (a !== dragging) { a.vx += dx / a.mass; a.vy += dy / a.mass; }
@@ -1240,10 +1267,11 @@ function tick() {
           let dx = n.x - o.x, dy = n.y - o.y;
           let dist2 = dx * dx + dy * dy;
           if (dist2 === 0) { dx = 0.6; dy = 0.6; dist2 = 0.7; }
-          const min = n.r + o.r + 14;
+          const towardWork = n.kind === "work" || o.kind === "work";
+          const min = n.r + o.r + (towardWork ? 2 : 5);
           if (dist2 > min * min * 16) continue;
           const dist = Math.sqrt(dist2);
-          const charge = 36 * chargeMul * k / dist2;
+          const charge = (towardWork ? 6 : 16) * chargeMul * k / dist2;
           const overlap = dist < min ? (min - dist) / dist : 0;
           const collide = overlap * (0.16 + bounce * 0.22) * k;
           const push = charge + collide;
@@ -1259,13 +1287,129 @@ function tick() {
         }
       }
     }
-    n.vx += (-n.x) * 0.01 * k / n.mass;
-    n.vy += (-n.y) * 0.01 * k / n.mass;
   }
+  const big = 88;
+  const coarse = new Map();
+  for (const n of sim) {
+    const key = (n.x / big | 0) + ":" + (n.y / big | 0);
+    let c = coarse.get(key);
+    if (!c) { c = { x: 0, y: 0, m: 0 }; coarse.set(key, c); }
+    c.x += n.x * n.mass; c.y += n.y * n.mass; c.m += n.mass;
+  }
+  for (const c of coarse.values()) { c.x /= c.m; c.y /= c.m; }
+  const far = 40 * chargeMul * k;
+  for (const n of sim) {
+    if (n === dragging) continue;
+    const cx = n.x / big | 0, cy = n.y / big | 0;
+    for (let ix = cx - 3; ix <= cx + 3; ix++) {
+      for (let iy = cy - 3; iy <= cy + 3; iy++) {
+        if (Math.abs(ix - cx) <= 1 && Math.abs(iy - cy) <= 1) continue;
+        const c = coarse.get(ix + ":" + iy);
+        if (!c) continue;
+        const dx = n.x - c.x, dy = n.y - c.y;
+        const dist2 = dx * dx + dy * dy + 400;
+        const push = far * c.m / dist2 / n.mass;
+        n.vx += dx * push;
+        n.vy += dy * push;
+      }
+    }
+    const dist = Math.hypot(n.x, n.y) || 0.01;
+    n.vx += (-n.x) * 0.028 * k / n.mass;
+    n.vy += (-n.y) * 0.028 * k / n.mass;
+    if (dist > targetR * 0.82) {
+      const t = (dist - targetR * 0.82) / Math.max(targetR * 0.18, 1);
+      const pull = Math.min(t * t, 5) * 0.16 * k;
+      n.vx -= (n.x / dist) * pull;
+      n.vy -= (n.y / dist) * pull;
+    }
+  }
+  packComponents(targetR, k);
   for (const n of sim) {
     if (n === dragging) continue;
     n.vx *= friction; n.vy *= friction;
     n.x += n.vx; n.y += n.vy;
+  }
+  roundBlob();
+}
+
+function packComponents(targetR, k) {
+  const nCount = sim.length;
+  if (nCount < 3) return;
+  const parent = new Array(nCount);
+  for (let i = 0; i < nCount; i++) parent[i] = i;
+  function find(i) {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  }
+  for (const s of springs) {
+    const i = simIndex[s.a.id], j = simIndex[s.b.id];
+    if (i == null || j == null) continue;
+    const a = find(i), b = find(j);
+    if (a !== b) parent[a] = b;
+  }
+  const groups = new Map();
+  for (let i = 0; i < nCount; i++) {
+    const r = find(i);
+    let g = groups.get(r);
+    if (!g) { g = { x: 0, y: 0, n: 0, nodes: [] }; groups.set(r, g); }
+    g.x += sim[i].x; g.y += sim[i].y; g.n++; g.nodes.push(sim[i]);
+  }
+  for (const g of groups.values()) {
+    g.x /= g.n; g.y /= g.n;
+    const d = Math.hypot(g.x, g.y);
+    const cap = targetR * (0.12 + 0.55 * Math.sqrt(g.n / nCount));
+    if (d <= cap || !d) continue;
+    const s = (d - cap) / d * 0.18 * k;
+    for (const n of g.nodes) {
+      if (n === dragging) continue;
+      n.vx -= g.x * s;
+      n.vy -= g.y * s;
+    }
+  }
+}
+
+function roundBlob() {
+  const N = sim.length;
+  if (dragging || N < 8) {
+    if (!dragging && N) {
+      let ax = 0, ay = 0;
+      for (const n of sim) { ax += n.x; ay += n.y; }
+      ax /= N; ay /= N;
+      for (const n of sim) { n.x -= ax; n.y -= ay; }
+    }
+    return;
+  }
+  let ax = 0, ay = 0;
+  for (const n of sim) { ax += n.x; ay += n.y; }
+  ax /= N; ay /= N;
+  let xx = 0, yy = 0, xy = 0;
+  for (const n of sim) {
+    const dx = n.x - ax, dy = n.y - ay;
+    xx += dx * dx; yy += dy * dy; xy += dx * dy;
+  }
+  xx /= N; yy /= N; xy /= N;
+  const trace = xx + yy;
+  const gap = Math.sqrt(Math.max(0, trace * trace / 4 - (xx * yy - xy * xy)));
+  const l1 = trace / 2 + gap;
+  const l2 = trace / 2 - gap;
+  let ux = 1, uy = 0, shrink = 1;
+  if (l1 > 1 && l1 > l2 * 1.28) {
+    ux = l1 - yy; uy = xy;
+    if (Math.abs(ux) + Math.abs(uy) < 1e-9) { ux = xy; uy = l1 - xx; }
+    const vlen = Math.hypot(ux, uy) || 1;
+    ux /= vlen; uy /= vlen;
+    const elong = Math.sqrt(l1 / Math.max(l2, 1));
+    shrink = 1 - Math.min(0.06, (elong - 1.12) * 0.05);
+  }
+  for (const n of sim) {
+    let dx = n.x - ax, dy = n.y - ay;
+    if (shrink < 1) {
+      const along = dx * ux + dy * uy;
+      dx -= ux * along * (1 - shrink);
+      dy -= uy * along * (1 - shrink);
+    }
+    n.x = dx;
+    n.y = dy;
   }
 }
 
@@ -1275,14 +1419,16 @@ function loop() {
     tick();
     if (holding) alpha = Math.max(alpha, 0.75);
     else {
-      const settle = slider("p-settle", 70) / 100;
+      const settle = slider("p-settle", 80) / 100;
       alpha *= 0.988 - settle * 0.05;
     }
+    if (!viewLocked && !holding) fit();
     draw();
     requestAnimationFrame(loop);
   } else {
     looping = false;
     alpha = 0;
+    if (!viewLocked) fit();
     draw();
   }
 }
@@ -1329,19 +1475,13 @@ function draw() {
   ctx.translate(view.x, view.y);
   ctx.scale(view.k, view.k);
   ctx.lineCap = "round";
-  const zoomedIn = view.k >= 0.7;
-  const drawingSim = looping && alpha > 0.04;
   for (const e of vis.edges) {
     const a = sim[simIndex[e.source]], b = sim[simIndex[e.target]];
     if (!a || !b) continue;
     const inKeep = !keep || keep.has(a.id) || keep.has(b.id);
-    if (e.kind === "work") {
-      if (keep) { if (!inKeep) continue; }
-      else if (!zoomedIn && !drawingSim) continue;
-    } else if (keep && !inKeep) {
-      ctx.globalAlpha = 0.05;
-    } else ctx.globalAlpha = e.kind === "synonym" ? 0.4 : 0.2;
-    if (e.kind === "work") ctx.globalAlpha = keep ? 0.75 : (drawingSim ? 0.14 : 0.1);
+    if (keep && !inKeep) ctx.globalAlpha = e.kind === "work" ? 0.06 : 0.05;
+    else if (e.kind === "work") ctx.globalAlpha = keep ? 0.75 : 0.22;
+    else ctx.globalAlpha = e.kind === "synonym" ? 0.4 : 0.2;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
     ctx.strokeStyle = e.kind === "work" ? "#a78bfa"
@@ -1393,8 +1533,8 @@ function fit() {
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (w < 2 || h < 2) return;
   const gw = Math.max(maxX - minX, 40), gh = Math.max(maxY - minY, 40);
-  view.k = Math.min(w / gw, h / gh) * 0.88;
-  view.k = Math.min(Math.max(view.k, 0.12), 2.4);
+  view.k = Math.min(w / gw, h / gh) * 0.9;
+  view.k = Math.min(Math.max(view.k, MIN_ZOOM), MAX_ZOOM);
   view.x = w / 2 - (minX + gw / 2) * view.k;
   view.y = h / 2 - (minY + gh / 2) * view.k;
 }
@@ -1458,6 +1598,7 @@ function focusNode(id) {
   showDetail(id);
   const n = sim[simIndex[id]];
   if (n) {
+    viewLocked = true;
     view.k = Math.max(view.k, 1.1);
     view.x = wrap.clientWidth / 2 - n.x * view.k;
     view.y = wrap.clientHeight / 2 - n.y * view.k;
@@ -1522,6 +1663,7 @@ function suggest() {
 function relayout() {
   rebuildVis();
   layoutNodes();
+  viewLocked = false;
   fit();
   draw();
   kick(1);
@@ -1536,7 +1678,7 @@ document.getElementById("show-physics").onchange = () => {
   else { alpha = 0; looping = false; draw(); }
 };
 document.getElementById("names-mode").onchange = () => { saveSettings(); draw(); };
-["p-bounce", "p-stiff", "p-charge", "p-settle"].forEach(id => {
+["p-bounce", "p-stiff", "p-charge", "p-spread", "p-settle"].forEach(id => {
   document.getElementById(id).addEventListener("input", () => {
     saveSettings();
     if (physicsOn()) kick(0.4);
@@ -1551,9 +1693,17 @@ document.getElementById("p-jiggle").onclick = () => {
 };
 document.getElementById("q").addEventListener("input", suggest);
 document.getElementById("cf").addEventListener("input", fillList);
-document.getElementById("z-in").onclick = () => { view.k = Math.min(4, view.k * 1.2); draw(); };
-document.getElementById("z-out").onclick = () => { view.k = Math.max(0.12, view.k / 1.2); draw(); };
-document.getElementById("z-fit").onclick = () => { fit(); draw(); };
+document.getElementById("z-in").onclick = () => {
+  viewLocked = true;
+  view.k = Math.min(MAX_ZOOM, view.k * 1.2);
+  draw();
+};
+document.getElementById("z-out").onclick = () => {
+  viewLocked = true;
+  view.k = Math.max(MIN_ZOOM, view.k / 1.2);
+  draw();
+};
+document.getElementById("z-fit").onclick = () => { viewLocked = false; fit(); draw(); };
 
 wrap.addEventListener("pointerdown", ev => {
   const xy = localXY(ev);
@@ -1579,6 +1729,7 @@ wrap.addEventListener("pointermove", ev => {
     dragging.y = wxy[1];
     kick(1);
   } else if (panning && lastPtr) {
+    viewLocked = true;
     view.x += xy[0] - lastPtr.x; view.y += xy[1] - lastPtr.y;
     draw();
   } else {
@@ -1598,13 +1749,14 @@ wrap.addEventListener("wheel", ev => {
   ev.preventDefault();
   const xy = localXY(ev);
   const factor = ev.deltaY < 0 ? 1.12 : 0.89;
-  const nk = Math.min(4, Math.max(0.12, view.k * factor));
+  const nk = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.k * factor));
+  viewLocked = true;
   view.x = xy[0] - (xy[0] - view.x) * (nk / view.k);
   view.y = xy[1] - (xy[1] - view.y) * (nk / view.k);
   view.k = nk;
   draw();
 }, { passive: false });
-window.addEventListener("resize", () => { fit(); draw(); });
+window.addEventListener("resize", () => { if (!viewLocked) fit(); draw(); });
 document.addEventListener("keydown", ev => {
   if (ev.key === "/" && document.activeElement.tagName !== "INPUT") {
     ev.preventDefault(); document.getElementById("q").focus();

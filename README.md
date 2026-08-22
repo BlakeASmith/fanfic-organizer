@@ -8,8 +8,8 @@ Supported surfaces are the **CLI** and the **Calibre plugin** (shared library co
 
 | Interface | How to use |
 |---|---|
-| **CLI** | `python -m ao3kit scrape\|tags\|download\|config\|login\|rate …` |
-| **Calibre plugin** | `calibre-plugin/` — search AO3, search similar from selected books, import JSONL / `ao3-import.zip`, import a series, fill Series on existing books, download missing EPUBs, simplify tags/fandoms/relationships, edit collections of selected books, recompute collections from rules, warm the tag cache in the background, graph tag relationships, set up collection and tag rules, or purge rare Tags. AO3 login and import defaults live in plugin settings. |
+| **CLI** | `python -m ao3kit scrape\|tags\|download\|job\|config\|login\|rate …` |
+| **Calibre plugin** | `calibre-plugin/` — search AO3, search similar from selected books, import JSONL / `ao3-import.zip`, import a series, fill Series on existing books, download missing EPUBs, simplify tags/fandoms/relationships, edit collections of selected books, recompute collections from rules, run work in the background (attach logs / stop from **Running jobs…**), warm the tag cache in the background, graph tag relationships, set up collection and tag rules, or purge rare Tags. AO3 login and import defaults live in plugin settings. |
 | **Web UI** (deprecated) | `python -m ao3kit serve` → http://127.0.0.1:8000 — frozen, not updated |
 | **REST API** (deprecated) | Same server → http://127.0.0.1:8000/api/v1/docs — frozen, not updated |
 
@@ -19,6 +19,7 @@ Supported surfaces are the **CLI** and the **Calibre plugin** (shared library co
 pip install -r requirements.txt
 cp .env.example .env   # optional: AO3_USERNAME / AO3_PASSWORD
 python -m ao3kit config init
+python makeplugin.py install   # Calibre plugin; add --restart only when iterating on plugin UI
 ```
 
 ## Quick start
@@ -47,6 +48,10 @@ python -m ao3kit tags warm log
 python -m ao3kit tags warm log --follow
 python -m ao3kit tags warm stop
 python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
+python -m ao3kit job start -- scrape -o results.jsonl --verbose
+python -m ao3kit job list
+python -m ao3kit job log <id> --follow
+python -m ao3kit job stop <id>
 python -m ao3kit config mappings add --values Jegulus --action keep_separate --stop
 
 # Test AO3 login (or AO3_USERNAME / AO3_PASSWORD in .env)

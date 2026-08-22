@@ -1,0 +1,22 @@
+---
+description: Opt-in, lock-aware Calibre GUI restart during plugin dev
+alwaysApply: true
+---
+
+# Calibre reload (dev)
+
+Always reinstall: `python makeplugin.py install` (no `--restart`) after repo changes, then tell the user to restart Calibre.
+
+Do **not** quit/restart Calibre on every change. Restart only when this session must load the new zip in the GUI now (plugin UI iteration).
+
+If you restart:
+
+- Prefer **calibre-dev** MCP (`install_plugin`, `restart_calibre`, `calibre_status`) over shell `kill`/`open`.
+- Or `python makeplugin.py install --restart --agent-id <short-name>`.
+- One restart at a time. If the tool returns `error: locked`, skip — another agent owns it. Do not `killall calibre`.
+
+```bash
+python makeplugin.py install
+python makeplugin.py install --restart --agent-id ui-pass
+python makeplugin.py status
+```

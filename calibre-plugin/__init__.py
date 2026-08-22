@@ -2,14 +2,15 @@
 
 from calibre.customize import InterfaceActionBase
 
-__version__ = (0, 20, 1)
+__version__ = (0, 21, 0)
 
 
 class AO3ScraperBase(InterfaceActionBase):
     name = 'AO3 Scraper'
     description = (
         'Search AO3, download EPUBs, import into a Calibre library, import '
-        'series, fill Series on existing books, warm the tag cache in the '
+        'series, fill Series on existing books, run searches and other work as '
+        'background jobs (attach logs, detach, stop), warm the tag cache in the '
         'background, graph tag relationships, set up collection and tag '
         'rules, recompute or edit collections for selected books, and purge rare '
         'tags from the Tags column. Uses Fandom, Relationships, Collections, '

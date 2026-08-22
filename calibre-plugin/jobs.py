@@ -1,0 +1,151 @@
+# -*- coding: utf-8 -*-
+"""Calibre-free helpers for ao3kit background jobs."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+LOG_READ_MAX_BYTES = 2_000_000
+_PROGRESS_RE = re.compile(r'\[(\d+)/(\d+)\]')
+_UNIQUE_TAGS_RE = re.compile(
+    r'(\d+) unique tags across batch \((\d+) already cached, (\d+) need AO3'
+)
+
+
+def jobs_root(project: Path) -> Path:
+    return Path(project) / '.cache' / 'jobs'
+
+
+def new_job_id(kind: str = 'job') -> str:
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+    slug = re.sub(r'[^a-z0-9]+', '-', (kind or 'job').lower()).strip('-')[:24]
+    return f'{stamp}-{slug or "job"}-{uuid.uuid4().hex[:6]}'
+
+
+def write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False, default=str) + '\n',
+        encoding='utf-8',
+    )
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    if not Path(path).is_file():
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def parse_job_status_json(stdout: str) -> dict[str, Any] | None:
+    text = (stdout or '').strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find('{')
+        end = text.rfind('}')
+        if start < 0 or end <= start:
+            return None
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    return data if isinstance(data, dict) else None
+
+
+def parse_job_list_json(stdout: str) -> list[dict[str, Any]]:
+    text = (stdout or '').strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find('[')
+        end = text.rfind(']')
+        if start < 0 or end <= start:
+            return []
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return []
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
+def progress_from_message(message: str) -> tuple[int, int] | None:
+    unique = _UNIQUE_TAGS_RE.search(message or '')
+    if unique:
+        need = int(unique.group(3))
+        return 0, need if need else int(unique.group(1))
+    match = _PROGRESS_RE.search(message or '')
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def read_log_tail(
+    path: Path,
+    *,
+    lines: int = 400,
+    max_bytes: int = LOG_READ_MAX_BYTES,
+) -> str:
+    path = Path(path)
+    if not path.is_file():
+        return ''
+    size = path.stat().st_size
+    with path.open('r', encoding='utf-8', errors='replace') as handle:
+        if size > max_bytes:
+            handle.seek(max(0, size - max_bytes))
+            handle.readline()
+        text = handle.read()
+    if not text or lines <= 0:
+        return text
+    parts = text.splitlines()
+    if len(parts) <= lines:
+        return text if text.endswith('\n') or not text else text + '\n'
+    return '\n'.join(parts[-lines:]) + '\n'
+
+
+def format_job_header(status: dict[str, Any] | None, log_path: Path) -> str:
+    status = status or {}
+    title = status.get('title') or status.get('id') or 'Job'
+    if status.get('running'):
+        pid = status.get('pid')
+        state = f'Running (pid {pid})' if pid else 'Running'
+    elif status.get('exit_code') not in (None, 0):
+        state = f'Failed (exit {status.get("exit_code")})'
+    elif status.get('finished_at') or status.get('exit_code') == 0:
+        state = 'Finished'
+    else:
+        state = 'Not running'
+    message = str(status.get('message') or '').strip()
+    bits = [f'{title} — {state}']
+    if message:
+        bits.append(message.splitlines()[0][:200])
+    bits.append(f'Log: {log_path}')
+    return '\n'.join(bits)
+
+
+def job_paths(job_dir: Path) -> dict[str, Path]:
+    job_dir = Path(job_dir)
+    return {
+        'dir': job_dir,
+        'spec': job_dir / 'spec.json',
+        'status': job_dir / 'status.json',
+        'pid': job_dir / 'job.pid',
+        'log': job_dir / 'job.log',
+        'work': job_dir / 'work',
+    }

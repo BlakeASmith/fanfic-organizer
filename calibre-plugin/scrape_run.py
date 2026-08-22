@@ -396,6 +396,38 @@ def build_warm_log_argv(*, lines: int | None = None, follow: bool = False) -> li
     return argv
 
 
+def build_job_start_argv(job_dir: str, jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'start']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    argv.extend(['--dir', job_dir])
+    return argv
+
+
+def build_job_stop_argv(job_id: str, jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'stop']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    argv.append(job_id)
+    return argv
+
+
+def build_job_list_argv(jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'list']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    return argv
+
+
+def build_job_status_argv(job_id: str | None = None, jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'status']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    if job_id:
+        argv.append(job_id)
+    return argv
+
+
 def build_tag_graph_argv(
     names_file: str | None,
     output: str,

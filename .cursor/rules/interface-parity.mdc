@@ -18,7 +18,7 @@ The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecate
 
 ## Shared core first
 
-- Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `config`, `http`, `rate`) — not only in one UI.
+- Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `config`, `http`, `rate`, `jobs`) — not only in one UI.
 - Surfaces should call those modules; avoid copy-pasted scrape/tag/download logic.
 - Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI and the plugin.
 - **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). CLI, plugin, and the frozen web/API paths must go through `ao3kit.http` (or `wait_for_request`). Do not add per-interface sleeps or separate request paths that bypass it.
@@ -32,11 +32,12 @@ The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecate
 3. Do **not** add matching web UI controls, REST endpoints, or OpenAPI/docs updates for new features.
 4. Update **AGENTS.md** / **README** CLI or plugin examples if the public supported surface changed.
 5. Add **pytest** coverage at the library layer; plugin/CLI tests where behavior diverges. Do not add new API/web tests unless you are fixing a bug in the frozen surfaces.
+6. **Always reinstall the Calibre plugin:** `python makeplugin.py install` after every change (even `ao3kit/` or docs). Do **not** pass `--restart` / MCP `restart=true` unless you are iterating on plugin UI in this session and need the GUI reloaded now. Default: install, then tell the user to restart Calibre. If you do restart, use the `calibre-dev` MCP tools or `python makeplugin.py install --restart` (lock-aware). Never `killall calibre`.
 
 ## Relative, not identical
 
 - OK: CLI stdout vs Qt dialogs.
-- OK: plugin search UI is Qt and shells out to `python -m ao3kit scrape` (optional `--download`) / `download` / `tags enrich` / `tags collections` instead of importing `ao3kit` inside Calibre’s Python.
+- OK: plugin search UI is Qt and shells out to `python -m ao3kit job start` (steps: `scrape` / `download` / `tags enrich` / `tags collections`) instead of importing `ao3kit` inside Calibre’s Python.
 - Not OK: a scrape filter or tag resolve path that exists on only one of CLI / plugin.
 - Not OK: plugin scraping AO3 with raw `requests` that bypass `ao3kit.http` / the host-wide limiter.
 - Not OK: changing JSONL/`cleaned` fields or zip layout without updating the plugin importer and docs.
@@ -49,3 +50,4 @@ The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecate
 - [ ] Plugin updated if import, metadata columns, or enrich path is affected
 - [ ] Web UI / REST API left unchanged (unless fixing a critical bug in existing frozen behavior)
 - [ ] Docs mention the new capability on CLI and plugin, not as a new API/web feature
+- [ ] `python makeplugin.py install` ran; user told to restart Calibre (only `--restart` / MCP restart when iterating on plugin UI now)
