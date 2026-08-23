@@ -1,4 +1,4 @@
-# Pure-Python deps shipped inside AO3Scraper.zip.
+# Pure-Python deps shipped inside wranglekit.zip.
 # Calibre already has lxml (and usually bs4). Native wheels are stripped
 # after install so the zip works on every OS with Calibre's Python.
 beautifulsoup4>=4.12

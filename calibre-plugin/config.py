@@ -19,12 +19,12 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, info_dialog
 
-from calibre_plugins.ao3_scraper.columns import (
+from calibre_plugins.wranglekit.columns import (
     LAYOUT_COLUMN_SPECS,
     apply_layout_columns,
     layout_columns_present,
 )
-from calibre_plugins.ao3_scraper.prefs import prefs
+from calibre_plugins.wranglekit.prefs import prefs
 
 
 def _echo_password(widget: QLineEdit) -> None:
@@ -256,15 +256,15 @@ class ConfigWidget(QWidget):
         if not username or not password:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Enter both username and password, then click Test login.',
                 show=True,
             )
             return
 
-        from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.ao3_scraper.prefs import prefs as plugin_prefs
-        from calibre_plugins.ao3_scraper.scrape_run import build_login_test_argv
+        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.wranglekit.prefs import prefs as plugin_prefs
+        from calibre_plugins.wranglekit.scrape_run import build_login_test_argv
 
         saved_project = plugin_prefs.get('ao3kit_project') or ''
         saved_python = plugin_prefs.get('ao3kit_python') or ''
@@ -290,14 +290,14 @@ class ConfigWidget(QWidget):
         if code == 0:
             summary = f'Logged in as {username}.'
             self.login_status.setText(summary)
-            info_dialog(self, 'AO3 Scraper', summary, show=True)
+            info_dialog(self, 'Wranglekit', summary, show=True)
             return
 
         detail = (stderr or stdout or f'exit {code}').strip()
         self.login_status.setText('Login failed.')
         error_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             'AO3 login failed. Check the username and password.',
             det_msg=detail,
             show=True,
@@ -336,7 +336,7 @@ class ConfigWidget(QWidget):
 
     def _ao3kit_remember_adds(self) -> bool:
         try:
-            from calibre_plugins.ao3_scraper.enrich import run_ao3kit
+            from calibre_plugins.wranglekit.enrich import run_ao3kit
 
             code, stdout, _stderr = run_ao3kit(['config', 'show'])
             if code == 0 and (stdout or '').strip():
@@ -349,7 +349,7 @@ class ConfigWidget(QWidget):
 
     def _save_ao3kit_remember_adds(self, remember: bool) -> None:
         try:
-            from calibre_plugins.ao3_scraper.enrich import run_ao3kit
+            from calibre_plugins.wranglekit.enrich import run_ao3kit
 
             code, stdout, stderr = run_ao3kit(
                 [
@@ -362,7 +362,7 @@ class ConfigWidget(QWidget):
         except Exception as exc:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not save the collection recompute setting in ao3kit.',
                 det_msg=str(exc),
                 show=True,
@@ -371,7 +371,7 @@ class ConfigWidget(QWidget):
         if code != 0:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not save the collection recompute setting in ao3kit.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -383,7 +383,7 @@ class ConfigWidget(QWidget):
         if (username and not password) or (password and not username):
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Both username and password are required to log in to AO3 '
                 '(or leave both blank to use .env / anonymous).',
                 show=True,
@@ -392,7 +392,7 @@ class ConfigWidget(QWidget):
         return True
 
     def edit_cover_style(self) -> None:
-        from calibre_plugins.ao3_scraper.cover_ui import CoverStyleDialog
+        from calibre_plugins.wranglekit.cover_ui import CoverStyleDialog
 
         dialog = CoverStyleDialog(self, self._cover_style)
         if not dialog.exec_():
@@ -400,12 +400,12 @@ class ConfigWidget(QWidget):
         self._cover_style.update(dialog.values())
 
     def _load_cover_settings(self) -> dict:
-        from calibre_plugins.ao3_scraper.cover_ui import load_cover_dict
+        from calibre_plugins.wranglekit.cover_ui import load_cover_dict
 
         return load_cover_dict()
 
     def _save_cover_settings(self) -> None:
-        from calibre_plugins.ao3_scraper.cover_ui import save_cover_dict
+        from calibre_plugins.wranglekit.cover_ui import save_cover_dict
 
         cover = dict(self._cover_style)
         cover['enabled'] = self.generate_covers.isChecked()
@@ -416,7 +416,7 @@ class ConfigWidget(QWidget):
         except Exception as exc:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not save cover settings in ao3kit.',
                 det_msg=str(exc),
                 show=True,
@@ -425,7 +425,7 @@ class ConfigWidget(QWidget):
         if code != 0:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not save cover settings in ao3kit.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,

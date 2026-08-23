@@ -28,7 +28,7 @@ def _write_bundle_zip(path: Path) -> None:
 
 def test_zip_has_bundled_ao3kit(tmp_path: Path):
     runtime = load_runtime()
-    zip_path = tmp_path / "AO3Scraper.zip"
+    zip_path = tmp_path / "wranglekit.zip"
     _write_bundle_zip(zip_path)
     assert runtime.zip_has_bundled_ao3kit(zip_path)
     thin = tmp_path / "thin.zip"
@@ -40,7 +40,7 @@ def test_zip_has_bundled_ao3kit(tmp_path: Path):
 
 def test_extract_keeps_user_cache(tmp_path: Path):
     runtime = load_runtime()
-    zip_path = tmp_path / "AO3Scraper.zip"
+    zip_path = tmp_path / "wranglekit.zip"
     _write_bundle_zip(zip_path)
     dest = tmp_path / "runtime"
     dest.mkdir()
@@ -60,7 +60,7 @@ def test_extract_keeps_user_cache(tmp_path: Path):
 
 def test_extract_skips_when_stamp_matches(tmp_path: Path):
     runtime = load_runtime()
-    zip_path = tmp_path / "AO3Scraper.zip"
+    zip_path = tmp_path / "wranglekit.zip"
     _write_bundle_zip(zip_path)
     dest = tmp_path / "runtime"
     runtime.extract_bundled_runtime(zip_path, dest, version="0.25.0")

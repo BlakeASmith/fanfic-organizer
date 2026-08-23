@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from calibre_plugins.ao3_scraper.cleaned import (
+from calibre_plugins.wranglekit.cleaned import (
     build_cleaned_payload,
     cleaned_collection_names,
     collections_writeback,
@@ -17,15 +17,15 @@ from calibre_plugins.ao3_scraper.cleaned import (
     series_writeback_from_record,
     tags_for_calibre_library,
 )
-from calibre_plugins.ao3_scraper.columns import (
+from calibre_plugins.wranglekit.columns import (
     LEGACY_RAW_METADATA_LABEL,
     layout_columns_present,
 )
-from calibre_plugins.ao3_scraper.epub_plan import (
+from calibre_plugins.wranglekit.epub_plan import (
     formats_include_epub,
     plan_missing_epub_downloads,
 )
-from calibre_plugins.ao3_scraper.importer import (
+from calibre_plugins.wranglekit.importer import (
     build_metadata,
     set_book_tags,
     write_collections_field,
@@ -245,7 +245,7 @@ def library_collection_names(db) -> list[str]:
                 break
             mapping = None
     if isinstance(mapping, dict):
-        from calibre_plugins.ao3_scraper.collection_rules import merge_collection_names
+        from calibre_plugins.wranglekit.collection_rules import merge_collection_names
 
         return merge_collection_names(mapping.values())
     return []
@@ -361,7 +361,7 @@ def load_selected_similar_records(
     Work id is optional; a book is usable if it has fandoms, tags, ships,
     characters, or an author.
     """
-    from calibre_plugins.ao3_scraper.similar import facets_from_record
+    from calibre_plugins.wranglekit.similar import facets_from_record
 
     ready: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -650,8 +650,8 @@ def apply_cover_records(
     """Replace EPUBs and/or Calibre covers after ``ao3kit cover``."""
     from pathlib import Path as _Path
 
-    from calibre_plugins.ao3_scraper.importer import add_epub_format, set_book_cover
-    from calibre_plugins.ao3_scraper.jsonl_loader import resolve_epub_path
+    from calibre_plugins.wranglekit.importer import add_epub_format, set_book_cover
+    from calibre_plugins.wranglekit.jsonl_loader import resolve_epub_path
 
     png_root = _Path(png_dir) if png_dir else None
     outcomes: list[dict[str, Any]] = []

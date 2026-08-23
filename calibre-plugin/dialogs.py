@@ -34,8 +34,8 @@ from PyQt5.QtCore import QTimer
 
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
-from calibre_plugins.ao3_scraper.prefs import prefs
-from calibre_plugins.ao3_scraper.scrape_run import (
+from calibre_plugins.wranglekit.prefs import prefs
+from calibre_plugins.wranglekit.scrape_run import (
     SORT_OPTIONS,
     ids_to_csv,
     scrape_search_is_usable,
@@ -319,14 +319,14 @@ class ScrapeSearchDialog(QDialog):
         if not url:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Paste an AO3 works-search or series URL first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.ao3_scraper.scrape_run import build_parse_url_argv
+        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.wranglekit.scrape_run import build_parse_url_argv
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -339,7 +339,7 @@ class ScrapeSearchDialog(QDialog):
         if code != 0:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not parse that search URL with ao3kit.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -351,7 +351,7 @@ class ScrapeSearchDialog(QDialog):
         except ValueError as exc:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'ao3kit returned invalid parse-url JSON.',
                 det_msg=f'{exc}\n{stdout}',
                 show=True,
@@ -371,7 +371,7 @@ class ScrapeSearchDialog(QDialog):
             self._use_form_criteria = False
             info_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 (
                     f'That is AO3 series {series_id}. Search and import will '
                     'fetch every work listed on the series page.'
@@ -421,7 +421,7 @@ class ScrapeSearchDialog(QDialog):
         if not scrape_search_is_usable(values):
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Paste an AO3 search URL, a series URL, or enter a fandom/tag or query.',
                 show=True,
             )
@@ -485,7 +485,7 @@ class TagPurgeDialog(QDialog):
     def __init__(self, gui, parent=None, book_ids=None):
         super().__init__(parent or gui)
         self.gui = gui
-        from calibre_plugins.ao3_scraper.tag_purge import (
+        from calibre_plugins.wranglekit.tag_purge import (
             initial_scope_ids,
             library_book_count,
             selected_ids_from_gui,
@@ -677,7 +677,7 @@ class TagPurgeDialog(QDialog):
         self._sync_purge_enabled()
 
     def _apply_name_filter(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_purge import filter_tags_by_name
+        from calibre_plugins.wranglekit.tag_purge import filter_tags_by_name
 
         visible = filter_tags_by_name(self._planned, self.name_filter.text())
         self._fill_tag_list(visible)
@@ -702,7 +702,7 @@ class TagPurgeDialog(QDialog):
         )
 
     def refresh_list(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_purge import (
+        from calibre_plugins.wranglekit.tag_purge import (
             load_snapshots,
             plan_tag_purge,
             resolve_scope_ids,
@@ -732,7 +732,7 @@ class TagPurgeDialog(QDialog):
             except Exception as exc:
                 error_dialog(
                     self,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Could not read tags from this library.',
                     det_msg=str(exc),
                     show=True,
@@ -744,17 +744,17 @@ class TagPurgeDialog(QDialog):
         self._apply_name_filter()
 
     def purge(self) -> None:
-        from calibre_plugins.ao3_scraper.importer import (
+        from calibre_plugins.wranglekit.importer import (
             refresh_library_ui,
             set_book_tags,
         )
-        from calibre_plugins.ao3_scraper.tag_purge import purge_updates
+        from calibre_plugins.wranglekit.tag_purge import purge_updates
 
         names = self._checked_tag_names()
         if not names:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Check one or more tags to purge.',
                 show=True,
             )
@@ -764,7 +764,7 @@ class TagPurgeDialog(QDialog):
         if not updates:
             info_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the books in this library still have those tags.',
                 show=True,
             )
@@ -775,7 +775,7 @@ class TagPurgeDialog(QDialog):
         extra = '' if len(names) <= 8 else f' (+{len(names) - 8} more)'
         if not question_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Remove {len(names)} tag(s) from the Tags column on every '
                 f'book in this library that has them ({len(updates)} book(s))?\n\n'
@@ -798,7 +798,7 @@ class TagPurgeDialog(QDialog):
             except Exception as exc:
                 error_dialog(
                     self,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Failed while removing tags.',
                     det_msg=str(exc),
                     show=True,
@@ -809,7 +809,7 @@ class TagPurgeDialog(QDialog):
 
         info_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Removed {len(names)} tag(s) from {len(updates)} book(s).',
             show=True,
         )
@@ -913,7 +913,7 @@ class SimilarSearchDialog(QDialog):
 
     def __init__(self, parent, facets, titles: list[str] | None = None):
         super().__init__(parent)
-        from calibre_plugins.ao3_scraper.similar import SimilarSelect
+        from calibre_plugins.wranglekit.similar import SimilarSelect
 
         self.facets = facets
         self.setWindowTitle('Search similar on AO3')
@@ -1042,7 +1042,7 @@ class SimilarSearchDialog(QDialog):
         outer.addWidget(buttons)
 
     def _select(self):
-        from calibre_plugins.ao3_scraper.similar import SimilarSelect
+        from calibre_plugins.wranglekit.similar import SimilarSelect
 
         return SimilarSelect(
             authors=self.authors.selected(),
@@ -1059,7 +1059,7 @@ class SimilarSearchDialog(QDialog):
         if not scrape_search_is_usable(values):
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Add a fandom, author, tag, or query so AO3 has something to search.',
                 show=True,
             )
@@ -1067,7 +1067,7 @@ class SimilarSearchDialog(QDialog):
         super().accept()
 
     def values(self) -> dict:
-        from calibre_plugins.ao3_scraper.similar import selection_to_fields
+        from calibre_plugins.wranglekit.similar import selection_to_fields
 
         fields = selection_to_fields(self._select())
         return {
@@ -1294,7 +1294,7 @@ class CollectionRulesPage(QWidget):
             )
 
     def _reload(self) -> None:
-        from calibre_plugins.ao3_scraper.collection_rules import (
+        from calibre_plugins.wranglekit.collection_rules import (
             format_collection,
             format_kind,
             format_when,
@@ -1306,7 +1306,7 @@ class CollectionRulesPage(QWidget):
         if not isinstance(payload, list):
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not load collection rules.',
                 det_msg=repr(payload),
                 show=True,
@@ -1356,12 +1356,12 @@ class CollectionRulesPage(QWidget):
         fields = self._form_values()
         if not fields['values']:
             error_dialog(
-                self, 'AO3 Scraper', 'Type something to match first.', show=True
+                self, 'Wranglekit', 'Type something to match first.', show=True
             )
             return
         if fields['match'] in {'work_id', 'calibre_uuid'} and not fields['collections']:
             error_dialog(
-                self, 'AO3 Scraper', 'Type a collection name first.', show=True
+                self, 'Wranglekit', 'Type a collection name first.', show=True
             )
             return
         mod = _collection_mod()
@@ -1397,7 +1397,7 @@ class CollectionRulesPage(QWidget):
     def _edit_selected(self) -> None:
         rule_id = self._selected_id()
         if not rule_id:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to edit.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to edit.', show=True)
             return
         row = next((item for item in self._rows if item.get('id') == rule_id), None)
         if row is None:
@@ -1420,16 +1420,16 @@ class CollectionRulesPage(QWidget):
         self._sync_match_fields()
 
     def _delete_selected(self) -> None:
-        from calibre_plugins.ao3_scraper.collection_rules import format_rule_summary
+        from calibre_plugins.wranglekit.collection_rules import format_rule_summary
 
         rule_id = self._selected_id()
         row = self._selected_row()
         if not rule_id or row is None:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to remove.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to remove.', show=True)
             return
         if not question_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Remove this collection rule?\n\n{format_rule_summary(row)}',
         ):
             return
@@ -1442,7 +1442,7 @@ class CollectionRulesPage(QWidget):
     def _move(self, *, up: bool) -> None:
         rule_id = self._selected_id()
         if not rule_id:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to move.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to move.', show=True)
             return
         if self._dialog._run(
             _collection_mod().build_collections_move_argv(rule_id, up=up)
@@ -1457,12 +1457,12 @@ class CollectionRulesPage(QWidget):
         self._dialog.accept()
 
     def _pin_selection(self) -> None:
-        from calibre_plugins.ao3_scraper.collection_edit import prompt_collection_name
-        from calibre_plugins.ao3_scraper.collection_rules import (
+        from calibre_plugins.wranglekit.collection_edit import prompt_collection_name
+        from calibre_plugins.wranglekit.collection_rules import (
             collection_names_from_rules,
             merge_collection_names,
         )
-        from calibre_plugins.ao3_scraper.selected import library_collection_names
+        from calibre_plugins.wranglekit.selected import library_collection_names
 
         db = getattr(self._dialog.parent(), 'current_db', None)
         names = merge_collection_names(
@@ -1718,7 +1718,7 @@ class TagMappingsDialog(QDialog):
             btn.setEnabled(has_row)
 
     def _reload(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_mappings import format_then, format_when
+        from calibre_plugins.wranglekit.tag_mappings import format_then, format_when
 
         payload = self._run(_mapping_mod().build_mappings_list_argv())
         if payload is None:
@@ -1726,7 +1726,7 @@ class TagMappingsDialog(QDialog):
         if not isinstance(payload, list):
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not load your rules.',
                 det_msg=repr(payload),
                 show=True,
@@ -1771,7 +1771,7 @@ class TagMappingsDialog(QDialog):
         self._sync_row_buttons()
 
     def _run(self, args: list[str]):
-        from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -1783,7 +1783,7 @@ class TagMappingsDialog(QDialog):
         if code != 0:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not update that rule.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -1797,7 +1797,7 @@ class TagMappingsDialog(QDialog):
         except json.JSONDecodeError:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not read the saved rules.',
                 det_msg=text,
                 show=True,
@@ -1844,10 +1844,10 @@ class TagMappingsDialog(QDialog):
     def _save_form(self) -> None:
         fields = self._form_values()
         if not fields['values']:
-            error_dialog(self, 'AO3 Scraper', 'Type a tag name first.', show=True)
+            error_dialog(self, 'Wranglekit', 'Type a tag name first.', show=True)
             return
         if fields['action'] == 'map_to' and not fields['map_to']:
-            error_dialog(self, 'AO3 Scraper', 'Type the new tag name.', show=True)
+            error_dialog(self, 'Wranglekit', 'Type the new tag name.', show=True)
             return
         mod = _mapping_mod()
         if self._edit_id:
@@ -1883,7 +1883,7 @@ class TagMappingsDialog(QDialog):
     def _edit_selected(self) -> None:
         mapping_id = self._selected_id()
         if not mapping_id:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to edit.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to edit.', show=True)
             return
         row = next((item for item in self._rows if item.get('id') == mapping_id), None)
         if row is None:
@@ -1918,17 +1918,17 @@ class TagMappingsDialog(QDialog):
         self._sync_action_fields()
 
     def _delete_selected(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_mappings import format_rule_summary
+        from calibre_plugins.wranglekit.tag_mappings import format_rule_summary
 
         mapping_id = self._selected_id()
         row = self._selected_row()
         if not mapping_id or row is None:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to remove.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to remove.', show=True)
             return
         summary = format_rule_summary(row)
         if not question_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Remove this rule?\n\n{summary}',
         ):
             return
@@ -1941,37 +1941,37 @@ class TagMappingsDialog(QDialog):
     def _move(self, *, up: bool) -> None:
         mapping_id = self._selected_id()
         if not mapping_id:
-            error_dialog(self, 'AO3 Scraper', 'Select a rule to move.', show=True)
+            error_dialog(self, 'Wranglekit', 'Select a rule to move.', show=True)
             return
         if self._run(_mapping_mod().build_mappings_move_argv(mapping_id, up=up)) is None:
             return
         self._reload()
 
     def _preview(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_mappings import format_preview
+        from calibre_plugins.wranglekit.tag_mappings import format_preview
 
         tag = self.preview_tag.text().strip()
         if not tag:
-            error_dialog(self, 'AO3 Scraper', 'Type a tag to try.', show=True)
+            error_dialog(self, 'Wranglekit', 'Type a tag to try.', show=True)
             return
         payload = self._run(_mapping_mod().build_mappings_preview_argv(tag))
         if payload is None:
             return
         if not isinstance(payload, dict):
-            error_dialog(self, 'AO3 Scraper', 'Could not preview that tag.', show=True)
+            error_dialog(self, 'Wranglekit', 'Could not preview that tag.', show=True)
             return
         self.preview_out.setText(format_preview(payload))
 
 
 
 def _mapping_mod():
-    from calibre_plugins.ao3_scraper import tag_mappings
+    from calibre_plugins.wranglekit import tag_mappings
 
     return tag_mappings
 
 
 def _collection_mod():
-    from calibre_plugins.ao3_scraper import collection_rules
+    from calibre_plugins.wranglekit import collection_rules
 
     return collection_rules
 
@@ -2018,7 +2018,7 @@ class WarmLogDialog(QDialog):
         self.reload()
 
     def reload(self) -> None:
-        from calibre_plugins.ao3_scraper.tag_warm import (
+        from calibre_plugins.wranglekit.tag_warm import (
             format_warm_log_header,
             read_log_tail,
             read_status_file,

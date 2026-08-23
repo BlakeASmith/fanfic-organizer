@@ -56,7 +56,7 @@ The CLI and Calibre plugin share one core. Prefer implementing behavior in `ao3k
 
 ## Calibre plugin (new library)
 
-End users install **AO3Scraper.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config/cache for that bundled copy live next to the extracted runtime under Calibre’s plugins folder (`.ao3kit` / `.cache` are kept across upgrades).
+End users install **wranglekit.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). The plugin shows up in Calibre as **Wranglekit**. That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config/cache for that bundled copy live next to the extracted runtime under Calibre’s plugins folder (`.ao3kit` / `.cache` are kept across upgrades).
 
 A git checkout still wins when `ao3kit_project` is set or `~/emily/ao3` exists — that is the dev path. `python makeplugin.py install` stays `calibre-customize -b` (plugin UI only, shells out to the checkout). `python makeplugin.py zip` is the fat release artifact.
 
@@ -68,7 +68,7 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 
 | Command | What it does |
 |---|---|
-| `python makeplugin.py zip` | Self-contained `AO3Scraper.zip` (plugin + ao3kit + vendor) for GitHub Releases. |
+| `python makeplugin.py zip` | Self-contained `wranglekit.zip` (plugin + ao3kit + vendor) for GitHub Releases. |
 | `python makeplugin.py install` | `calibre-customize -b` only. Then tell the user to restart. |
 | `python makeplugin.py install --restart` | Install, then quit and start Calibre. |
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |

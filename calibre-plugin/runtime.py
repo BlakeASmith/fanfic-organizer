@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bundled ao3kit runtime for a Calibre plugin zip (Calibre-free).
 
-GitHub releases ship ``AO3Scraper.zip`` with ``ao3kit/``, pure-Python
+GitHub releases ship ``wranglekit.zip`` with ``ao3kit/``, pure-Python
 ``vendor/``, and ``run_ao3kit.py``. Calibre's frozen Python ignores
 ``PYTHONPATH`` and cannot ``python -m``, so jobs run:
 
@@ -16,8 +16,8 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
-PLUGIN_NAME = 'AO3 Scraper'
-RUNTIME_DIRNAME = 'ao3_scraper_runtime'
+PLUGIN_NAME = 'Wranglekit'
+RUNTIME_DIRNAME = 'wranglekit_runtime'
 BUNDLED_ZIP_PREFIXES = ('ao3kit/', 'vendor/')
 BUNDLED_ZIP_FILES = ('run_ao3kit.py',)
 NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
@@ -26,10 +26,10 @@ NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
 def plugin_version_string(version: tuple[int, ...] | None = None) -> str:
     if version is None:
         try:
-            from calibre_plugins.ao3_scraper import __version__ as installed
+            from calibre_plugins.wranglekit import __version__ as installed
         except ImportError:
             try:
-                from calibre_plugins.ao3_scraper.__init__ import __version__ as installed
+                from calibre_plugins.wranglekit.__init__ import __version__ as installed
             except ImportError:
                 installed = (0, 0, 0)
         version = tuple(installed)
@@ -112,6 +112,8 @@ def installed_plugin_zip() -> Path | None:
         from calibre.customize.ui import find_plugin
 
         plugin = find_plugin(PLUGIN_NAME)
+        if plugin is None:
+            plugin = find_plugin('AO3 Scraper')
         path = getattr(plugin, 'plugin_path', None) if plugin else None
         if path:
             candidate = Path(path)
@@ -123,7 +125,12 @@ def installed_plugin_zip() -> Path | None:
         from calibre.utils.config import config_dir
 
         plugins = Path(config_dir) / 'plugins'
-        for name in (f'{PLUGIN_NAME}.zip', 'AO3Scraper.zip'):
+        for name in (
+            f'{PLUGIN_NAME}.zip',
+            'wranglekit.zip',
+            'AO3Scraper.zip',
+            'AO3 Scraper.zip',
+        ):
             candidate = plugins / name
             if candidate.is_file():
                 return candidate

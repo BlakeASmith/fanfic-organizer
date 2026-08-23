@@ -2,7 +2,8 @@
 
 from calibre.utils.config import JSONConfig
 
-PREFS_NAMESPACE = 'plugins/ao3_scraper'
+PREFS_NAMESPACE = 'plugins/wranglekit'
+LEGACY_PREFS_NAMESPACE = 'plugins/ao3_scraper'
 
 prefs = JSONConfig(PREFS_NAMESPACE)
 prefs.defaults = {
@@ -23,6 +24,33 @@ prefs.defaults = {
     'generate_covers': True,
     'set_calibre_cover': True,
 }
+
+
+def _prefs_still_default() -> bool:
+    return all(prefs.get(key, default) == default for key, default in prefs.defaults.items())
+
+
+def _migrate_legacy_prefs() -> None:
+    if not _prefs_still_default():
+        return
+    try:
+        legacy = JSONConfig(LEGACY_PREFS_NAMESPACE)
+    except Exception:
+        return
+    copied = False
+    for key, default in prefs.defaults.items():
+        value = legacy.get(key, default)
+        if value != default:
+            prefs[key] = value
+            copied = True
+    if copied:
+        try:
+            prefs.commit()
+        except Exception:
+            pass
+
+
+_migrate_legacy_prefs()
 
 
 def plugin_runtime_settings() -> dict:

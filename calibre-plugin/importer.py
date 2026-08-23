@@ -8,7 +8,7 @@ from typing import Any
 
 from calibre.ebooks.metadata import MetaInformation
 
-from calibre_plugins.ao3_scraper.cleaned import (
+from calibre_plugins.wranglekit.cleaned import (
     book_matches_work,
     calibre_fields_for_record,
     canonical_work_id,
@@ -16,11 +16,11 @@ from calibre_plugins.ao3_scraper.cleaned import (
     tags_for_calibre_library,
     work_url,
 )
-from calibre_plugins.ao3_scraper.columns import (
+from calibre_plugins.wranglekit.columns import (
     custom_label_is_live,
     layout_columns_present,
 )
-from calibre_plugins.ao3_scraper.jsonl_loader import resolve_epub_path
+from calibre_plugins.wranglekit.jsonl_loader import resolve_epub_path
 
 
 def build_metadata(
@@ -152,7 +152,7 @@ def add_epub_format(
     should_cover = apply_cover
     if should_cover is None:
         try:
-            from calibre_plugins.ao3_scraper.prefs import prefs as plugin_prefs
+            from calibre_plugins.wranglekit.prefs import prefs as plugin_prefs
 
             should_cover = bool(plugin_prefs.get('set_calibre_cover', True))
         except Exception:

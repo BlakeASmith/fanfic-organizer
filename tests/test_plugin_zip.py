@@ -16,7 +16,7 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
     assert "__init__.py" in names
     assert "ao3_plugin.py" in names
     assert "run_ao3kit.py" in names
-    assert "plugin-import-name-ao3_scraper.txt" in names
+    assert "plugin-import-name-wranglekit.txt" in names
     assert "images/icon.png" in names
     assert "ao3kit/__init__.py" in names
     assert "ao3kit/cli.py" in names
@@ -25,7 +25,7 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
 
 
 def test_build_zip_no_vendor(tmp_path: Path):
-    dest = tmp_path / "AO3Scraper.zip"
+    dest = tmp_path / "wranglekit.zip"
     makeplugin.build_zip(dest, vendor=False)
     with zipfile.ZipFile(dest) as zf:
         names = set(zf.namelist())
@@ -37,7 +37,7 @@ def test_build_zip_no_vendor(tmp_path: Path):
 
 
 def test_makeplugin_zip_no_vendor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    dest = tmp_path / "AO3Scraper.zip"
+    dest = tmp_path / "wranglekit.zip"
     monkeypatch.setattr(makeplugin, "OUTPUT", dest)
     assert makeplugin.main(["zip", "--no-vendor"]) == 0
     assert dest.is_file()

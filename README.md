@@ -1,14 +1,14 @@
-# ao3kit
+# wranglekit
 
-Toolkit for scraping AO3 search results, wrangling tags, downloading native EPUBs, and cleaning metadata for Calibre import.
+Toolkit for scraping AO3 search results, wrangling tags, downloading native EPUBs, and cleaning metadata for Calibre import. The CLI is `python -m ao3kit`; the Calibre plugin is **Wranglekit**.
 
 Supported surfaces are the **CLI** and the **Calibre plugin** (shared library core + aligned capabilities). See [AGENTS.md](AGENTS.md#interface-parity). The web UI and REST API are **deprecated and frozen**.
 
 ## Calibre plugin (GitHub Releases)
 
-Download **AO3Scraper.zip** from [Releases](https://github.com/BlakeASmith/wranglekit/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
+Download **wranglekit.zip** from [Releases](https://github.com/BlakeASmith/wranglekit/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
 
-1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `AO3Scraper.zip`.
+1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `wranglekit.zip`.
 2. Restart Calibre.
 3. Open a **new** fanfic library (or one you are happy to write). Plugin settings → optional AO3 login.
 
@@ -19,7 +19,7 @@ To build that zip from this repo: `python makeplugin.py zip`.
 | Interface | How to use |
 |---|---|
 | **CLI** | `python -m ao3kit scrape\|tags\|download\|cover\|job\|config\|login\|rate …` |
-| **Calibre plugin** | GitHub **AO3Scraper.zip** (Preferences → Plugins → Load plugin from file), or `python makeplugin.py install` from this checkout. Search AO3, search similar, import JSONL / `ao3-import.zip`. **Selected books**: **Complete selected** (series + missing EPUBs + simplify tags), series, missing EPUBs, generate covers, simplify tags, collections. **Tags and collections**: rules, graph, purge, tag cache. **Running jobs…** to attach logs / stop. AO3 login, cover style, and import defaults live in plugin settings. |
+| **Calibre plugin** | GitHub **wranglekit.zip** (Preferences → Plugins → Load plugin from file), or `python makeplugin.py install` from this checkout. Search AO3, search similar, import JSONL / `ao3-import.zip`. **Selected books**: **Complete selected** (series + missing EPUBs + simplify tags), series, missing EPUBs, generate covers, simplify tags, collections. **Tags and collections**: rules, graph, purge, tag cache. **Running jobs…** to attach logs / stop. AO3 login, cover style, and import defaults live in plugin settings. |
 | **Web UI** (deprecated) | `python -m ao3kit serve` → http://127.0.0.1:8000 — frozen, not updated |
 | **REST API** (deprecated) | Same server → http://127.0.0.1:8000/api/v1/docs — frozen, not updated |
 
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 cp .env.example .env   # optional: AO3_USERNAME / AO3_PASSWORD
 python -m ao3kit config init
 python makeplugin.py install   # Calibre plugin from this checkout; add --restart only when iterating on plugin UI
-python makeplugin.py zip       # Self-contained AO3Scraper.zip for GitHub Releases
+python makeplugin.py zip       # Self-contained wranglekit.zip for GitHub Releases
 ```
 
 ## Quick start

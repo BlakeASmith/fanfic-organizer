@@ -11,23 +11,23 @@ from PyQt5.Qt import QTimer
 
 from calibre.gui2 import error_dialog
 
-from calibre_plugins.ao3_scraper.cleaned import canonical_work_id
-from calibre_plugins.ao3_scraper.columns import apply_layout_columns
-from calibre_plugins.ao3_scraper.enrich import run_ao3kit
-from calibre_plugins.ao3_scraper.epub_plan import (
+from calibre_plugins.wranglekit.cleaned import canonical_work_id
+from calibre_plugins.wranglekit.columns import apply_layout_columns
+from calibre_plugins.wranglekit.enrich import run_ao3kit
+from calibre_plugins.wranglekit.epub_plan import (
     merge_download_manifest,
     pending_epub_attachments,
     pending_incremental_imports,
     summarize_epub_download,
 )
-from calibre_plugins.ao3_scraper.importer import (
+from calibre_plugins.wranglekit.importer import (
     attach_downloaded_epubs,
     import_record,
     refresh_library_ui,
 )
-from calibre_plugins.ao3_scraper.job_plans import merge_ready_with_jsonl
-from calibre_plugins.ao3_scraper.job_ui import JobLogDialog, JobNotifyDialog
-from calibre_plugins.ao3_scraper.jobs import (
+from calibre_plugins.wranglekit.job_plans import merge_ready_with_jsonl
+from calibre_plugins.wranglekit.job_ui import JobLogDialog, JobNotifyDialog
+from calibre_plugins.wranglekit.jobs import (
     job_is_retryable,
     job_paths,
     jobs_root,
@@ -38,14 +38,14 @@ from calibre_plugins.ao3_scraper.jobs import (
     write_json,
     first_line,
 )
-from calibre_plugins.ao3_scraper.jsonl_loader import load_jsonl_records, resolve_epub_path
-from calibre_plugins.ao3_scraper.progress import (
+from calibre_plugins.wranglekit.jsonl_loader import load_jsonl_records, resolve_epub_path
+from calibre_plugins.wranglekit.progress import (
     _book_noun,
     _finish_with_collections,
     _finish_with_remaps,
     write_import_payload,
 )
-from calibre_plugins.ao3_scraper.scrape_run import (
+from calibre_plugins.wranglekit.scrape_run import (
     build_job_clear_argv,
     build_job_delete_argv,
     build_job_list_argv,
@@ -53,7 +53,7 @@ from calibre_plugins.ao3_scraper.scrape_run import (
     build_job_start_argv,
     build_job_stop_argv,
 )
-from calibre_plugins.ao3_scraper.selected import (
+from calibre_plugins.wranglekit.selected import (
     apply_cleaned_records,
     apply_collections_records,
     apply_cover_records,
@@ -84,7 +84,7 @@ class JobSupervisor:
         cached = getattr(self, '_project_path', None)
         if cached is not None:
             return cached
-        from calibre_plugins.ao3_scraper.enrich import resolve_ao3kit_runtime
+        from calibre_plugins.wranglekit.enrich import resolve_ao3kit_runtime
 
         project, _python, error = resolve_ao3kit_runtime()
         if error or project is None:
@@ -139,7 +139,7 @@ class JobSupervisor:
         project = self._project()
         if project is None:
             return None
-        from calibre_plugins.ao3_scraper.tag_warm import read_status_file, warm_status_path
+        from calibre_plugins.wranglekit.tag_warm import read_status_file, warm_status_path
 
         status = read_status_file(warm_status_path(project))
         if not status:
@@ -165,8 +165,8 @@ class JobSupervisor:
         if root is None:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
-                'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                'Wranglekit',
+                'Could not find ao3kit. Install wranglekit.zip from GitHub '
                 'Releases, or set Project path in plugin settings.',
                 show=True,
             )
@@ -187,7 +187,7 @@ class JobSupervisor:
             if not quiet:
                 error_dialog(
                     self.gui,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Could not start background job.',
                     det_msg=(stderr or stdout or f'exit {code}').strip(),
                     show=True,
@@ -201,11 +201,11 @@ class JobSupervisor:
         """Start the live tag-graph job if needed. Returns the viewer URL."""
         import time
 
-        from calibre_plugins.ao3_scraper.graph_live import (
+        from calibre_plugins.wranglekit.graph_live import (
             GRAPH_JOB_ID,
             read_serve_url,
         )
-        from calibre_plugins.ao3_scraper.job_plans import plan_graph_serve
+        from calibre_plugins.wranglekit.job_plans import plan_graph_serve
 
         project = self._project()
         if project is None:
@@ -231,14 +231,14 @@ class JobSupervisor:
         project = self._project()
         if project is None:
             return
-        from calibre_plugins.ao3_scraper.graph_live import (
+        from calibre_plugins.wranglekit.graph_live import (
             mark_graph_command_done,
             mark_graph_command_error,
             pending_graph_commands,
         )
-        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
-        from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings, prefs
-        from calibre_plugins.ao3_scraper.scrape_run import merge_plugin_settings
+        from calibre_plugins.wranglekit.job_plans import plan_scrape
+        from calibre_plugins.wranglekit.prefs import plugin_runtime_settings, prefs
+        from calibre_plugins.wranglekit.scrape_run import merge_plugin_settings
 
         pending = pending_graph_commands(project)
         if not pending:
@@ -283,12 +283,12 @@ class JobSupervisor:
                 self._dialogs.pop(job_id, None)
         log_path, status_path, title = self._paths_for(job_id)
         if log_path is None or status_path is None:
-            error_dialog(self.gui, 'AO3 Scraper', f'Unknown job {job_id}.', show=True)
+            error_dialog(self.gui, 'Wranglekit', f'Unknown job {job_id}.', show=True)
             return
         dialog = JobLogDialog(
             self.gui,
             job_id=job_id,
-            title=title or 'AO3 Scraper — Job',
+            title=title or 'Wranglekit — Job',
             log_path=log_path,
             status_path=status_path,
             supervisor=self,
@@ -313,7 +313,7 @@ class JobSupervisor:
         if job_id == 'warm':
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'The tag-cache warmer cannot be retried from this list. '
                 'Use Tags and collections → Warm tag cache.',
                 show=True,
@@ -329,7 +329,7 @@ class JobSupervisor:
         if code != 0 and not status.get('running'):
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not retry job.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -357,7 +357,7 @@ class JobSupervisor:
         if any(job_id == 'warm' for job_id in ids):
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'The tag-cache warmer cannot be deleted from this list. '
                 'Use Stop background tag cache…',
                 show=True,
@@ -376,7 +376,7 @@ class JobSupervisor:
         if code != 0 and not deleted:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not delete job.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -388,7 +388,7 @@ class JobSupervisor:
             )
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Some jobs could not be deleted.',
                 det_msg=detail,
                 show=True,
@@ -419,7 +419,7 @@ class JobSupervisor:
         if code != 0 and not deleted:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not clear jobs.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -427,7 +427,7 @@ class JobSupervisor:
         return deleted
 
     def show_list(self) -> None:
-        from calibre_plugins.ao3_scraper.job_ui import JobsListDialog
+        from calibre_plugins.wranglekit.job_ui import JobsListDialog
 
         if self._list_dialog is not None:
             try:
@@ -457,7 +457,7 @@ class JobSupervisor:
             return None, None, job_id
         paths = job_paths(root / job_id)
         spec = read_json(paths['spec']) or {}
-        title = str(spec.get('title') or 'AO3 Scraper — Job')
+        title = str(spec.get('title') or 'Wranglekit — Job')
         return paths['log'], paths['status'], title
 
     def tick(self) -> None:
@@ -639,7 +639,7 @@ class JobSupervisor:
             if new_records:
                 project = self._project()
                 if project is not None:
-                    from calibre_plugins.ao3_scraper.graph_live import (
+                    from calibre_plugins.wranglekit.graph_live import (
                         graph_jsonl_path,
                         upsert_graph_jsonl,
                     )
@@ -708,7 +708,7 @@ class JobSupervisor:
             )
         project = self._project()
         if project is not None:
-            from calibre_plugins.ao3_scraper.graph_live import (
+            from calibre_plugins.wranglekit.graph_live import (
                 graph_jsonl_path,
                 upsert_graph_jsonl,
             )

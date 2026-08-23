@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from calibre_plugins.ao3_scraper.jobs import write_json
-    from calibre_plugins.ao3_scraper.scrape_run import (
+    from calibre_plugins.wranglekit.jobs import write_json
+    from calibre_plugins.wranglekit.scrape_run import (
         build_collections_argv,
         build_cover_argv,
         build_enrich_argv,
@@ -354,7 +354,7 @@ def plan_graph_serve(job_dir: Path, *, port: int | None = None) -> dict[str, Any
     work = job_dir / 'work'
     work.mkdir(parents=True, exist_ok=True)
     try:
-        from calibre_plugins.ao3_scraper.scrape_run import build_graph_serve_argv
+        from calibre_plugins.wranglekit.scrape_run import build_graph_serve_argv
     except ImportError:
         from scrape_run import build_graph_serve_argv
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build or dev-install the Calibre plugin.
 
-``zip`` writes a self-contained ``AO3Scraper.zip`` for GitHub Releases
+``zip`` writes a self-contained ``wranglekit.zip`` for GitHub Releases
 (plugin UI + ao3kit + vendored pure-Python deps). ``install`` still uses
 ``calibre-customize -b`` from ``calibre-plugin/`` for fast UI iteration.
 """
@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
-OUTPUT = ROOT / "AO3Scraper.zip"
+OUTPUT = ROOT / "wranglekit.zip"
 VENDOR_CACHE = ROOT / ".cache" / "plugin-vendor"
 PLUGIN_REQUIREMENTS = ROOT / "requirements-plugin.txt"
 NATIVE_SUFFIXES = {".so", ".pyd", ".dylib", ".dll"}
@@ -96,7 +96,7 @@ def iter_zip_entries(
 ) -> list[tuple[Path, str]]:
     """``(filesystem path, zip arcname)`` for a release plugin zip."""
     entries: list[tuple[Path, str]] = []
-    import_name = plugin_dir / "plugin-import-name-ao3_scraper.txt"
+    import_name = plugin_dir / "plugin-import-name-wranglekit.txt"
     if not import_name.exists():
         raise SystemExit(f"Missing required file: {import_name}")
     for path in sorted(plugin_dir.glob("*.py")):
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="makeplugin.py",
         description=(
-            "Build a self-contained AO3Scraper.zip for GitHub Releases, or "
+            "Build a self-contained wranglekit.zip for GitHub Releases, or "
             "install the Calibre plugin from calibre-plugin/. Restart is "
             "opt-in and lock-aware."
         ),

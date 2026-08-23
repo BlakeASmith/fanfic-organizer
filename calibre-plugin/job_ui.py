@@ -22,7 +22,7 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
-from calibre_plugins.ao3_scraper.jobs import (
+from calibre_plugins.wranglekit.jobs import (
     first_line,
     format_job_header,
     job_clear_bucket,
@@ -32,7 +32,7 @@ from calibre_plugins.ao3_scraper.jobs import (
     read_json,
     read_log_tail,
 )
-from calibre_plugins.ao3_scraper.progress import _apply_progress_bar, _user_status_line
+from calibre_plugins.wranglekit.progress import _apply_progress_bar, _user_status_line
 
 _RETRY_TIP = (
     'Run this job again from the start. Already-downloaded EPUBs and '
@@ -61,7 +61,7 @@ class JobLogDialog(QDialog):
         self._supervisor = supervisor
         self._closing = False
         self._finished = False
-        self.setWindowTitle(title or 'AO3 Scraper — Job')
+        self.setWindowTitle(title or 'Wranglekit — Job')
         self.setMinimumSize(640, 420)
         self.resize(760, 520)
         self.setWindowModality(Qt.NonModal)
@@ -238,7 +238,7 @@ class JobLogDialog(QDialog):
             return
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'Remove this job from the list? Books already in Calibre stay.',
         ):
             return
@@ -261,7 +261,7 @@ class JobsListDialog(QDialog):
         super().__init__(gui)
         self.gui = gui
         self._supervisor = supervisor
-        self.setWindowTitle('AO3 Scraper — Running jobs')
+        self.setWindowTitle('Wranglekit — Running jobs')
         self.setMinimumSize(720, 360)
         self.setWindowModality(Qt.NonModal)
 
@@ -419,7 +419,7 @@ class JobsListDialog(QDialog):
     def _attach_selected(self) -> None:
         job_id = self._selected_id()
         if not job_id:
-            error_dialog(self.gui, 'AO3 Scraper', 'Select a job first.', show=True)
+            error_dialog(self.gui, 'Wranglekit', 'Select a job first.', show=True)
             return
         self._supervisor.attach(job_id)
 
@@ -430,11 +430,11 @@ class JobsListDialog(QDialog):
             if job.get('running') and job.get('id')
         ]
         if not running:
-            error_dialog(self.gui, 'AO3 Scraper', 'Select a running job first.', show=True)
+            error_dialog(self.gui, 'Wranglekit', 'Select a running job first.', show=True)
             return
         n = len(running)
         noun = 'job' if n == 1 else 'jobs'
-        if not question_dialog(self.gui, 'AO3 Scraper', f'Stop {n} {noun}?'):
+        if not question_dialog(self.gui, 'Wranglekit', f'Stop {n} {noun}?'):
             return
         for job in running:
             self._supervisor.cancel(str(job.get('id')))
@@ -443,12 +443,12 @@ class JobsListDialog(QDialog):
     def _retry_selected(self) -> None:
         job_id = self._selected_id()
         if not job_id:
-            error_dialog(self.gui, 'AO3 Scraper', 'Select a job first.', show=True)
+            error_dialog(self.gui, 'Wranglekit', 'Select a job first.', show=True)
             return
         if not job_is_retryable(self._selected_job()):
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'That job is not waiting to be retried. Retry is for failed or '
                 'stopped jobs after they finish writing into Calibre.',
                 show=True,
@@ -465,7 +465,7 @@ class JobsListDialog(QDialog):
         if not deletable:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more finished jobs to delete. '
                 'Running jobs and jobs still writing into Calibre cannot be deleted.',
                 show=True,
@@ -479,7 +479,7 @@ class JobsListDialog(QDialog):
             extra = f' {skipped} still running or writing will be left.'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Remove {n} {noun} from the list? Books already in Calibre stay.{extra}',
         ):
             return
@@ -509,12 +509,12 @@ class JobsListDialog(QDialog):
             if job_clear_bucket(job) in buckets and job.get('id')
         ]
         if not ids:
-            info_dialog(self.gui, 'AO3 Scraper', 'Nothing to clear.', show=True)
+            info_dialog(self.gui, 'Wranglekit', 'Nothing to clear.', show=True)
             return
         noun = 'job' if len(ids) == 1 else 'jobs'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             f'{prompt}\n\n{len(ids)} {noun}.',
         ):
             return
@@ -536,7 +536,7 @@ class JobNotifyDialog(QDialog):
     ):
         super().__init__(gui)
         self.should_retry = False
-        self.setWindowTitle('AO3 Scraper')
+        self.setWindowTitle('Wranglekit')
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         label = QLabel(summary or ('Done.' if ok else 'Job failed.'))

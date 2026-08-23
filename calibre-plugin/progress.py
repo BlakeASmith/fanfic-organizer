@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Background import progress UI for the AO3 Scraper plugin."""
+"""Background import progress UI for the Wranglekit plugin."""
 
 from __future__ import annotations
 
@@ -24,31 +24,31 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, info_dialog
 
-from calibre_plugins.ao3_scraper.cleaned import (
+from calibre_plugins.wranglekit.cleaned import (
     canonical_work_id,
     collect_collection_lines,
     collect_remapping_lines,
     format_collection_summary,
     format_remapping_summary,
 )
-from calibre_plugins.ao3_scraper.columns import apply_layout_columns
-from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, enrich_records_via_ao3kit
-from calibre_plugins.ao3_scraper.epub_plan import (
+from calibre_plugins.wranglekit.columns import apply_layout_columns
+from calibre_plugins.wranglekit.enrich import EnrichCancelled, enrich_records_via_ao3kit
+from calibre_plugins.wranglekit.epub_plan import (
     merge_download_manifest,
     pending_epub_attachments,
     summarize_epub_download,
 )
-from calibre_plugins.ao3_scraper.importer import (
+from calibre_plugins.wranglekit.importer import (
     attach_downloaded_epubs,
     import_records,
     refresh_library_ui,
 )
-from calibre_plugins.ao3_scraper.jsonl_loader import (
+from calibre_plugins.wranglekit.jsonl_loader import (
     load_import_source,
     load_jsonl_records,
     resolve_epub_path,
 )
-from calibre_plugins.ao3_scraper.selected import (
+from calibre_plugins.wranglekit.selected import (
     apply_cleaned_records,
     apply_collections_records,
     apply_series_records,
@@ -245,9 +245,9 @@ class ImportWorker(QThread):
             enrich_note = ''
 
             if self.include_series:
-                from calibre_plugins.ao3_scraper.enrich import EnrichHandle, run_ao3kit
-                from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings
-                from calibre_plugins.ao3_scraper.scrape_run import (
+                from calibre_plugins.wranglekit.enrich import EnrichHandle, run_ao3kit
+                from calibre_plugins.wranglekit.prefs import plugin_runtime_settings
+                from calibre_plugins.wranglekit.scrape_run import (
                     merge_plugin_settings,
                     prepare_series_from_command,
                 )
@@ -292,7 +292,7 @@ class ImportWorker(QThread):
                     'Starting simplification of tags, fandoms, and relationships '
                     '(AO3 lookups + user rules)…'
                 )
-                from calibre_plugins.ao3_scraper.enrich import EnrichHandle
+                from calibre_plugins.wranglekit.enrich import EnrichHandle
 
                 self._enrich_handle = EnrichHandle()
                 records, enrich_error = enrich_records_via_ao3kit(
@@ -351,7 +351,7 @@ class ImportProgressDialog(QDialog):
         super().__init__(gui)
         self.gui = gui
         self.update_existing = update_existing
-        self.setWindowTitle('AO3 Scraper — Import')
+        self.setWindowTitle('Wranglekit — Import')
         self.setMinimumSize(640, 420)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -447,7 +447,7 @@ class ImportProgressDialog(QDialog):
         self._append(detail)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'Import failed during load/tag simplification.',
             det_msg=detail,
             show=True,
@@ -472,7 +472,7 @@ class ImportProgressDialog(QDialog):
             self.bar.setMaximum(1)
             self.bar.setValue(1)
             refresh_library_ui(self.gui, book_ids)
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=remap_text, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=remap_text, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -485,7 +485,7 @@ class ImportProgressDialog(QDialog):
             self.buttons.rejected.connect(self.reject)
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Import failed while writing to Calibre.',
                 det_msg=detail,
                 show=True,
@@ -525,8 +525,8 @@ class ScrapeImportWorker(QThread):
             self.progress.emit(*parsed)
 
     def run(self) -> None:
-        from calibre_plugins.ao3_scraper.enrich import EnrichHandle, run_ao3kit
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.enrich import EnrichHandle, run_ao3kit
+        from calibre_plugins.wranglekit.scrape_run import (
             describe_scrape,
             prepare_scrape_command,
         )
@@ -635,7 +635,7 @@ class ScrapeImportDialog(QDialog):
         super().__init__(gui)
         self.gui = gui
         self.update_existing = bool(options.get('update_existing', True))
-        self.setWindowTitle('AO3 Scraper — Search and import')
+        self.setWindowTitle('Wranglekit — Search and import')
         self.setMinimumSize(640, 420)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -723,7 +723,7 @@ class ScrapeImportDialog(QDialog):
         self._append(detail)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'Search or download failed.',
             det_msg=detail,
             show=True,
@@ -741,7 +741,7 @@ class ScrapeImportDialog(QDialog):
                 self._append(summary)
                 self.bar.setMaximum(1)
                 self.bar.setValue(1)
-                info_dialog(self.gui, 'AO3 Scraper', summary, show=True)
+                info_dialog(self.gui, 'Wranglekit', summary, show=True)
                 self._closing = True
                 _keep_open_with_close(self)
                 return
@@ -762,7 +762,7 @@ class ScrapeImportDialog(QDialog):
             self.bar.setMaximum(1)
             self.bar.setValue(1)
             refresh_library_ui(self.gui, book_ids)
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=remap_text, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=remap_text, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -775,7 +775,7 @@ class ScrapeImportDialog(QDialog):
             self.buttons.rejected.connect(self.reject)
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Import failed while writing to Calibre.',
                 det_msg=detail,
                 show=True,
@@ -872,7 +872,7 @@ class SimplifySelectedWorker(QThread):
             self.status.emit(working)
             self.progress.emit(0, 0)
 
-            from calibre_plugins.ao3_scraper.enrich import EnrichHandle
+            from calibre_plugins.wranglekit.enrich import EnrichHandle
 
             self._enrich_handle = EnrichHandle()
             enriched, enrich_error = enrich_records_via_ao3kit(
@@ -921,13 +921,13 @@ class SimplifySelectedDialog(QDialog):
         self.gui = gui
         self.collections_only = bool(collections_only)
         if self.collections_only:
-            title = 'AO3 Scraper — Recompute collections'
+            title = 'Wranglekit — Recompute collections'
             headline = (
                 f'Recomputing collections for {len(book_ids)} selected '
                 f'{_book_noun(len(book_ids))}…'
             )
         else:
-            title = 'AO3 Scraper — Simplify selected'
+            title = 'Wranglekit — Simplify selected'
             headline = (
                 f'Simplifying tags, fandoms, and relationships for '
                 f'{len(book_ids)} selected book(s)…'
@@ -1031,7 +1031,7 @@ class SimplifySelectedDialog(QDialog):
         self._append(detail)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 'Recomputing collections failed for the selection.'
                 if self.collections_only
@@ -1087,7 +1087,7 @@ class SimplifySelectedDialog(QDialog):
                 self.gui,
                 [item['book_id'] for item in outcomes if item.get('book_id') is not None],
             )
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=remap_text, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=remap_text, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -1100,7 +1100,7 @@ class SimplifySelectedDialog(QDialog):
             self.buttons.rejected.connect(self.reject)
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Failed while writing cleaned metadata.',
                 det_msg=detail,
                 show=True,
@@ -1194,9 +1194,9 @@ class DownloadSelectedWorker(QThread):
         }
 
     def run(self) -> None:
-        from calibre_plugins.ao3_scraper.enrich import EnrichHandle, run_ao3kit
-        from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.enrich import EnrichHandle, run_ao3kit
+        from calibre_plugins.wranglekit.prefs import plugin_runtime_settings
+        from calibre_plugins.wranglekit.scrape_run import (
             merge_plugin_settings,
             prepare_download_command,
         )
@@ -1261,7 +1261,7 @@ class DownloadSelectedDialog(QDialog):
     def __init__(self, gui, book_ids: list[int]):
         super().__init__(gui)
         self.gui = gui
-        self.setWindowTitle('AO3 Scraper — Download EPUBs')
+        self.setWindowTitle('Wranglekit — Download EPUBs')
         self.setMinimumSize(640, 420)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -1460,7 +1460,7 @@ class DownloadSelectedDialog(QDialog):
         self.bar.setValue(0)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'EPUB download failed for the selection.',
             det_msg=detail,
             show=True,
@@ -1486,7 +1486,7 @@ class DownloadSelectedDialog(QDialog):
                 self._append(summary)
                 self.bar.setMaximum(1)
                 self.bar.setValue(1)
-                info_dialog(self.gui, 'AO3 Scraper', summary, show=True)
+                info_dialog(self.gui, 'Wranglekit', summary, show=True)
                 self._closing = True
                 _keep_open_with_close(self)
                 return
@@ -1507,7 +1507,7 @@ class DownloadSelectedDialog(QDialog):
                 self._append(details)
             self.bar.setMaximum(max(self._total, 1))
             self.bar.setValue(self.bar.maximum())
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=details, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=details, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -1517,7 +1517,7 @@ class DownloadSelectedDialog(QDialog):
             self._show_close_button()
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Failed while adding EPUBs to Calibre.',
                 det_msg=detail,
                 show=True,
@@ -1558,9 +1558,9 @@ class ImportSeriesWorker(QThread):
             self.progress.emit(*parsed)
 
     def run(self) -> None:
-        from calibre_plugins.ao3_scraper.enrich import EnrichHandle, run_ao3kit
-        from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings, prefs
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.enrich import EnrichHandle, run_ao3kit
+        from calibre_plugins.wranglekit.prefs import plugin_runtime_settings, prefs
+        from calibre_plugins.wranglekit.scrape_run import (
             merge_plugin_settings,
             prepare_series_from_command,
         )
@@ -1680,7 +1680,7 @@ class ImportSeriesDialog(QDialog):
     def __init__(self, gui, book_ids: list[int]):
         super().__init__(gui)
         self.gui = gui
-        self.setWindowTitle('AO3 Scraper — Import series')
+        self.setWindowTitle('Wranglekit — Import series')
         self.setMinimumSize(640, 420)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -1769,7 +1769,7 @@ class ImportSeriesDialog(QDialog):
         self._append(detail)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'Could not import the rest of the series.',
             det_msg=detail,
             show=True,
@@ -1785,7 +1785,7 @@ class ImportSeriesDialog(QDialog):
                 self._append(summary)
                 self.bar.setMaximum(1)
                 self.bar.setValue(1)
-                info_dialog(self.gui, 'AO3 Scraper', summary, show=True)
+                info_dialog(self.gui, 'Wranglekit', summary, show=True)
                 self._closing = True
                 _keep_open_with_close(self)
                 return
@@ -1813,7 +1813,7 @@ class ImportSeriesDialog(QDialog):
             self.bar.setMaximum(1)
             self.bar.setValue(1)
             refresh_library_ui(self.gui, book_ids)
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=remap_text, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=remap_text, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -1826,7 +1826,7 @@ class ImportSeriesDialog(QDialog):
             self.buttons.rejected.connect(self.reject)
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Import failed while writing to Calibre.',
                 det_msg=detail,
                 show=True,
@@ -1870,9 +1870,9 @@ class FillSeriesWorker(QThread):
             self.progress.emit(*parsed)
 
     def run(self) -> None:
-        from calibre_plugins.ao3_scraper.enrich import EnrichHandle, run_ao3kit
-        from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.enrich import EnrichHandle, run_ao3kit
+        from calibre_plugins.wranglekit.prefs import plugin_runtime_settings
+        from calibre_plugins.wranglekit.scrape_run import (
             merge_plugin_settings,
             prepare_fill_series_command,
         )
@@ -1961,7 +1961,7 @@ class FillSeriesDialog(QDialog):
     def __init__(self, gui, book_ids: list[int]):
         super().__init__(gui)
         self.gui = gui
-        self.setWindowTitle('AO3 Scraper — Fill series')
+        self.setWindowTitle('Wranglekit — Fill series')
         self.setMinimumSize(640, 420)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -2052,7 +2052,7 @@ class FillSeriesDialog(QDialog):
         self._append(detail)
         error_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             'Could not fill Series for the selection.',
             det_msg=detail,
             show=True,
@@ -2100,7 +2100,7 @@ class FillSeriesDialog(QDialog):
                 self.gui,
                 [item['book_id'] for item in outcomes if item.get('book_id') is not None],
             )
-            info_dialog(self.gui, 'AO3 Scraper', summary, det_msg=remap_text, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, det_msg=remap_text, show=True)
             self._closing = True
             _keep_open_with_close(self)
         except Exception:
@@ -2113,7 +2113,7 @@ class FillSeriesDialog(QDialog):
             self.buttons.rejected.connect(self.reject)
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Failed while writing Series.',
                 det_msg=detail,
                 show=True,

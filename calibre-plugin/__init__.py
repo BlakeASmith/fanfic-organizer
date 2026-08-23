@@ -5,8 +5,8 @@ from calibre.customize import InterfaceActionBase
 __version__ = (0, 26, 0)
 
 
-class AO3ScraperBase(InterfaceActionBase):
-    name = 'AO3 Scraper'
+class WranglekitBase(InterfaceActionBase):
+    name = 'Wranglekit'
     description = (
         'Search AO3, download EPUBs, generate covers, import into a Calibre '
         'library, complete selected books (series, EPUBs, tags), import series, '
@@ -23,13 +23,13 @@ class AO3ScraperBase(InterfaceActionBase):
     version = __version__
     minimum_calibre_version = (5, 0, 0)
 
-    actual_plugin = 'calibre_plugins.ao3_scraper.ao3_plugin:AO3ScraperPlugin'
+    actual_plugin = 'calibre_plugins.wranglekit.ao3_plugin:WranglekitPlugin'
 
     def is_customizable(self):
         return True
 
     def config_widget(self):
-        from calibre_plugins.ao3_scraper.config import ConfigWidget
+        from calibre_plugins.wranglekit.config import ConfigWidget
         return ConfigWidget(self.actual_plugin_)
 
     def save_settings(self, config_widget):

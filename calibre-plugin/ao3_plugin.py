@@ -7,15 +7,15 @@ from PyQt5.Qt import QIcon, QMenu, QPixmap, QToolButton
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 from calibre.gui2.actions import InterfaceAction
 
-from calibre_plugins.ao3_scraper.dialogs import (
+from calibre_plugins.wranglekit.dialogs import (
     ImportJsonlDialog,
     ScrapeSearchDialog,
     SimilarSearchDialog,
     TagMappingsDialog,
     TagPurgeDialog,
 )
-from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings, prefs
-from calibre_plugins.ao3_scraper.scrape_run import merge_plugin_settings
+from calibre_plugins.wranglekit.prefs import plugin_runtime_settings, prefs
+from calibre_plugins.wranglekit.scrape_run import merge_plugin_settings
 
 try:
     load_translations()
@@ -39,10 +39,10 @@ def load_plugin_icon(action) -> QIcon:
     return QIcon(pixmap)
 
 
-class AO3ScraperPlugin(InterfaceAction):
-    name = 'AO3 Scraper'
+class WranglekitPlugin(InterfaceAction):
+    name = 'Wranglekit'
     action_spec = (
-        'AO3 Scraper',
+        'Wranglekit',
         None,
         'Search AO3, manage selected books, tags, and jobs',
         None,
@@ -60,7 +60,7 @@ class AO3ScraperPlugin(InterfaceAction):
 
     def jobs(self):
         if self._jobs is None:
-            from calibre_plugins.ao3_scraper.job_supervise import JobSupervisor
+            from calibre_plugins.wranglekit.job_supervise import JobSupervisor
 
             self._jobs = JobSupervisor(self)
         return self._jobs
@@ -194,22 +194,22 @@ class AO3ScraperPlugin(InterfaceAction):
 
         values = dialog.values()
         if not values['path']:
-            error_dialog(self.gui, 'AO3 Scraper', 'Choose a JSONL or import zip file.', show=True)
+            error_dialog(self.gui, 'Wranglekit', 'Choose a JSONL or import zip file.', show=True)
             return
 
         prefs['last_jsonl_path'] = values['path']
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_import
-        from calibre_plugins.ao3_scraper.jsonl_loader import load_import_source
+        from calibre_plugins.wranglekit.job_plans import plan_import
+        from calibre_plugins.wranglekit.jsonl_loader import load_import_source
 
         try:
             records, bundle_root, cleanup = load_import_source(values['path'])
         except Exception as exc:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not read that import file.',
                 det_msg=str(exc),
                 show=True,
@@ -217,7 +217,7 @@ class AO3ScraperPlugin(InterfaceAction):
             return
         if not records:
             error_dialog(
-                self.gui, 'AO3 Scraper', 'The import file contains no records.', show=True
+                self.gui, 'Wranglekit', 'The import file contains no records.', show=True
             )
             return
         job_dir = self.jobs().prepare_job_dir('import')
@@ -251,7 +251,7 @@ class AO3ScraperPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
+        from calibre_plugins.wranglekit.job_plans import plan_scrape
 
         job_dir = self.jobs().prepare_job_dir('scrape')
         if job_dir is None:
@@ -267,14 +267,14 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.ao3_scraper.selected import load_selected_similar_records
-        from calibre_plugins.ao3_scraper.similar import facets_from_records
+        from calibre_plugins.wranglekit.selected import load_selected_similar_records
+        from calibre_plugins.wranglekit.similar import facets_from_records
 
         ready, skipped = load_selected_similar_records(self.gui.current_db, book_ids)
         if not ready:
@@ -285,7 +285,7 @@ class AO3ScraperPlugin(InterfaceAction):
                 )
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have fandoms, tags, characters, '
                 'or an author to search from.' + extra,
                 show=True,
@@ -307,7 +307,7 @@ class AO3ScraperPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
+        from calibre_plugins.wranglekit.job_plans import plan_scrape
 
         job_dir = self.jobs().prepare_job_dir('scrape')
         if job_dir is None:
@@ -323,14 +323,14 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.ao3_scraper.epub_plan import REASON_HAS_EPUB, REASON_NO_AO3
-        from calibre_plugins.ao3_scraper.selected import load_selected_for_epub_download
+        from calibre_plugins.wranglekit.epub_plan import REASON_HAS_EPUB, REASON_NO_AO3
+        from calibre_plugins.wranglekit.selected import load_selected_for_epub_download
 
         ready, skipped = load_selected_for_epub_download(
             self.gui.current_db, book_ids
@@ -341,14 +341,14 @@ class AO3ScraperPlugin(InterfaceAction):
             if already and not no_id:
                 info_dialog(
                     self.gui,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Selected books already have an EPUB. Nothing to download.',
                     show=True,
                 )
                 return
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 URL or work id to download.',
                 show=True,
             )
@@ -363,7 +363,7 @@ class AO3ScraperPlugin(InterfaceAction):
         noun = 'book' if len(ready) == 1 else 'books'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Download the native AO3 EPUB for {len(ready)} selected {noun} '
                 f'that do not already have one?{skip_note}\n\n'
@@ -373,7 +373,7 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_download_selected
+        from calibre_plugins.wranglekit.job_plans import plan_download_selected
 
         job_dir = self.jobs().prepare_job_dir('download')
         if job_dir is None:
@@ -391,7 +391,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -399,9 +399,9 @@ class AO3ScraperPlugin(InterfaceAction):
 
         from pathlib import Path
 
-        from calibre_plugins.ao3_scraper.cover_ui import load_cover_dict
-        from calibre_plugins.ao3_scraper.job_plans import plan_cover_selected
-        from calibre_plugins.ao3_scraper.selected import (
+        from calibre_plugins.wranglekit.cover_ui import load_cover_dict
+        from calibre_plugins.wranglekit.job_plans import plan_cover_selected
+        from calibre_plugins.wranglekit.selected import (
             export_selected_epubs_for_cover,
             load_selected_for_covers,
         )
@@ -410,7 +410,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have a title to put on a cover.',
                 show=True,
             )
@@ -429,7 +429,7 @@ class AO3ScraperPlugin(InterfaceAction):
             extras.append(f'Skipping {len(skipped)} with no title.')
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Generate covers for {len(ready)} selected {noun}?\n\n'
                 'Uses title, author, word count, and quality score from the library. Style is '
@@ -463,7 +463,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -472,7 +472,7 @@ class AO3ScraperPlugin(InterfaceAction):
         noun = 'book' if len(book_ids) == 1 else 'books'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Complete the {len(book_ids)} selected {noun}?\n\n'
                 'This looks up each book on AO3 and then:\n'
@@ -489,8 +489,8 @@ class AO3ScraperPlugin(InterfaceAction):
 
         from pathlib import Path
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_complete_selected
-        from calibre_plugins.ao3_scraper.selected import (
+        from calibre_plugins.wranglekit.job_plans import plan_complete_selected
+        from calibre_plugins.wranglekit.selected import (
             copy_book_epub,
             load_selected_records,
         )
@@ -499,7 +499,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -527,7 +527,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -546,7 +546,7 @@ class AO3ScraperPlugin(InterfaceAction):
             extras.append('Tags will be simplified after lookup.')
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Import other works in the same AO3 series as the '
                 f'{len(book_ids)} selected {noun}?\n\n'
@@ -558,14 +558,14 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_import_series
-        from calibre_plugins.ao3_scraper.selected import load_selected_records
+        from calibre_plugins.wranglekit.job_plans import plan_import_series
+        from calibre_plugins.wranglekit.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -593,7 +593,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -602,7 +602,7 @@ class AO3ScraperPlugin(InterfaceAction):
         noun = 'book' if len(book_ids) == 1 else 'books'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Fill Calibre\'s Series column for the {len(book_ids)} '
                 f'selected {noun}?\n\n'
@@ -615,14 +615,14 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_fill_series
-        from calibre_plugins.ao3_scraper.selected import load_selected_records
+        from calibre_plugins.wranglekit.job_plans import plan_fill_series
+        from calibre_plugins.wranglekit.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -643,7 +643,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -651,7 +651,7 @@ class AO3ScraperPlugin(InterfaceAction):
 
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Simplify tags, fandoms, and relationships for {len(book_ids)} '
                 f'selected book(s) in the currently open library?\n\n'
@@ -664,14 +664,14 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_simplify_selected
-        from calibre_plugins.ao3_scraper.selected import load_selected_records
+        from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
+        from calibre_plugins.wranglekit.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -692,7 +692,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -701,7 +701,7 @@ class AO3ScraperPlugin(InterfaceAction):
         noun = 'book' if len(book_ids) == 1 else 'books'
         if confirm and not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Recompute collections for {len(book_ids)} selected {noun} '
                 f'in the currently open library?\n\n'
@@ -714,14 +714,14 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.job_plans import plan_simplify_selected
-        from calibre_plugins.ao3_scraper.selected import load_selected_for_collections
+        from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
+        from calibre_plugins.wranglekit.selected import load_selected_for_collections
 
         ready, skipped = load_selected_for_collections(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books could be loaded.',
                 show=True,
             )
@@ -743,13 +743,13 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.ao3_scraper.collection_edit import (
+        from calibre_plugins.wranglekit.collection_edit import (
             EditSelectedCollectionsDialog,
         )
 
@@ -764,7 +764,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -772,7 +772,7 @@ class AO3ScraperPlugin(InterfaceAction):
 
         name = str(collection_name or '').strip()
         if not name:
-            from calibre_plugins.ao3_scraper.collection_edit import (
+            from calibre_plugins.wranglekit.collection_edit import (
                 load_known_collection_names,
                 prompt_collection_name,
             )
@@ -790,7 +790,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if not name:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Type a collection name first.',
                 show=True,
             )
@@ -799,7 +799,7 @@ class AO3ScraperPlugin(InterfaceAction):
         noun = 'book' if len(book_ids) == 1 else 'books'
         if confirm and not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Add {len(book_ids)} selected {noun} to “{name}”?\n\n'
                 'This saves a per-work rule, then updates Collections from '
@@ -808,11 +808,11 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.collection_rules import (
+        from calibre_plugins.wranglekit.collection_rules import (
             build_collections_pin_argv,
         )
-        from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.ao3_scraper.selected import pin_targets_from_selected
+        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.wranglekit.selected import pin_targets_from_selected
 
         targets, skipped = pin_targets_from_selected(self.gui.current_db, book_ids)
         if not targets:
@@ -824,7 +824,7 @@ class AO3ScraperPlugin(InterfaceAction):
                 )
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 work id or Calibre UUID.'
                 + extra,
                 show=True,
@@ -849,7 +849,7 @@ class AO3ScraperPlugin(InterfaceAction):
                 if code != 0:
                     error_dialog(
                         self.gui,
-                        'AO3 Scraper',
+                        'Wranglekit',
                         f'Could not pin “{item.get("title") or item["book_id"]}” '
                         f'to {name}.',
                         det_msg=(stderr or stdout or f'exit {code}').strip(),
@@ -865,13 +865,13 @@ class AO3ScraperPlugin(InterfaceAction):
 
     def warm_tag_cache(self):
         db = self.gui.current_db
-        from calibre_plugins.ao3_scraper.tag_purge import scope_book_ids
+        from calibre_plugins.wranglekit.tag_purge import scope_book_ids
 
         book_ids = scope_book_ids(db, '')
         noun = 'book' if len(book_ids) == 1 else 'books'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Collect tags from all {len(book_ids)} {noun} in the open '
                 'library and fetch uncached AO3 mappings in the background?\n\n'
@@ -886,17 +886,17 @@ class AO3ScraperPlugin(InterfaceAction):
 
         from PyQt5.Qt import QApplication, Qt
 
-        from calibre_plugins.ao3_scraper.enrich import (
+        from calibre_plugins.wranglekit.enrich import (
             EnrichCancelled,
             resolve_ao3kit_runtime,
             run_ao3kit,
         )
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.scrape_run import (
             build_warm_start_argv,
             merge_plugin_settings,
         )
-        from calibre_plugins.ao3_scraper.selected import load_records_for_tag_warm
-        from calibre_plugins.ao3_scraper.tag_warm import (
+        from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
+        from calibre_plugins.wranglekit.tag_warm import (
             format_warm_started_text,
             parse_warm_status_json,
             unique_tag_names_from_records,
@@ -909,8 +909,8 @@ class AO3ScraperPlugin(InterfaceAction):
             if error or project is None:
                 error_dialog(
                     self.gui,
-                    'AO3 Scraper',
-                    'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                    'Wranglekit',
+                    'Could not find ao3kit. Install wranglekit.zip from GitHub '
                     'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
@@ -922,7 +922,7 @@ class AO3ScraperPlugin(InterfaceAction):
             if not names:
                 error_dialog(
                     self.gui,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'No tags or fandoms found on books in this library.',
                     show=True,
                 )
@@ -945,7 +945,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not start the background tag cache.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -954,7 +954,7 @@ class AO3ScraperPlugin(InterfaceAction):
 
         info_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             format_warm_started_text(
                 status,
                 book_count=len(book_ids),
@@ -969,7 +969,7 @@ class AO3ScraperPlugin(InterfaceAction):
     def stop_tag_cache_warm(self):
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 'Stop the background tag-cache process?\n\n'
                 'Already-fetched mappings stay in the cache. You can start '
@@ -978,9 +978,9 @@ class AO3ScraperPlugin(InterfaceAction):
         ):
             return
 
-        from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.ao3_scraper.scrape_run import build_warm_stop_argv
-        from calibre_plugins.ao3_scraper.tag_warm import (
+        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.wranglekit.scrape_run import build_warm_stop_argv
+        from calibre_plugins.wranglekit.tag_warm import (
             format_warm_stopped_dialog,
             parse_warm_status_json,
         )
@@ -1000,7 +1000,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not stop the background tag cache.',
                 det_msg=details or summary,
                 show=True,
@@ -1008,17 +1008,17 @@ class AO3ScraperPlugin(InterfaceAction):
             return
         if details:
             info_dialog(
-                self.gui, 'AO3 Scraper', summary, det_msg=details, show=True
+                self.gui, 'Wranglekit', summary, det_msg=details, show=True
             )
         else:
-            info_dialog(self.gui, 'AO3 Scraper', summary, show=True)
+            info_dialog(self.gui, 'Wranglekit', summary, show=True)
 
     def show_tag_cache_log(self):
         self.jobs().attach('warm')
 
     def show_tag_graph(self):
         db = self.gui.current_db
-        from calibre_plugins.ao3_scraper.tag_purge import (
+        from calibre_plugins.wranglekit.tag_purge import (
             graph_scope_ids,
             scope_book_ids,
             selected_ids_from_gui,
@@ -1045,7 +1045,7 @@ class AO3ScraperPlugin(InterfaceAction):
             empty_error = 'No tags or fandoms found on books in this library.'
         if not question_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             (
                 f'Graph {where} as work nodes linked to all of their tags '
                 '(plus synonym and metatag links), then open the live viewer?\n\n'
@@ -1058,17 +1058,17 @@ class AO3ScraperPlugin(InterfaceAction):
 
         from PyQt5.Qt import QApplication, Qt
 
-        from calibre_plugins.ao3_scraper.enrich import (
+        from calibre_plugins.wranglekit.enrich import (
             EnrichCancelled,
             resolve_ao3kit_runtime,
             run_ao3kit,
         )
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.scrape_run import (
             build_tag_graph_argv,
             live_graph_reload_argv,
         )
-        from calibre_plugins.ao3_scraper.selected import load_records_for_tag_warm
-        from calibre_plugins.ao3_scraper.tag_warm import write_graph_jsonl
+        from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
+        from calibre_plugins.wranglekit.tag_warm import write_graph_jsonl
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -1076,8 +1076,8 @@ class AO3ScraperPlugin(InterfaceAction):
             if error or project is None:
                 error_dialog(
                     self.gui,
-                    'AO3 Scraper',
-                    'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                    'Wranglekit',
+                    'Could not find ao3kit. Install wranglekit.zip from GitHub '
                     'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
@@ -1088,7 +1088,7 @@ class AO3ScraperPlugin(InterfaceAction):
             if not records:
                 error_dialog(
                     self.gui,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     empty_error,
                     show=True,
                 )
@@ -1119,7 +1119,7 @@ class AO3ScraperPlugin(InterfaceAction):
                 QDesktopServices.openUrl(QUrl(open_url))
                 info_dialog(
                     self.gui,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Opened the live tag graph.\n\n'
                     'Find similar on a work or tag to search AO3; new imports appear '
                     'in the graph as they land in the library. The viewer job '
@@ -1140,7 +1140,7 @@ class AO3ScraperPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not build the tag graph.',
                 det_msg=summary or f'exit {code}',
                 show=True,
@@ -1152,7 +1152,7 @@ class AO3ScraperPlugin(InterfaceAction):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
         info_dialog(
             self.gui,
-            'AO3 Scraper',
+            'Wranglekit',
             summary or f'Wrote {output}',
             show=True,
         )
@@ -1173,7 +1173,7 @@ class AO3ScraperPlugin(InterfaceAction):
     def show_tag_purge_dialog(self, *args):
         book_ids = []
         try:
-            from calibre_plugins.ao3_scraper.tag_purge import selected_ids_from_gui
+            from calibre_plugins.wranglekit.tag_purge import selected_ids_from_gui
 
             book_ids = selected_ids_from_gui(self.gui)
         except Exception:

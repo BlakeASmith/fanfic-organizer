@@ -30,7 +30,7 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, question_dialog
 
-from calibre_plugins.ao3_scraper.collection_rules import (
+from calibre_plugins.wranglekit.collection_rules import (
     MATCH_CHOICES,
     MODE_CHOICES,
     build_collections_list_argv,
@@ -51,7 +51,7 @@ from calibre_plugins.ao3_scraper.collection_rules import (
 
 
 def _run_ao3kit(parent, argv: list[str], *, quiet: bool = False):
-    from calibre_plugins.ao3_scraper.enrich import EnrichCancelled, run_ao3kit
+    from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
 
     QApplication.setOverrideCursor(Qt.WaitCursor)
     try:
@@ -64,7 +64,7 @@ def _run_ao3kit(parent, argv: list[str], *, quiet: bool = False):
         if not quiet:
             error_dialog(
                 parent,
-                'AO3 Scraper',
+                'Wranglekit',
                 'Could not update collections.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -98,21 +98,21 @@ def prompt_collection_name(
                 break
     if items:
         name, ok = QInputDialog.getItem(
-            parent, 'AO3 Scraper', prompt, items, start, True
+            parent, 'Wranglekit', prompt, items, start, True
         )
     else:
-        name, ok = QInputDialog.getText(parent, 'AO3 Scraper', prompt)
+        name, ok = QInputDialog.getText(parent, 'Wranglekit', prompt)
     if not ok:
         return None
     name = str(name or '').strip()
     if not name:
-        error_dialog(parent, 'AO3 Scraper', 'Type a collection name first.', show=True)
+        error_dialog(parent, 'Wranglekit', 'Type a collection name first.', show=True)
         return None
     return name
 
 
 def load_known_collection_names(parent, db, extra: list[str] | None = None) -> list[str]:
-    from calibre_plugins.ao3_scraper.selected import library_collection_names
+    from calibre_plugins.wranglekit.selected import library_collection_names
 
     rows: list[dict] = []
     result = _run_ao3kit(parent, build_collections_list_argv(), quiet=True)
@@ -184,10 +184,10 @@ class CollectionRuleEditDialog(QDialog):
         values = self.values.text().strip()
         match = str(self.match.currentData() or 'mentions')
         if not values:
-            error_dialog(self, 'AO3 Scraper', 'Type something to match first.', show=True)
+            error_dialog(self, 'Wranglekit', 'Type something to match first.', show=True)
             return None
         if match in {'work_id', 'calibre_uuid'} and not collection:
-            error_dialog(self, 'AO3 Scraper', 'Type a collection name first.', show=True)
+            error_dialog(self, 'Wranglekit', 'Type a collection name first.', show=True)
             return None
         pin = match in {'work_id', 'calibre_uuid'} or bool(self._row.get('pin'))
         fields = {
@@ -357,10 +357,10 @@ class EditSelectedCollectionsDialog(QDialog):
         return str(row.get('work_id') or ''), str(row.get('calibre_uuid') or '')
 
     def _reload(self) -> None:
-        from calibre_plugins.ao3_scraper.scrape_run import (
+        from calibre_plugins.wranglekit.scrape_run import (
             build_collections_explain_argv,
         )
-        from calibre_plugins.ao3_scraper.selected import load_selected_for_collections
+        from calibre_plugins.wranglekit.selected import load_selected_for_collections
 
         ready, skipped = load_selected_for_collections(
             self.gui.current_db, self.book_ids
@@ -378,7 +378,7 @@ class EditSelectedCollectionsDialog(QDialog):
         if not ready:
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books could be loaded.',
                 show=True,
             )
@@ -403,10 +403,10 @@ class EditSelectedCollectionsDialog(QDialog):
                 return
             if not out.is_file():
                 error_dialog(
-                    self, 'AO3 Scraper', 'Could not explain collection membership.', show=True
+                    self, 'Wranglekit', 'Could not explain collection membership.', show=True
                 )
                 return
-            from calibre_plugins.ao3_scraper.collection_rules import parse_explain
+            from calibre_plugins.wranglekit.collection_rules import parse_explain
 
             self._books = parse_explain(out.read_text(encoding='utf-8'))
         finally:
@@ -523,7 +523,7 @@ class EditSelectedCollectionsDialog(QDialog):
             return work_id, uuid
         error_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             'This book has no AO3 work id or Calibre UUID to pin.',
             show=True,
         )
@@ -586,7 +586,7 @@ class EditSelectedCollectionsDialog(QDialog):
         name = str(row.get('name') or '')
         if not question_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Never put “{row.get("title")}” in {name}?\n\n'
             'This is a per-work rule. Shared tag/fandom rules will not put it back.',
         ):
@@ -682,7 +682,7 @@ class EditSelectedCollectionsDialog(QDialog):
         summary = format_when(rule)
         if not question_dialog(
             self,
-            'AO3 Scraper',
+            'Wranglekit',
             f'Delete this collection rule for every book?\n\n{summary}',
         ):
             return
@@ -728,7 +728,7 @@ class EditSelectedCollectionsDialog(QDialog):
         self._reload()
 
     def _add_selected(self) -> None:
-        from calibre_plugins.ao3_scraper.selected import pin_targets_from_selected
+        from calibre_plugins.wranglekit.selected import pin_targets_from_selected
 
         name = self._ask_collection(
             prompt=(
@@ -748,7 +748,7 @@ class EditSelectedCollectionsDialog(QDialog):
                 )
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books have an AO3 work id or Calibre UUID.'
                 + extra,
                 show=True,
@@ -766,10 +766,10 @@ class EditSelectedCollectionsDialog(QDialog):
         self._reload()
 
     def _write_calibre(self) -> None:
-        from calibre_plugins.ao3_scraper.columns import apply_layout_columns
-        from calibre_plugins.ao3_scraper.importer import refresh_library_ui
-        from calibre_plugins.ao3_scraper.scrape_run import build_collections_argv
-        from calibre_plugins.ao3_scraper.selected import (
+        from calibre_plugins.wranglekit.columns import apply_layout_columns
+        from calibre_plugins.wranglekit.importer import refresh_library_ui
+        from calibre_plugins.wranglekit.scrape_run import build_collections_argv
+        from calibre_plugins.wranglekit.selected import (
             apply_collections_records,
             load_selected_for_collections,
         )
@@ -785,7 +785,7 @@ class EditSelectedCollectionsDialog(QDialog):
                 )
             error_dialog(
                 self,
-                'AO3 Scraper',
+                'Wranglekit',
                 'None of the selected books could be loaded.' + extra,
                 show=True,
             )
@@ -810,7 +810,7 @@ class EditSelectedCollectionsDialog(QDialog):
             if len(records) != len(ready):
                 error_dialog(
                     self,
-                    'AO3 Scraper',
+                    'Wranglekit',
                     'Collection recompute returned a different number of books.',
                     show=True,
                 )
