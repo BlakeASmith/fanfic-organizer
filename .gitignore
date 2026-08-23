@@ -25,5 +25,6 @@ dist/
 results*.jsonl
 *-epubs/
 ao3-import.zip
+AO3Scraper.zip
 .cache/
 .ao3kit/

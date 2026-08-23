@@ -12,13 +12,13 @@ The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecate
 | Surface | Entry | Role |
 |---|---|---|
 | CLI | `python -m ao3kit …` | Scriptable full toolkit (supported) |
-| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via `python -m ao3kit` subprocess + import JSONL/zip + background tag cache + tag graph + fanfic layout columns (Fandom, Relationships, Collections, Original Tags, word count) + built-in Series |
+| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via `python -m ao3kit` subprocess + import JSONL/zip + background tag cache + tag graph + fanfic layout columns (Fandom, Relationships, Collections, Original Tags, word count) + built-in Series + generated EPUB covers |
 | Web UI (deprecated) | `ao3kit.webapp` (`/`) | Frozen HTMX forms + SSE; `python -m ao3kit serve` |
 | REST API (deprecated) | `ao3kit.api` (`/api/v1`) | Frozen JSON jobs + OpenAPI |
 
 ## Shared core first
 
-- Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `config`, `http`, `rate`, `jobs`) — not only in one UI.
+- Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `covers`, `config`, `http`, `rate`, `jobs`) — not only in one UI.
 - Surfaces should call those modules; avoid copy-pasted scrape/tag/download logic.
 - Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI and the plugin.
 - **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). CLI, plugin, and the frozen web/API paths must go through `ao3kit.http` (or `wait_for_request`). Do not add per-interface sleeps or separate request paths that bypass it.

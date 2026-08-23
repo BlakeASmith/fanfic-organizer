@@ -8,14 +8,25 @@ from pathlib import Path
 from ao3kit.jobs import (
     JobSpec,
     JobStatus,
+    clear_jobs,
+    count_jsonl_records,
     default_jobs_dir,
+    delete_job,
+    evaluate_job_result,
     find_job,
     format_status_text,
+    infer_result_spec,
+    job_clear_bucket,
+    job_is_deletable,
+    job_is_retryable,
+    jsonl_count_result,
     list_jobs,
     live_job_status,
     main,
     new_job_id,
     progress_from_line,
+    redact_argv,
+    retry_job,
     run_job_dir,
     save_spec,
     split_steps,
@@ -35,6 +46,20 @@ def test_split_steps_on_and():
         ["scrape", "-o", "a.jsonl"],
         ["tags", "enrich", "--jsonl", "a.jsonl"],
     ]
+
+
+def test_redact_argv_hides_password():
+    argv = ["cover", "--jsonl", "in.jsonl", "--username", "emily", "--password", "secret"]
+    assert redact_argv(argv) == [
+        "cover",
+        "--jsonl",
+        "in.jsonl",
+        "--username",
+        "emily",
+        "--password",
+        "***",
+    ]
+    assert redact_argv(["login", "-p", "secret"]) == ["login", "-p", "***"]
 
 
 def test_progress_from_line():
@@ -219,6 +244,152 @@ def test_list_jobs_running_first(tmp_path: Path):
     assert ids[0] == "new"
 
 
+def test_infer_result_spec_from_scrape_output():
+    spec = infer_result_spec([["scrape", "-o", "out.jsonl", "--verbose"]])
+    assert spec["source"] == "jsonl_count"
+    assert spec["path"] == "out.jsonl"
+    assert spec["label"] == "work"
+    download = infer_result_spec(
+        [["download", "-i", "in.jsonl", "-d", "/tmp/bundle", "--no-zip"]]
+    )
+    assert download["field"] == "epub_file"
+    assert download["path"].endswith("results.jsonl")
+    assert infer_result_spec([["config", "show"]])["source"] == "last_log"
+
+
+def test_evaluate_jsonl_count(tmp_path: Path):
+    jsonl = tmp_path / "work" / "out.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text(
+        '{"work_id":"1"}\n{"work_id":"2","epub_file":"a.epub"}\n\n',
+        encoding="utf-8",
+    )
+    display, value = evaluate_job_result(
+        jsonl_count_result(jsonl, label="work"),
+        tmp_path,
+    )
+    assert value == 2
+    assert display == "2 works"
+    display, value = evaluate_job_result(
+        jsonl_count_result(jsonl, label="EPUB", field="epub_file"),
+        tmp_path,
+    )
+    assert value == 1
+    assert display == "1 EPUB"
+
+
+def test_evaluate_log_match_and_last_log(tmp_path: Path):
+    log = tmp_path / "job.log"
+    log.write_text(
+        "--- Step 1/1 ---\nWrote 4 matching works.\n{\"exit_code\": 0}\n",
+        encoding="utf-8",
+    )
+    display, _value = evaluate_job_result({"source": "last_log"}, tmp_path, log_path=log)
+    assert display == "Wrote 4 matching works."
+    display, value = evaluate_job_result(
+        {"source": "log_match", "pattern": r"Wrote (\d+) matching"},
+        tmp_path,
+        log_path=log,
+    )
+    assert value == "4"
+    assert display == "4"
+    display, _value = evaluate_job_result(
+        {"source": "last_log"},
+        tmp_path,
+        log_path=log,
+        exit_code=130,
+    )
+    assert display == "Stopped"
+
+
+def test_evaluate_json_field(tmp_path: Path):
+    payload = tmp_path / "work" / "stats.json"
+    payload.parent.mkdir(parents=True)
+    payload.write_text('{"imported": 7, "nested": {"n": 3}}\n', encoding="utf-8")
+    display, value = evaluate_job_result(
+        {"source": "json_field", "path": "work/stats.json", "field": "imported"},
+        tmp_path,
+    )
+    assert value == 7
+    assert display == "7"
+    display, value = evaluate_job_result(
+        {
+            "source": "json_field",
+            "path": str(payload),
+            "field": "nested.n",
+            "template": "{value} series",
+        },
+        tmp_path,
+    )
+    assert display == "3 series"
+
+
+def test_run_job_writes_jsonl_result(tmp_path: Path):
+    job_dir = tmp_path / "jobs" / "counted"
+    jsonl = job_dir / "work" / "out.jsonl"
+    spec = JobSpec(
+        id="counted",
+        title="Counted",
+        kind="import",
+        steps=[],
+        result=jsonl_count_result(jsonl, label="work"),
+        plugin={"action": "import_records"},
+    )
+    save_spec(job_dir / "spec.json", spec)
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text('{"work_id":"1"}\n{"work_id":"2"}\n', encoding="utf-8")
+    assert run_job_dir(job_dir) == 0
+    status = live_job_status(job_dir)
+    assert status.result == "2 works"
+    assert status.result_value == 2
+
+
+def test_live_status_keeps_ingest_result(tmp_path: Path):
+    job_dir = tmp_path / "jobs" / "imported"
+    jsonl = job_dir / "work" / "out.jsonl"
+    save_spec(
+        job_dir / "spec.json",
+        JobSpec(
+            id="imported",
+            title="Imported",
+            result=jsonl_count_result(jsonl, label="work"),
+        ),
+    )
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text('{"work_id":"1"}\n', encoding="utf-8")
+    write_status(
+        job_dir / "status.json",
+        JobStatus(
+            id="imported",
+            ingest="done",
+            exit_code=0,
+            result="Imported 1 book into the library.",
+        ),
+    )
+    status = live_job_status(job_dir)
+    assert status.result == "Imported 1 book into the library."
+
+
+def test_format_status_text_prefers_result():
+    text = format_status_text(
+        JobStatus(
+            id="x",
+            title="Search AO3",
+            running=False,
+            exit_code=0,
+            message="Wrote 4 matching works.",
+            result="4 works",
+        )
+    )
+    assert "4 works" in text
+
+
+def test_count_jsonl_records_skips_blank(tmp_path: Path):
+    path = tmp_path / "a.jsonl"
+    path.write_text("{}\n\n{}\n", encoding="utf-8")
+    assert count_jsonl_records(path) == 2
+
+
 def test_start_job_uses_fake_spawn(tmp_path: Path, monkeypatch):
     from ao3kit.proc import spawn_daemon as real_spawn
 
@@ -295,3 +466,228 @@ def test_list_jobs_skips_warm_for_custom_dir(tmp_path: Path):
     save_spec(root / "only" / "spec.json", JobSpec(id="only", title="Only"))
     ids = [item.id for item in list_jobs(root)]
     assert ids == ["only"]
+
+
+def test_job_is_retryable():
+    assert not job_is_retryable({"id": "warm", "exit_code": 1})
+    assert not job_is_retryable({"id": "x", "running": True, "exit_code": 1})
+    assert not job_is_retryable({"id": "x", "ingest": "pending", "exit_code": 1})
+    assert not job_is_retryable({"id": "x", "exit_code": 0, "ingest": "done"})
+    assert job_is_retryable({"id": "x", "exit_code": 1, "ingest": "skipped"})
+    assert job_is_retryable({"id": "x", "exit_code": 130, "ingest": "cancelled"})
+    assert job_is_retryable({"id": "x", "exit_code": 0, "ingest": "failed"})
+    assert job_is_retryable(JobStatus(id="x", exit_code=2, ingest="skipped"))
+
+
+def test_retry_unknown_job(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    assert main(["retry", "--jobs-dir", str(jobs_dir), "missing"]) == 2
+    err = capsys.readouterr().err
+    assert "Unknown job" in err
+
+
+def test_retry_refuses_warm(capsys):
+    assert main(["retry", "warm"]) == 2
+    assert "warmer" in capsys.readouterr().err.lower()
+
+
+def test_retry_refuses_running(tmp_path: Path):
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "live"
+    save_spec(job_dir / "spec.json", JobSpec(id="live", title="Live"))
+    write_pid(job_dir / "job.pid", __import__("os").getpid())
+    write_status(
+        job_dir / "status.json",
+        JobStatus(id="live", running=True, pid=__import__("os").getpid()),
+    )
+    status, error = retry_job("live", jobs_dir=jobs_dir, foreground=True)
+    assert error is not None
+    assert "already running" in error.lower()
+    assert status.running is True
+
+
+def test_retry_refuses_pending_ingest(tmp_path: Path):
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "ingest"
+    save_spec(
+        job_dir / "spec.json",
+        JobSpec(id="ingest", title="Ingest", plugin={"action": "import_records"}),
+    )
+    write_status(
+        job_dir / "status.json",
+        JobStatus(id="ingest", running=False, exit_code=0, ingest="pending"),
+    )
+    status, error = retry_job("ingest", jobs_dir=jobs_dir, foreground=True)
+    assert error is not None
+    assert "calibre" in error.lower()
+    assert status.ingest == "pending"
+    assert status.retry_count == 0
+
+
+def test_retry_failed_job_keeps_work_and_log(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "dl"
+    work = job_dir / "work"
+    work.mkdir(parents=True)
+    cached = work / "already.epub"
+    cached.write_text("keep-me", encoding="utf-8")
+    save_spec(
+        job_dir / "spec.json",
+        JobSpec(id="dl", title="Download", kind="download", steps=[]),
+    )
+    (job_dir / "job.log").write_text("first run failed\n", encoding="utf-8")
+    write_status(
+        job_dir / "status.json",
+        JobStatus(
+            id="dl",
+            title="Download",
+            running=False,
+            exit_code=1,
+            ingest="skipped",
+            notified=True,
+            result="failed",
+            message="Step failed",
+            retry_count=0,
+        ),
+    )
+    assert main(
+        ["retry", "--jobs-dir", str(jobs_dir), "--foreground", "dl"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["retry_count"] == 1
+    assert payload["notified"] is False
+    assert payload["exit_code"] == 0
+    assert cached.read_text(encoding="utf-8") == "keep-me"
+    log = (job_dir / "job.log").read_text(encoding="utf-8")
+    assert "first run failed" in log
+    assert "--- retry 1 " in log
+    status, error = retry_job("dl", jobs_dir=jobs_dir, foreground=True)
+    assert error is None
+    assert status.retry_count == 2
+    log = (job_dir / "job.log").read_text(encoding="utf-8")
+    assert "--- retry 2 " in log
+
+
+def test_retry_status_from_dict_coerces_count():
+    status = JobStatus.from_dict({"id": "x", "retry_count": "3"})
+    assert status.retry_count == 3
+    status = JobStatus.from_dict({"id": "x"})
+    assert status.retry_count == 0
+
+
+def test_job_is_deletable_and_clear_bucket():
+    assert not job_is_deletable({"id": "warm", "exit_code": 0})
+    assert not job_is_deletable({"id": "x", "running": True})
+    assert not job_is_deletable({"id": "x", "ingest": "pending"})
+    assert job_is_deletable({"id": "x", "exit_code": 0, "ingest": "done"})
+    assert job_clear_bucket({"id": "x", "exit_code": 0, "ingest": "done"}) == "finished"
+    assert job_clear_bucket({"id": "x", "exit_code": 1, "ingest": "skipped"}) == "failed"
+    assert job_clear_bucket({"id": "x", "ingest": "cancelled"}) == "stopped"
+    assert job_clear_bucket({"id": "x", "ingest": "pending"}) is None
+
+
+def test_delete_job_removes_directory(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    job_dir = jobs_dir / "done"
+    save_spec(job_dir / "spec.json", JobSpec(id="done", title="Done"))
+    write_status(
+        job_dir / "status.json",
+        JobStatus(id="done", running=False, exit_code=0, ingest="done"),
+    )
+    (job_dir / "work").mkdir()
+    (job_dir / "work" / "out.jsonl").write_text("{}\n", encoding="utf-8")
+    assert main(["delete", "--jobs-dir", str(jobs_dir), "done"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["deleted"] == ["done"]
+    assert not job_dir.exists()
+    assert find_job("done", jobs_dir) is None
+
+
+def test_delete_refuses_running_and_pending(tmp_path: Path):
+    jobs_dir = tmp_path / "jobs"
+    live = jobs_dir / "live"
+    save_spec(live / "spec.json", JobSpec(id="live", title="Live"))
+    write_pid(live / "job.pid", __import__("os").getpid())
+    write_status(live / "status.json", JobStatus(id="live", running=True))
+    ok, error = delete_job("live", jobs_dir=jobs_dir)
+    assert ok is False
+    assert "running" in (error or "").lower()
+    assert live.is_dir()
+
+    pending = jobs_dir / "pend"
+    save_spec(pending / "spec.json", JobSpec(id="pend", title="Pend"))
+    write_status(
+        pending / "status.json",
+        JobStatus(id="pend", running=False, exit_code=0, ingest="pending"),
+    )
+    ok, error = delete_job("pend", jobs_dir=jobs_dir)
+    assert ok is False
+    assert "calibre" in (error or "").lower()
+    assert pending.is_dir()
+
+
+def test_delete_unknown_and_warm(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    assert main(["delete", "--jobs-dir", str(jobs_dir), "missing"]) == 2
+    assert "Unknown job" in capsys.readouterr().err
+    assert main(["delete", "warm"]) == 2
+    assert "warmer" in capsys.readouterr().err.lower()
+
+
+def test_clear_finished_keeps_failed(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    good = jobs_dir / "good"
+    bad = jobs_dir / "bad"
+    stopped = jobs_dir / "stopped"
+    save_spec(good / "spec.json", JobSpec(id="good", title="Good"))
+    write_status(
+        good / "status.json",
+        JobStatus(id="good", running=False, exit_code=0, ingest="done"),
+    )
+    save_spec(bad / "spec.json", JobSpec(id="bad", title="Bad"))
+    write_status(
+        bad / "status.json",
+        JobStatus(id="bad", running=False, exit_code=1, ingest="skipped"),
+    )
+    save_spec(stopped / "spec.json", JobSpec(id="stopped", title="Stopped"))
+    write_status(
+        stopped / "status.json",
+        JobStatus(id="stopped", running=False, exit_code=130, ingest="cancelled"),
+    )
+    assert main(["clear", "--jobs-dir", str(jobs_dir), "--finished"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["deleted"] == ["good"]
+    assert not good.exists()
+    assert bad.is_dir()
+    assert stopped.is_dir()
+
+    result = clear_jobs(jobs_dir, failed=True, stopped=True)
+    assert set(result["deleted"]) == {"bad", "stopped"}
+    assert not bad.exists()
+    assert not stopped.exists()
+
+
+def test_clear_requires_filter(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    assert main(["clear", "--jobs-dir", str(jobs_dir)]) == 2
+    assert "--finished" in capsys.readouterr().err
+
+
+def test_clear_inactive(tmp_path: Path, capsys):
+    jobs_dir = tmp_path / "jobs"
+    save_spec(jobs_dir / "a" / "spec.json", JobSpec(id="a"))
+    write_status(
+        jobs_dir / "a" / "status.json",
+        JobStatus(id="a", exit_code=0, ingest="done"),
+    )
+    save_spec(jobs_dir / "b" / "spec.json", JobSpec(id="b"))
+    write_status(
+        jobs_dir / "b" / "status.json",
+        JobStatus(id="b", exit_code=1, ingest="skipped"),
+    )
+    assert main(["clear", "--jobs-dir", str(jobs_dir), "--inactive"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["deleted"]) == {"a", "b"}

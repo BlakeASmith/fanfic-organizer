@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from ao3kit.config import (
+    CoverSettings,
     copy_example_rules,
     init_user_config,
     load_user_config,
@@ -47,6 +48,15 @@ def main(argv: list[str] | None = None) -> int:
     set_p = sub.add_parser("set", help="Set a settings key")
     set_p.add_argument("key")
     set_p.add_argument("value")
+
+    merge_p = sub.add_parser(
+        "merge",
+        help="Merge a JSON object into settings (nested keys like cover)",
+    )
+    merge_p.add_argument(
+        "json",
+        help="JSON object, @path to a file, or - for stdin",
+    )
 
     rules = sub.add_parser("rules", help="Manage rule modules")
     rules_sub = rules.add_subparsers(dest="rules_command", required=True)
@@ -265,13 +275,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "set":
         cfg = load_user_config(home=home, ensure=True)
         key = args.key
+        raw = args.value
+        if key.startswith("cover."):
+            field = key.split(".", 1)[1]
+            cover = cfg.settings.cover
+            if not hasattr(cover, field):
+                print(f"Unknown settings key: {key}", file=sys.stderr)
+                return 1
+            current = getattr(cover, field)
+            if isinstance(current, bool):
+                value: object = raw.lower() in {"1", "true", "yes", "on"}
+            elif isinstance(current, int) and not isinstance(current, bool):
+                value = int(raw)
+            elif isinstance(current, float):
+                value = float(raw)
+            elif isinstance(current, list):
+                value = [part.strip() for part in raw.split(",") if part.strip()]
+            elif isinstance(current, dict):
+                from ao3kit.config import parse_color_map
+
+                value = parse_color_map(raw)
+            else:
+                value = raw
+            data = cover.to_dict()
+            data[field] = value
+            cfg.update_settings(cover=CoverSettings.from_dict(data))
+            _print(cfg.settings.to_dict())
+            return 0
         if not hasattr(cfg.settings, key) or key == "version":
             print(f"Unknown settings key: {key}", file=sys.stderr)
             return 1
-        raw = args.value
         current = getattr(cfg.settings, key)
         if isinstance(current, bool):
-            value: object = raw.lower() in {"1", "true", "yes", "on"}
+            value = raw.lower() in {"1", "true", "yes", "on"}
         elif isinstance(current, int) and not isinstance(current, bool):
             value = int(raw)
         elif isinstance(current, float):
@@ -279,6 +315,40 @@ def main(argv: list[str] | None = None) -> int:
         else:
             value = raw
         cfg.update_settings(**{key: value})
+        _print(cfg.settings.to_dict())
+        return 0
+
+    if args.command == "merge":
+        cfg = load_user_config(home=home, ensure=True)
+        raw = args.json
+        if raw == "-":
+            blob = sys.stdin.read()
+        elif raw.startswith("@"):
+            blob = Path(raw[1:]).read_text(encoding="utf-8")
+        else:
+            blob = raw
+        try:
+            payload = json.loads(blob)
+        except json.JSONDecodeError as exc:
+            print(f"Invalid JSON: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(payload, dict):
+            print("JSON must be an object", file=sys.stderr)
+            return 1
+        data = cfg.settings.to_dict()
+        for key, value in payload.items():
+            if key == "version" or not hasattr(cfg.settings, key):
+                print(f"Unknown settings key: {key}", file=sys.stderr)
+                return 1
+            if key == "cover" and isinstance(value, dict):
+                merged = {**(data.get("cover") or {}), **value}
+                data["cover"] = merged
+            else:
+                data[key] = value
+        from ao3kit.config import UserSettings
+
+        cfg.settings = UserSettings.from_dict(data)
+        cfg.save()
         _print(cfg.settings.to_dict())
         return 0
 

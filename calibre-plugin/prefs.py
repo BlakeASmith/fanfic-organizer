@@ -20,6 +20,8 @@ prefs.defaults = {
     'ao3kit_python': '',
     'ao3_username': '',
     'ao3_password': '',
+    'generate_covers': True,
+    'set_calibre_cover': True,
 }
 
 

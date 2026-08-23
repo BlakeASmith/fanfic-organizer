@@ -44,6 +44,7 @@ GRAPH_RECORD_KEYS = (
     'work_id',
     'title',
     'url',
+    'authors',
     'tags',
     'fandoms',
     'relationships',
@@ -62,6 +63,12 @@ def write_graph_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
                 value = record.get(key)
                 if value:
                     slim[key] = value
+            if not slim.get('authors'):
+                author = record.get('author')
+                if author:
+                    slim['authors'] = (
+                        author if isinstance(author, list) else [str(author).strip()]
+                    )
             if not slim.get('title') and not slim.get('work_id'):
                 continue
             handle.write(json.dumps(slim, ensure_ascii=False) + '\n')
@@ -125,7 +132,8 @@ def format_warm_started_text(
             f'Pace is about {interval:g}s between tag fetches so Search and '
             'Download can still use AO3.',
             "The library is not modified — only ao3kit's tag cache is filled.",
-            'Stop it from this menu, or: python -m ao3kit tags warm stop',
+            'Stop it from Tags and collections → Stop tag cache, or: '
+            'python -m ao3kit tags warm stop',
         ]
     )
     message = str(status.get('message') or '').strip()
@@ -135,7 +143,7 @@ def format_warm_started_text(
     if log_path:
         lines.extend(['', f'Log: {log_path}'])
     lines.append(
-        'Watch it from this menu (Background tag cache log…) or: '
+        'Watch it from Tags and collections → Tag cache log, or: '
         'python -m ao3kit tags warm log --follow'
     )
     return '\n'.join(lines)

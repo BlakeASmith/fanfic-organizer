@@ -137,6 +137,29 @@ def test_pending_epub_attachments_only_new_files():
     assert [item["book_id"] for item in second] == [2]
 
 
+def test_pending_incremental_imports_metadata_then_epub():
+    mod = load_epub_plan()
+    records = [
+        {"work_id": "11", "title": "One"},
+        {"work_id": "22", "title": "Two", "epub_file": "epubs/22.epub"},
+    ]
+    imported: dict = {}
+    new, epubs = mod.pending_incremental_imports(
+        records, imported, work_id_of=lambda rec: rec.get("work_id")
+    )
+    assert [row["work_id"] for row in new] == ["11", "22"]
+    assert epubs == []
+
+    imported["11"] = {"book_id": 1, "has_epub": False}
+    imported["22"] = {"book_id": 2, "has_epub": True}
+    records[0]["epub_file"] = "epubs/11.epub"
+    new, epubs = mod.pending_incremental_imports(
+        records, imported, work_id_of=lambda rec: rec.get("work_id")
+    )
+    assert new == []
+    assert [row["work_id"] for row in epubs] == ["11"]
+
+
 def test_summarize_epub_download_cancelled():
     mod = load_epub_plan()
     assert (

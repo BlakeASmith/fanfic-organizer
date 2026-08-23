@@ -151,6 +151,31 @@ def test_scrape_download_skipped_when_empty(tmp_path: Path, monkeypatch):
     assert (tmp_path / "results.jsonl").is_file()
 
 
+def test_scrape_writes_jsonl_as_works_match(tmp_path: Path, monkeypatch):
+    work = WorkRecord(
+        work_id="1",
+        url="https://archiveofourown.org/works/1",
+        title="Test Work",
+    )
+    seen: dict[str, str] = {}
+
+    def fake_search(*_args, **kwargs):
+        on_work = kwargs.get("on_work")
+        if on_work:
+            on_work(work)
+        seen["text"] = (tmp_path / "results.jsonl").read_text(encoding="utf-8")
+        return [work]
+
+    monkeypatch.setattr("ao3kit.scrape.scrape_search", fake_search)
+    monkeypatch.setattr("ao3kit.scrape.create_session", lambda *a, **k: object())
+    rc = scrape_main(
+        ["-o", str(tmp_path / "results.jsonl"), "--tag-id", "Doctor Who (2005)"]
+    )
+    assert rc == 0
+    assert '"work_id": "1"' in seen["text"]
+    assert "Test Work" in seen["text"]
+
+
 def test_scrape_include_series_expands_matches(tmp_path: Path, monkeypatch):
     seed = WorkRecord(
         work_id="90876776",

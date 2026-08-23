@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt5.Qt import QMenu
+from PyQt5.Qt import QIcon, QMenu, QPixmap, QToolButton
 
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 from calibre.gui2.actions import InterfaceAction
@@ -23,12 +23,36 @@ except NameError:
     pass
 
 
+PLUGIN_ICON = 'images/icon.png'
+
+
+def load_plugin_icon(action) -> QIcon:
+    try:
+        data = action.load_resources([PLUGIN_ICON]).get(PLUGIN_ICON)
+    except Exception:
+        data = None
+    if not data:
+        return QIcon()
+    pixmap = QPixmap()
+    if not pixmap.loadFromData(data):
+        return QIcon()
+    return QIcon(pixmap)
+
+
 class AO3ScraperPlugin(InterfaceAction):
     name = 'AO3 Scraper'
-    action_spec = ('AO3 Scraper', None, 'Search AO3 and import into this library', None)
+    action_spec = (
+        'AO3 Scraper',
+        None,
+        'Search AO3, manage selected books, tags, and jobs',
+        None,
+    )
+    popup_type = QToolButton.InstantPopup
 
     def genesis(self):
-        self.qaction.triggered.connect(self.show_scrape_dialog)
+        icon = load_plugin_icon(self)
+        self.qaction.setIcon(icon)
+        self.qaction.triggered.connect(self.show_plugin_menu)
         self.menu = QMenu(self.gui)
         self.qaction.setMenu(self.menu)
         self.menu.aboutToShow.connect(self.build_menu)
@@ -45,60 +69,113 @@ class AO3ScraperPlugin(InterfaceAction):
         # Watch leftover jobs from the last session (pending Calibre ingest).
         # Do not create columns or write the open library on startup.
         self.jobs()
+        self._apply_popup_mode()
+
+    def _selected_ids(self):
+        try:
+            return list(self.gui.library_view.get_selected_ids())
+        except Exception:
+            return []
+
+    def _toolbar_button(self):
+        bars_manager = getattr(self.gui, 'bars_manager', None)
+        bars = getattr(bars_manager, 'bars', None) if bars_manager is not None else None
+        if not bars:
+            return None
+        for bar in bars:
+            widget = bar.widgetForAction(self.qaction)
+            if widget is not None:
+                return widget
+        return None
+
+    def _apply_popup_mode(self):
+        self.popup_type = QToolButton.InstantPopup
+        bars_manager = getattr(self.gui, 'bars_manager', None)
+        bars = getattr(bars_manager, 'bars', None) if bars_manager is not None else None
+        if not bars:
+            return
+        for bar in bars:
+            widget = bar.widgetForAction(self.qaction)
+            if widget is not None:
+                widget.setPopupMode(self.popup_type)
+
+    def show_plugin_menu(self):
+        self._apply_popup_mode()
+        widget = self._toolbar_button()
+        if widget is not None and hasattr(widget, 'showMenu'):
+            widget.showMenu()
+            return
+        try:
+            from PyQt5.Qt import QCursor
+        except ImportError:
+            from PyQt5.QtGui import QCursor
+        self.menu.popup(QCursor.pos())
 
     def build_menu(self):
         self.menu.clear()
+        selected_ids = self._selected_ids()
+        n = len(selected_ids)
+        has_selection = n > 0
+
         self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
-        self.menu.addAction('Search similar...', self.show_similar_dialog)
+        similar = self.menu.addAction(
+            'Search similar...', self.show_similar_dialog
+        )
+        similar.setEnabled(has_selection)
+        similar.setStatusTip('Build an AO3 search from the selected books')
         self.menu.addAction('Import JSONL or zip...', self.show_import_dialog)
-        self.menu.addAction(
-            'Download EPUB for selected books...',
-            self.download_selected_epubs,
+
+        self.menu.addSeparator()
+        if n == 0:
+            selected_label = 'Selected books'
+        elif n == 1:
+            selected_label = 'Selected book'
+        else:
+            selected_label = f'Selected books ({n})'
+        selected = self.menu.addMenu(selected_label)
+        selected.setEnabled(has_selection)
+        selected.addAction('Complete selected...', self.complete_selected_books)
+        selected.addSeparator()
+        selected.addAction('Download EPUB...', self.download_selected_epubs)
+        selected.addAction('Generate covers...', self.generate_covers_for_selected)
+        selected.addAction(
+            'Import rest of series...', self.import_series_for_selected
         )
-        self.menu.addAction(
-            'Import rest of series for selected books...',
-            self.import_series_for_selected,
-        )
-        self.menu.addAction(
-            'Fill series for selected books...',
-            self.fill_series_for_selected,
-        )
-        self.menu.addAction(
-            'Simplify tags, fandoms & relationships for selected books...',
+        selected.addAction('Fill series...', self.fill_series_for_selected)
+        selected.addSeparator()
+        selected.addAction(
+            'Simplify tags, fandoms & relationships...',
             self.simplify_selected_books,
         )
-        self.menu.addAction(
-            'Edit collections of selected books...',
-            self.edit_collections_of_selected,
+        selected.addSeparator()
+        selected.addAction(
+            'Edit collections...', self.edit_collections_of_selected
         )
-        self.menu.addAction(
-            'Recompute collections for selected books...',
+        selected.addAction(
+            'Recompute collections...',
             self.recompute_collections_for_selected,
         )
-        self.menu.addAction(
-            'Add selected books to a collection...',
+        selected.addAction(
+            'Add to a collection...',
             self.add_selected_books_to_collection,
         )
+
         self.menu.addSeparator()
         self.menu.addAction('Running jobs...', self.show_running_jobs)
-        self.menu.addAction(
-            'Warm tag cache in background...',
-            self.warm_tag_cache,
+
+        self.menu.addSeparator()
+        tags = self.menu.addMenu('Tags and collections')
+        tags.addAction(
+            'Collections & tag rules...', self.show_tag_mappings_dialog
         )
-        self.menu.addAction(
-            'Background tag cache log...',
-            self.show_tag_cache_log,
-        )
-        self.menu.addAction(
-            'Stop background tag cache...',
-            self.stop_tag_cache_warm,
-        )
-        self.menu.addAction('Tag graph...', self.show_tag_graph)
-        self.menu.addAction(
-            'Collections & tag rules...',
-            self.show_tag_mappings_dialog,
-        )
-        self.menu.addAction('Tag purge...', self.show_tag_purge_dialog)
+        tags.addAction('Tag graph...', self.show_tag_graph)
+        tags.addAction('Tag purge...', self.show_tag_purge_dialog)
+        tags.addSeparator()
+        tags.addAction('Warm tag cache...', self.warm_tag_cache)
+        tags.addAction('Tag cache log...', self.show_tag_cache_log)
+        tags.addAction('Stop tag cache...', self.stop_tag_cache_warm)
+
+        self.menu.addSeparator()
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
     def show_running_jobs(self):
@@ -303,6 +380,142 @@ class AO3ScraperPlugin(InterfaceAction):
             return
         plan_download_selected(
             ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
+
+    def generate_covers_for_selected(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        from pathlib import Path
+
+        from calibre_plugins.ao3_scraper.cover_ui import load_cover_dict
+        from calibre_plugins.ao3_scraper.job_plans import plan_cover_selected
+        from calibre_plugins.ao3_scraper.selected import (
+            export_selected_epubs_for_cover,
+            load_selected_for_covers,
+        )
+
+        ready, skipped = load_selected_for_covers(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books have a title to put on a cover.',
+                show=True,
+            )
+            return
+        with_epub = sum(1 for item in ready if item.get('has_epub'))
+        without = len(ready) - with_epub
+        noun = 'book' if len(ready) == 1 else 'books'
+        extras = []
+        if with_epub:
+            extras.append(f'{with_epub} EPUB file(s) will be restamped.')
+        if without:
+            extras.append(
+                f'{without} without an EPUB will only get a Calibre cover.'
+            )
+        if skipped:
+            extras.append(f'Skipping {len(skipped)} with no title.')
+        if not question_dialog(
+            self.gui,
+            'AO3 Scraper',
+            (
+                f'Generate covers for {len(ready)} selected {noun}?\n\n'
+                'Uses title, author, word count, and quality score from the library. Style is '
+                'set in Plugin settings → Cover style.\n\n'
+                + '\n'.join(extras)
+            ),
+        ):
+            return
+
+        job_dir = self.jobs().prepare_job_dir('cover')
+        if job_dir is None:
+            return
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        ready = export_selected_epubs_for_cover(
+            self.gui.current_db, ready, epub_dir
+        )
+        cover = load_cover_dict()
+        plan_cover_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings(
+                {'set_calibre_cover': bool(cover.get('set_calibre_cover', True))},
+                plugin_runtime_settings(),
+            ),
+        )
+        self.jobs().start_prepared(job_dir)
+
+    def complete_selected_books(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        noun = 'book' if len(book_ids) == 1 else 'books'
+        if not question_dialog(
+            self.gui,
+            'AO3 Scraper',
+            (
+                f'Complete the {len(book_ids)} selected {noun}?\n\n'
+                'This looks up each book on AO3 and then:\n'
+                '• fills Calibre’s Series column\n'
+                '• imports any other parts of those series\n'
+                '• downloads native EPUBs that are missing\n'
+                '• simplifies tags, fandoms, and relationships\n'
+                '• recomputes collections from your rules\n\n'
+                'Existing EPUBs are left unchanged. This can take a while; '
+                'it runs in the background.'
+            ),
+        ):
+            return
+
+        from pathlib import Path
+
+        from calibre_plugins.ao3_scraper.job_plans import plan_complete_selected
+        from calibre_plugins.ao3_scraper.selected import (
+            copy_book_epub,
+            load_selected_records,
+        )
+
+        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'None of the selected books have an AO3 URL or work id.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('complete')
+        if job_dir is None:
+            return
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        epub_dir.mkdir(parents=True, exist_ok=True)
+        db = self.gui.current_db
+        for item in ready:
+            work_id = str((item.get('record') or {}).get('work_id') or '').strip()
+            if work_id:
+                copy_book_epub(db, item['book_id'], epub_dir / f'{work_id}.epub')
+        plan_complete_selected(
+            [item['record'] for item in ready],
             skipped,
             job_dir,
             merge_plugin_settings({}, plugin_runtime_settings()),
@@ -666,7 +879,7 @@ class AO3ScraperPlugin(InterfaceAction):
                 'tag cache so Simplify / import later skip the slow AO3 '
                 'lookups.\n\n'
                 'Pace is slow so Search and Download can still use AO3. '
-                'Stop it from this menu when you want.'
+                'Stop it from Tags and collections → Stop tag cache when you want.'
             ),
         ):
             return
@@ -697,7 +910,8 @@ class AO3ScraperPlugin(InterfaceAction):
                 error_dialog(
                     self.gui,
                     'AO3 Scraper',
-                    'Could not find the ao3kit checkout / Python.',
+                    'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                    'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
                 )
@@ -759,7 +973,7 @@ class AO3ScraperPlugin(InterfaceAction):
             (
                 'Stop the background tag-cache process?\n\n'
                 'Already-fetched mappings stay in the cache. You can start '
-                'it again later from this menu.'
+                'it again later from Tags and collections → Warm tag cache.'
             ),
         ):
             return
@@ -834,10 +1048,10 @@ class AO3ScraperPlugin(InterfaceAction):
             'AO3 Scraper',
             (
                 f'Graph {where} as work nodes linked to all of their tags '
-                '(plus synonym and metatag links), then open it in your '
-                'browser?\n\n'
-                'This does not change the library. Uncached tags show as '
-                'missing — warm the tag cache first for a fuller graph.'
+                '(plus synonym and metatag links), then open the live viewer?\n\n'
+                'Find similar from a work or a tag searches AO3 and imports matches. '
+                'Uncached tags show as missing — warm the tag cache first '
+                'for a fuller graph.'
             ),
         ):
             return
@@ -849,7 +1063,10 @@ class AO3ScraperPlugin(InterfaceAction):
             resolve_ao3kit_runtime,
             run_ao3kit,
         )
-        from calibre_plugins.ao3_scraper.scrape_run import build_tag_graph_argv
+        from calibre_plugins.ao3_scraper.scrape_run import (
+            build_tag_graph_argv,
+            live_graph_reload_argv,
+        )
         from calibre_plugins.ao3_scraper.selected import load_records_for_tag_warm
         from calibre_plugins.ao3_scraper.tag_warm import write_graph_jsonl
 
@@ -860,7 +1077,8 @@ class AO3ScraperPlugin(InterfaceAction):
                 error_dialog(
                     self.gui,
                     'AO3 Scraper',
-                    'Could not find the ao3kit checkout / Python.',
+                    'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                    'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
                 )
@@ -879,6 +1097,36 @@ class AO3ScraperPlugin(InterfaceAction):
             jsonl = project / '.cache' / 'tag_graph_works.jsonl'
             output = project / '.cache' / 'tag-graph.html'
             write_graph_jsonl(jsonl, records)
+            url = self.jobs().ensure_graph_server()
+            live_code, live_out, live_err = (1, '', '')
+            if url:
+                live_code, live_out, live_err = run_ao3kit(live_graph_reload_argv())
+                if live_code == 0:
+                    try:
+                        import json as json_mod
+
+                        live_payload = json_mod.loads(
+                            (live_out or '').strip().splitlines()[-1]
+                        )
+                        url = str(live_payload.get('url') or url)
+                    except Exception:
+                        pass
+            if url:
+                from PyQt5.Qt import QDesktopServices, QUrl
+                from time import time
+
+                open_url = url.rstrip('/') + f'/?t={int(time())}'
+                QDesktopServices.openUrl(QUrl(open_url))
+                info_dialog(
+                    self.gui,
+                    'AO3 Scraper',
+                    'Opened the live tag graph.\n\n'
+                    'Find similar on a work or tag to search AO3; new imports appear '
+                    'in the graph as they land in the library. The viewer job '
+                    'is listed under Running jobs…',
+                    show=True,
+                )
+                return
             argv = build_tag_graph_argv(
                 None, str(output), jsonl=str(jsonl), open_browser=False
             )

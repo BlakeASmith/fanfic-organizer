@@ -1,0 +1,32 @@
+name: Release plugin
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build AO3Scraper.zip
+        run: python makeplugin.py zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AO3Scraper
+          path: AO3Scraper.zip
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AO3Scraper.zip
+          generate_release_notes: true

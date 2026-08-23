@@ -62,9 +62,10 @@ def _runtime_options() -> dict[str, Any]:
         return {}
 
 
-def _is_calibre_binary(path: str) -> bool:
-    name = Path(path).name.lower()
-    return 'calibre' in name
+def _is_calibre_gui(path: str) -> bool:
+    from calibre_plugins.ao3_scraper.runtime import looks_like_calibre_gui
+
+    return looks_like_calibre_gui(path)
 
 
 def _prefs_get(key: str) -> str:
@@ -161,7 +162,7 @@ def _candidate_pythons(project: Path) -> list[str]:
 
     def add(path: str, *, must_exist: bool = False) -> None:
         path = (path or '').strip()
-        if not path or path in found or _is_calibre_binary(path):
+        if not path or path in found or _is_calibre_gui(path):
             return
         if must_exist and not Path(path).is_file():
             return
@@ -170,6 +171,14 @@ def _candidate_pythons(project: Path) -> list[str]:
     add(_prefs_get('ao3kit_python'))
     add(os.environ.get('AO3KIT_PYTHON', ''))
     add(_stamp_python(project), must_exist=True)
+
+    from calibre_plugins.ao3_scraper.runtime import (
+        find_calibre_debug,
+        is_bundled_project,
+    )
+
+    if is_bundled_project(project):
+        add(find_calibre_debug(executable=sys.executable or ''), must_exist=True)
 
     for name in ('.venv', 'venv'):
         venv_root = project / name
@@ -188,7 +197,7 @@ def _candidate_pythons(project: Path) -> list[str]:
     for path in _pyenv_python_bins():
         add(path, must_exist=True)
 
-    if not _is_calibre_binary(sys.executable or ''):
+    if not _is_calibre_gui(sys.executable or ''):
         add(sys.executable or '')
 
     return found
@@ -209,6 +218,15 @@ def _candidate_projects() -> list[Path]:
     projects.append(Path.home() / 'emily' / 'ao3')
     projects.append(Path('/Users/blake/emily/ao3'))
 
+    try:
+        from calibre_plugins.ao3_scraper.runtime import ensure_bundled_runtime
+
+        bundled = ensure_bundled_runtime()
+        if bundled is not None:
+            projects.append(bundled)
+    except Exception:
+        pass
+
     unique: list[Path] = []
     for path in projects:
         resolved = path.resolve() if path.exists() else path
@@ -226,14 +244,28 @@ def find_ao3kit_project() -> Path | None:
     return None
 
 
+def _launcher_path(project: Path) -> str:
+    script = Path(project) / 'run_ao3kit.py'
+    return str(script) if script.is_file() else ''
+
+
 def _enrich_env(project: Path) -> dict[str, str]:
     env = os.environ.copy()
     home = env.get('AO3KIT_HOME') or str(project / '.ao3kit')
     env['AO3KIT_HOME'] = home
+    paths = [str(project)]
+    vendor = Path(project) / 'vendor'
+    if vendor.is_dir():
+        paths.insert(0, str(vendor))
     existing = env.get('PYTHONPATH', '')
     env['PYTHONPATH'] = (
-        str(project) if not existing else f'{project}{os.pathsep}{existing}'
+        os.pathsep.join(paths)
+        if not existing
+        else os.pathsep.join([*paths, existing])
     )
+    launcher = _launcher_path(project)
+    if launcher:
+        env['AO3KIT_LAUNCHER'] = launcher
     # Force line-buffered progress from the child when possible.
     env['PYTHONUNBUFFERED'] = '1'
     options = _runtime_options()
@@ -245,12 +277,22 @@ def _enrich_env(project: Path) -> dict[str, str]:
     return env
 
 
+def _import_probe_code(project: Path) -> str:
+    """Calibre's frozen Python ignores PYTHONPATH; poke sys.path in-process."""
+    chunks = ['import sys']
+    vendor = Path(project) / 'vendor'
+    if vendor.is_dir():
+        chunks.append(f'sys.path.insert(0, {str(vendor)!r})')
+    chunks.append(f'sys.path.insert(0, {str(project)!r})')
+    chunks.append('import ao3kit, bs4, requests, yaml; import ao3kit.tags.clean')
+    return '; '.join(chunks)
+
+
 def _python_can_import_ao3kit(python: str, project: Path) -> tuple[bool, str]:
-    probe = [
-        python,
-        '-c',
-        'import ao3kit, bs4, requests; import ao3kit.tags.clean',
-    ]
+    from calibre_plugins.ao3_scraper.runtime import looks_like_calibre_debug
+
+    probe = [python, '-c', _import_probe_code(project)]
+    timeout = 12.0 if looks_like_calibre_debug(python) else 4.0
     try:
         completed = subprocess.run(
             probe,
@@ -259,7 +301,7 @@ def _python_can_import_ao3kit(python: str, project: Path) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             check=False,
-            timeout=4,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
@@ -296,22 +338,24 @@ def resolve_ao3kit_runtime(
     on_status: StatusCallback | None = None,
     should_cancel: CancelCallback | None = None,
 ) -> tuple[Path | None, str | None, str | None]:
-    """Find the ao3kit checkout and a Python that can import it.
+    """Find bundled or checkout ao3kit and a Python that can import it.
 
     Returns ``(project, python, error)``. On success ``error`` is None.
     """
     project = find_ao3kit_project()
     if project is None:
         return None, None, (
-            'Could not find the ao3kit project (set plugin preference '
-            'ao3kit_project to your checkout, e.g. /Users/blake/emily/ao3).'
+            'Could not find ao3kit. Install AO3Scraper.zip from GitHub Releases '
+            '(Calibre → Preferences → Plugins → Load plugin from file), or set '
+            'Project path in plugin settings to a git checkout.'
         )
 
     pythons = _candidate_pythons(project)
     if not pythons:
         return project, None, (
-            'No Python interpreter found. Set plugin preference ao3kit_python '
-            'to a Python that has ao3kit deps installed (pip install -r requirements.txt).'
+            'No Python interpreter found. The plugin uses Calibre\'s '
+            'calibre-debug when you install the GitHub zip. Otherwise set '
+            'Python in plugin settings to a python3 with ao3kit deps.'
         )
 
     remembered = _prefs_get('ao3kit_python') or _stamp_python(project)
@@ -336,8 +380,9 @@ def resolve_ao3kit_runtime(
         errors.append(f'{python}: {detail.splitlines()[-1] if detail else "failed"}')
 
     hint = (
-        'Install deps into a normal Python (not Calibre\'s), then set '
-        'ao3kit_python in plugin settings. Tried:\n- '
+        'Could not run ao3kit. Re-install AO3Scraper.zip from GitHub Releases, '
+        'or set Python in plugin settings to a python3 with deps installed. '
+        'Tried:\n- '
         + '\n- '.join(errors[:8])
     )
     return project, None, hint
@@ -355,8 +400,10 @@ def run_ao3kit_command(
     cancel_message: str = 'Cancelled.',
     log_setup: bool = False,
 ) -> tuple[int, str, str]:
-    """Run ``python -m ao3kit <args>``. Returns ``(returncode, stdout, stderr)``."""
-    cmd = [python, '-u', '-m', 'ao3kit', *args]
+    """Run ``python -m ao3kit <args>`` (or calibre-debug -e for the bundle)."""
+    from calibre_plugins.ao3_scraper.runtime import plugin_ao3kit_command
+
+    cmd = plugin_ao3kit_command(python, args, launcher=_launcher_path(project))
     if on_status and log_setup:
         on_status(f'Running: {" ".join(_redact_argv(cmd))}')
 

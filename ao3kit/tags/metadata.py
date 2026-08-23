@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
+
+from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, attach_credentials, create_session, get_text
 from ao3kit.rate import configure_min_interval
@@ -725,7 +727,7 @@ def _parse_category(text: str) -> TagCategory:
 
 def parse_tag_page(html: str, *, url: str | None = None) -> TagProfile:
     """Parse an AO3 tag profile page into structured wrangling metadata."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     profile = soup.select_one("div.tag.home.profile")
     if profile is None:
         raise ValueError("Not an AO3 tag profile page (missing div.tag.home.profile)")
@@ -886,7 +888,7 @@ def parse_tag_search_url(url: str) -> tuple[TagSearchCriteria, int]:
 
 def parse_tag_search_page(html: str, *, query_url: str | None = None) -> TagSearchPage:
     """Parse an AO3 tag search results page."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     hits: list[TagSearchHit] = []
 
     for li in soup.select("ol.tag.index li"):
@@ -985,7 +987,7 @@ def parse_tag_sets_search_page(
     html: str, *, query_url: str | None = None
 ) -> TagSetsSearchPage:
     """Parse an owned tag-sets search listing."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     results: list[TagSetBlurb] = []
 
     for li in soup.select("li.tagset"):
@@ -1078,7 +1080,7 @@ def _parse_tagset_nested_list(ol: Tag | None) -> list[Any]:
 
 def parse_tag_set_page(html: str, *, url: str | None = None) -> TagSetDetail:
     """Parse an owned tag set detail page."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     home = soup.select_one("div.tagset.home")
     if home is None:
         raise ValueError("Not an AO3 tag set page (missing div.tagset.home)")

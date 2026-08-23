@@ -14,7 +14,7 @@ from typing import Any, Callable, Iterator
 from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
+from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, Ao3HttpError, create_session, get, is_login_wall
 from ao3kit.rate import apply_request_delay
@@ -182,7 +182,7 @@ def absolute_url(href: str, base: str = AO3_BASE) -> str:
 
 
 def parse_epub_download_href(html: str) -> str | None:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     for anchor in soup.select("li.download a"):
         if anchor.get_text(strip=True).upper() != "EPUB":
             continue
@@ -193,7 +193,7 @@ def parse_epub_download_href(html: str) -> str | None:
 
 
 def is_deleted(html: str) -> bool:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     main = soup.find("div", id="main")
     classes = main.get("class", []) if main else []
     lowered = html.lower()
@@ -210,7 +210,7 @@ def is_hidden(html: str) -> bool:
 
 
 def is_adult_caution(html: str) -> bool:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     return soup.find("p", class_="caution") is not None
 
 
@@ -223,7 +223,7 @@ PROCEED_LABELS = {
 
 
 def proceed_href(html: str) -> str | None:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     for anchor in soup.find_all("a", href=True):
         href = str(anchor["href"])
         if "view_adult=true" in href:
@@ -317,6 +317,8 @@ def download_record_epub(
     session: requests.Session,
     *,
     skip_existing: bool = True,
+    cover: bool | None = None,
+    cover_settings=None,
 ) -> DownloadOutcome:
     updated = dict(record)
     try:
@@ -334,6 +336,13 @@ def download_record_epub(
         if not href:
             raise DownloadError("no_epub", "Work page has no EPUB download link")
         download_epub_to_path(session, href, page_url, dest)
+        from ao3kit.covers import maybe_stamp_downloaded_epub
+
+        cover_error = maybe_stamp_downloaded_epub(
+            dest, updated, cover=cover, settings=cover_settings
+        )
+        if cover_error:
+            updated["cover_error"] = cover_error
         updated["epub_file"] = relpath
         updated.pop("epub_error", None)
         return DownloadOutcome(record=updated, status="downloaded", epub_file=relpath)
@@ -354,6 +363,51 @@ def write_manifest(records: list[dict[str, Any]], path: Path) -> None:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     tmp.replace(path)
+
+
+class JsonlWriter:
+    """Atomically rewrite a JSONL file as records are added or updated.
+
+    Readers always see a complete file (tmp + replace). Used so Calibre can
+    import metadata as soon as a work is scraped, then attach the EPUB when
+    ``epub_file`` appears on that row.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.records: list[dict[str, Any]] = []
+        self._index: dict[str, int] = {}
+        write_manifest(self.records, self.path)
+
+    def _work_id(self, record: dict[str, Any]) -> str:
+        return str(record.get("work_id") or "").strip()
+
+    def upsert(self, record: dict[str, Any]) -> None:
+        work_id = self._work_id(record)
+        if work_id and work_id in self._index:
+            self.records[self._index[work_id]] = record
+        else:
+            if work_id:
+                self._index[work_id] = len(self.records)
+            self.records.append(record)
+        write_manifest(self.records, self.path)
+
+    def add_work(self, work: Any, *, score_config: Any = None) -> None:
+        to_dict = getattr(work, "to_dict", None)
+        if callable(to_dict):
+            record = to_dict(score_config=score_config)
+        else:
+            record = dict(work)
+        self.upsert(record)
+
+    def replace_all(self, records: list[dict[str, Any]]) -> None:
+        self.records = [dict(item) for item in records]
+        self._index = {}
+        for index, record in enumerate(self.records):
+            work_id = self._work_id(record)
+            if work_id:
+                self._index[work_id] = index
+        write_manifest(self.records, self.path)
 
 
 def pack_import_zip(dest_dir: Path, zip_path: Path | None = None) -> Path:
@@ -384,6 +438,8 @@ def download_records(
     on_outcome: Callable[[DownloadOutcome, int, int], None] | None = None,
     simplify_tags: bool = True,
     on_status: Callable[[str], None] | None = None,
+    cover: bool | None = None,
+    cover_settings=None,
 ) -> DownloadReport:
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -391,6 +447,10 @@ def download_records(
     report = DownloadReport()
     total = len(records)
     manifest_path = dest / MANIFEST_NAME
+    # Keep every work in the manifest from the start so metadata is visible
+    # before its EPUB lands; update the matching row after each download.
+    manifest_records = [dict(item) for item in records]
+    write_manifest(manifest_records, manifest_path)
 
     for index, record in enumerate(records, start=1):
         outcome = download_record_epub(
@@ -398,6 +458,8 @@ def download_records(
             dest,
             session,
             skip_existing=skip_existing,
+            cover=cover,
+            cover_settings=cover_settings,
         )
         attempts = 1
         while (
@@ -411,9 +473,12 @@ def download_records(
                 dest,
                 session,
                 skip_existing=False,
+                cover=cover,
+                cover_settings=cover_settings,
             )
         report.outcomes.append(outcome)
-        write_manifest([item.record for item in report.outcomes], manifest_path)
+        manifest_records[index - 1] = outcome.record
+        write_manifest(manifest_records, manifest_path)
         if on_outcome:
             on_outcome(outcome, index, total)
 
@@ -448,6 +513,8 @@ def download_from_jsonl(
     on_outcome: Callable[[DownloadOutcome, int, int], None] | None = None,
     on_status: Callable[[str], None] | None = None,
     simplify_tags: bool = True,
+    cover: bool | None = None,
+    cover_settings=None,
 ) -> DownloadReport:
     return download_records(
         load_jsonl_records(jsonl_path),
@@ -460,6 +527,8 @@ def download_from_jsonl(
         on_outcome=on_outcome,
         on_status=on_status,
         simplify_tags=simplify_tags,
+        cover=cover,
+        cover_settings=cover_settings,
     )
 
 
@@ -506,6 +575,15 @@ def main(argv: list[str] | None = None) -> int:
         default=True,
         help="Run tag/fandom/relationship enrich after download (default: yes). Pass --no-simplify to skip.",
     )
+    parser.add_argument(
+        "--cover",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Stamp a generated cover into each EPUB (default: config cover.enabled). "
+            "Style: python -m ao3kit config set cover.<key> …"
+        ),
+    )
     args = parser.parse_args(argv)
 
     jsonl_path = Path(args.input)
@@ -543,6 +621,7 @@ def main(argv: list[str] | None = None) -> int:
         on_outcome=on_outcome,
         on_status=on_status,
         simplify_tags=args.simplify,
+        cover=args.cover,
     )
     print(format_download_report_line(report, dest_dir), file=sys.stderr)
     if make_zip:

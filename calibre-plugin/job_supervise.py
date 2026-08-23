@@ -9,7 +9,7 @@ from typing import Any
 
 from PyQt5.Qt import QTimer
 
-from calibre.gui2 import error_dialog, info_dialog
+from calibre.gui2 import error_dialog
 
 from calibre_plugins.ao3_scraper.cleaned import canonical_work_id
 from calibre_plugins.ao3_scraper.columns import apply_layout_columns
@@ -17,12 +17,18 @@ from calibre_plugins.ao3_scraper.enrich import run_ao3kit
 from calibre_plugins.ao3_scraper.epub_plan import (
     merge_download_manifest,
     pending_epub_attachments,
+    pending_incremental_imports,
     summarize_epub_download,
 )
-from calibre_plugins.ao3_scraper.importer import attach_downloaded_epubs, refresh_library_ui
+from calibre_plugins.ao3_scraper.importer import (
+    attach_downloaded_epubs,
+    import_record,
+    refresh_library_ui,
+)
 from calibre_plugins.ao3_scraper.job_plans import merge_ready_with_jsonl
-from calibre_plugins.ao3_scraper.job_ui import JobLogDialog
+from calibre_plugins.ao3_scraper.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.ao3_scraper.jobs import (
+    job_is_retryable,
     job_paths,
     jobs_root,
     new_job_id,
@@ -30,6 +36,7 @@ from calibre_plugins.ao3_scraper.jobs import (
     parse_job_status_json,
     read_json,
     write_json,
+    first_line,
 )
 from calibre_plugins.ao3_scraper.jsonl_loader import load_jsonl_records, resolve_epub_path
 from calibre_plugins.ao3_scraper.progress import (
@@ -39,13 +46,17 @@ from calibre_plugins.ao3_scraper.progress import (
     write_import_payload,
 )
 from calibre_plugins.ao3_scraper.scrape_run import (
+    build_job_clear_argv,
+    build_job_delete_argv,
     build_job_list_argv,
+    build_job_retry_argv,
     build_job_start_argv,
     build_job_stop_argv,
 )
 from calibre_plugins.ao3_scraper.selected import (
     apply_cleaned_records,
     apply_collections_records,
+    apply_cover_records,
     apply_series_records,
     book_has_epub,
 )
@@ -61,10 +72,13 @@ class JobSupervisor:
         self._list_dialog = None
         self._ingesting: set[str] = set()
         self._epub_seen: dict[str, set[Any]] = {}
+        self._import_seen: dict[str, dict[str, dict[str, Any]]] = {}
         self._timer = QTimer(plugin.gui)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self.tick)
         self._timer.start()
+
+    GRAPH_JOB_ID = 'graph'
 
     def _project(self) -> Path | None:
         cached = getattr(self, '_project_path', None)
@@ -139,6 +153,11 @@ class JobSupervisor:
             'message': status.get('message') or '',
             'log_path': str(project / '.cache' / 'tag_warm.log'),
             'ingest': 'none',
+            'result': (
+                f"{status.get('cached') or 0}/{status.get('source_count') or 0} cached"
+                if status.get('source_count')
+                else (status.get('message') or '')
+            ),
         }
 
     def prepare_job_dir(self, kind: str) -> Path | None:
@@ -147,7 +166,8 @@ class JobSupervisor:
             error_dialog(
                 self.gui,
                 'AO3 Scraper',
-                'Could not find the ao3kit checkout / Python.',
+                'Could not find ao3kit. Install AO3Scraper.zip from GitHub '
+                'Releases, or set Project path in plugin settings.',
                 show=True,
             )
             return None
@@ -155,24 +175,102 @@ class JobSupervisor:
         (job_dir / 'work').mkdir(parents=True, exist_ok=True)
         return job_dir
 
-    def start_prepared(self, job_dir: Path, *, attach: bool = True) -> str | None:
+    def start_prepared(
+        self, job_dir: Path, *, attach: bool = True, quiet: bool = False
+    ) -> str | None:
         code, stdout, stderr = run_ao3kit(
             build_job_start_argv(str(job_dir), jobs_dir=self._jobs_dir_arg())
         )
         status = parse_job_status_json(stdout) or {}
         job_id = str(status.get('id') or job_dir.name)
         if code != 0 and not status.get('running'):
-            error_dialog(
-                self.gui,
-                'AO3 Scraper',
-                'Could not start background job.',
-                det_msg=(stderr or stdout or f'exit {code}').strip(),
-                show=True,
-            )
+            if not quiet:
+                error_dialog(
+                    self.gui,
+                    'AO3 Scraper',
+                    'Could not start background job.',
+                    det_msg=(stderr or stdout or f'exit {code}').strip(),
+                    show=True,
+                )
             return None
         if attach:
             self.attach(job_id)
         return job_id
+
+    def ensure_graph_server(self) -> str | None:
+        """Start the live tag-graph job if needed. Returns the viewer URL."""
+        import time
+
+        from calibre_plugins.ao3_scraper.graph_live import (
+            GRAPH_JOB_ID,
+            read_serve_url,
+        )
+        from calibre_plugins.ao3_scraper.job_plans import plan_graph_serve
+
+        project = self._project()
+        if project is None:
+            return None
+        url = read_serve_url(project)
+        if url:
+            return url
+        root = self.jobs_dir()
+        if root is None:
+            return None
+        job_dir = root / GRAPH_JOB_ID
+        (job_dir / 'work').mkdir(parents=True, exist_ok=True)
+        plan_graph_serve(job_dir)
+        self.start_prepared(job_dir, attach=False, quiet=True)
+        for _ in range(24):
+            url = read_serve_url(project)
+            if url:
+                return url
+            time.sleep(0.25)
+        return read_serve_url(project)
+
+    def _drain_graph_commands(self) -> None:
+        project = self._project()
+        if project is None:
+            return
+        from calibre_plugins.ao3_scraper.graph_live import (
+            mark_graph_command_done,
+            mark_graph_command_error,
+            pending_graph_commands,
+        )
+        from calibre_plugins.ao3_scraper.job_plans import plan_scrape
+        from calibre_plugins.ao3_scraper.prefs import plugin_runtime_settings, prefs
+        from calibre_plugins.ao3_scraper.scrape_run import merge_plugin_settings
+
+        pending = pending_graph_commands(project)
+        if not pending:
+            return
+        for path, cmd in pending:
+            if str(cmd.get('kind') or '') != 'similar':
+                mark_graph_command_error(path, 'unknown command')
+                continue
+            options = merge_plugin_settings(
+                dict(cmd.get('options') or {}),
+                plugin_runtime_settings(),
+            )
+            options['download_epubs'] = bool(prefs.get('download_epubs', True))
+            options['simplify_tags'] = bool(prefs.get('simplify_tags', False))
+            options['update_existing'] = bool(prefs.get('update_existing', True))
+            options['max_results'] = (
+                str(options.get('max_results') or '').strip()
+                or str(prefs.get('last_max_results') or '25')
+            )
+            job_dir = self.prepare_job_dir('scrape')
+            if job_dir is None:
+                return
+            spec = plan_scrape(options, job_dir)
+            titles = cmd.get('titles') or cmd.get('work_ids') or []
+            label = str(titles[0] if titles else 'graph')
+            spec['title'] = f'Search similar: {label}'[:80]
+            write_json(job_dir / 'spec.json', spec)
+            job_id = self.start_prepared(job_dir, attach=False, quiet=True)
+            if job_id:
+                mark_graph_command_done(path)
+            else:
+                mark_graph_command_error(path, 'Could not start scrape job')
 
     def attach(self, job_id: str) -> None:
         existing = self._dialogs.get(job_id)
@@ -211,6 +309,123 @@ class JobSupervisor:
     def cancel(self, job_id: str) -> None:
         run_ao3kit(build_job_stop_argv(job_id, jobs_dir=self._jobs_dir_arg()))
 
+    def retry(self, job_id: str, *, attach: bool = True) -> str | None:
+        if job_id == 'warm':
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'The tag-cache warmer cannot be retried from this list. '
+                'Use Tags and collections → Warm tag cache.',
+                show=True,
+            )
+            return None
+        self._epub_seen.pop(job_id, None)
+        self._import_seen.pop(job_id, None)
+        self._ingesting.discard(job_id)
+        code, stdout, stderr = run_ao3kit(
+            build_job_retry_argv(job_id, jobs_dir=self._jobs_dir_arg())
+        )
+        status = parse_job_status_json(stdout) or {}
+        if code != 0 and not status.get('running'):
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Could not retry job.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
+            return None
+        dialog = self._dialogs.get(job_id)
+        if dialog is not None:
+            try:
+                dialog.mark_retrying()
+            except RuntimeError:
+                self._dialogs.pop(job_id, None)
+                dialog = None
+        if attach and dialog is None:
+            self.attach(job_id)
+        return job_id
+
+    def forget_job(self, job_id: str) -> None:
+        self.detach(job_id)
+        self._epub_seen.pop(job_id, None)
+        self._import_seen.pop(job_id, None)
+        self._ingesting.discard(job_id)
+
+    def delete_jobs(self, job_ids: list[str]) -> list[str]:
+        ids = [str(job_id).strip() for job_id in job_ids if str(job_id).strip()]
+        if any(job_id == 'warm' for job_id in ids):
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'The tag-cache warmer cannot be deleted from this list. '
+                'Use Stop background tag cache…',
+                show=True,
+            )
+            ids = [job_id for job_id in ids if job_id != 'warm']
+        if not ids:
+            return []
+        code, stdout, stderr = run_ao3kit(
+            build_job_delete_argv(ids, jobs_dir=self._jobs_dir_arg())
+        )
+        payload = parse_job_status_json(stdout) or {}
+        deleted = [str(item) for item in (payload.get('deleted') or [])]
+        for job_id in deleted:
+            self.forget_job(job_id)
+        errors = payload.get('errors') or []
+        if code != 0 and not deleted:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Could not delete job.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
+            return []
+        if errors:
+            detail = '\n'.join(
+                str(row.get('error') or row) for row in errors if row
+            )
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Some jobs could not be deleted.',
+                det_msg=detail,
+                show=True,
+            )
+        return deleted
+
+    def clear_jobs(
+        self,
+        *,
+        finished: bool = False,
+        failed: bool = False,
+        stopped: bool = False,
+        inactive: bool = False,
+    ) -> list[str]:
+        code, stdout, stderr = run_ao3kit(
+            build_job_clear_argv(
+                finished=finished,
+                failed=failed,
+                stopped=stopped,
+                inactive=inactive,
+                jobs_dir=self._jobs_dir_arg(),
+            )
+        )
+        payload = parse_job_status_json(stdout) or {}
+        deleted = [str(item) for item in (payload.get('deleted') or [])]
+        for job_id in deleted:
+            self.forget_job(job_id)
+        if code != 0 and not deleted:
+            error_dialog(
+                self.gui,
+                'AO3 Scraper',
+                'Could not clear jobs.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
+        return deleted
+
     def show_list(self) -> None:
         from calibre_plugins.ao3_scraper.job_ui import JobsListDialog
 
@@ -246,6 +461,7 @@ class JobSupervisor:
         return paths['log'], paths['status'], title
 
     def tick(self) -> None:
+        self._drain_graph_commands()
         root = self.jobs_dir()
         if root is None or not root.is_dir():
             return
@@ -258,10 +474,11 @@ class JobSupervisor:
         status = read_json(job_dir / 'status.json') or {}
         job_id = str(status.get('id') or spec.get('id') or job_dir.name)
         plugin = spec.get('plugin') or {}
-        if status.get('running') and plugin.get('incremental_epubs'):
-            self._poll_epubs(job_id, plugin)
-            return
         if status.get('running'):
+            if plugin.get('incremental_import'):
+                self._poll_import(job_id, plugin)
+            elif plugin.get('incremental_epubs'):
+                self._poll_epubs(job_id, plugin)
             return
         if status.get('notified') or job_id in self._ingesting:
             return
@@ -283,10 +500,17 @@ class JobSupervisor:
                 self._ingesting.discard(job_id)
             return
         if ingest == 'cancelled':
-            self._notify(job_id, status.get('message') or 'Stopped.', ok=True)
+            if plugin.get('incremental_import'):
+                self._poll_import(job_id, plugin)
+            if str(spec.get('kind') or '') != 'graph':
+                self._notify(job_id, status.get('message') or 'Stopped.', ok=True)
+            else:
+                self._mark_notified(job_dir)
             return
         if ingest == 'skipped' or status.get('exit_code') not in (None, 0):
             if plugin.get('action'):
+                if plugin.get('incremental_import'):
+                    self._poll_import(job_id, plugin)
                 self._finish_failed(job_id, status)
             else:
                 self._mark_notified(job_dir)
@@ -333,6 +557,97 @@ class JobSupervisor:
                 except RuntimeError:
                     pass
 
+    def _poll_import(self, job_id: str, plugin: dict[str, Any]) -> None:
+        jsonl = plugin.get('results_jsonl') or plugin.get('jsonl')
+        bundle = plugin.get('bundle_root') or None
+        if not jsonl:
+            return
+        try:
+            records = load_jsonl_records(jsonl)
+        except (OSError, ValueError):
+            return
+        imported = self._import_seen.setdefault(job_id, {})
+        new_records, epub_records = pending_incremental_imports(
+            records, imported, work_id_of=canonical_work_id
+        )
+        if not new_records and not epub_records:
+            return
+        try:
+            db = apply_layout_columns(self.gui)
+            update_existing = bool(plugin.get('update_existing', True))
+            skip_existing_epub = bool(plugin.get('skip_existing_epub', True))
+            book_ids: list[Any] = []
+            dialog = self._dialogs.get(job_id)
+            for record in new_records:
+                work_id = canonical_work_id(record)
+                if not work_id:
+                    continue
+                outcome = import_record(
+                    db,
+                    record,
+                    update_existing=update_existing,
+                    bundle_root=bundle,
+                    skip_existing_epub=skip_existing_epub,
+                )
+                book_id = outcome.get('book_id')
+                action = outcome.get('action')
+                imported[work_id] = {
+                    'book_id': book_id,
+                    'has_epub': bool(outcome.get('epub')) or action == 'skipped',
+                }
+                if book_id is not None:
+                    book_ids.append(book_id)
+                title = record.get('title') or work_id
+                if dialog is not None and action in ('added', 'updated'):
+                    try:
+                        verb = 'Added' if action == 'added' else 'Updated'
+                        dialog._append(f'{verb} {title}.')
+                        if outcome.get('epub'):
+                            dialog._append(f'Added EPUB to {title}.')
+                    except RuntimeError:
+                        dialog = None
+            for record in epub_records:
+                work_id = canonical_work_id(record)
+                state = imported.get(work_id) or {}
+                book_id = state.get('book_id')
+                if book_id is None or not bundle:
+                    continue
+                if resolve_epub_path(record, bundle) is None:
+                    continue
+                if book_has_epub(db, book_id):
+                    state['has_epub'] = True
+                    continue
+                item = {
+                    'book_id': book_id,
+                    'record': record,
+                    'title': record.get('title'),
+                }
+                outcomes = attach_downloaded_epubs(
+                    db, [item], bundle_root=bundle
+                )
+                if any(row.get('epub') for row in outcomes):
+                    state['has_epub'] = True
+                    book_ids.append(book_id)
+                    title = record.get('title') or work_id
+                    if dialog is not None:
+                        try:
+                            dialog._append(f'Added EPUB to {title}.')
+                        except RuntimeError:
+                            dialog = None
+            if book_ids:
+                refresh_library_ui(self.gui, book_ids)
+            if new_records:
+                project = self._project()
+                if project is not None:
+                    from calibre_plugins.ao3_scraper.graph_live import (
+                        graph_jsonl_path,
+                        upsert_graph_jsonl,
+                    )
+
+                    upsert_graph_jsonl(graph_jsonl_path(project), new_records)
+        except Exception:
+            return
+
     def _run_ingest(
         self,
         job_id: str,
@@ -364,6 +679,8 @@ class JobSupervisor:
             summary, detail = self._ingest_apply(plugin, collections=True)
         elif action == 'apply_series':
             summary, detail = self._ingest_series(plugin)
+        elif action == 'apply_covers':
+            summary, detail = self._ingest_covers(plugin)
         else:
             summary, detail = f'Unknown ingest action {action!r}.', ''
         if job_dir is not None:
@@ -389,6 +706,14 @@ class JobSupervisor:
                 'Try lowering min score / kudos / words, or raising max results.',
                 '',
             )
+        project = self._project()
+        if project is not None:
+            from calibre_plugins.ao3_scraper.graph_live import (
+                graph_jsonl_path,
+                upsert_graph_jsonl,
+            )
+
+            upsert_graph_jsonl(graph_jsonl_path(project), records)
         payload = {
             'records': records,
             'bundle_root': plugin.get('bundle_root') or None,
@@ -398,7 +723,7 @@ class JobSupervisor:
             self.gui,
             payload,
             update_existing=bool(plugin.get('update_existing', True)),
-            skip_existing_epub=bool(plugin.get('skip_existing_epub', False)),
+            skip_existing_epub=bool(plugin.get('skip_existing_epub', True)),
         )
         refresh_library_ui(self.gui, book_ids)
         return summary, remap_text
@@ -509,6 +834,47 @@ class JobSupervisor:
         )
         return summary, '\n'.join(detail_lines)
 
+    def _ingest_covers(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        payload = read_json(Path(plugin.get('items_json') or '')) or {}
+        ready = payload.get('ready') or []
+        skipped = payload.get('skipped') or []
+        items = ready
+        outcomes = apply_cover_records(
+            self.gui.current_db,
+            items,
+            bundle_root=plugin.get('bundle_root'),
+            png_dir=plugin.get('png_dir'),
+            set_calibre_cover=bool(plugin.get('set_calibre_cover', True)),
+        )
+        updated = [item for item in outcomes if item.get('action') == 'updated']
+        covers = sum(1 for item in updated if item.get('cover'))
+        epubs = sum(1 for item in updated if item.get('epub'))
+        summary = f'Generated covers for {len(updated)} book(s)'
+        bits = []
+        if covers:
+            bits.append(f'{covers} Calibre cover')
+        if epubs:
+            bits.append(f'{epubs} EPUB')
+        if bits:
+            summary += ' (' + ', '.join(bits) + ')'
+        if skipped:
+            summary += f'; skipped {len(skipped)}'
+        summary += '.'
+        if covers:
+            summary += (
+                ' The book list does not show covers — open the book, or use '
+                'Edit metadata / Cover browser / Grid view.'
+            )
+        detail_lines = [
+            f"{item.get('title') or item.get('book_id')}"
+            for item in updated
+        ]
+        refresh_library_ui(
+            self.gui,
+            [item['book_id'] for item in outcomes if item.get('book_id') is not None],
+        )
+        return summary, '\n'.join(detail_lines)
+
     def _mark_ingest(self, job_dir: Path, ingest: str, error: str | None = None) -> None:
         fields = {'ingest': ingest}
         if error:
@@ -535,8 +901,12 @@ class JobSupervisor:
     def _notify(self, job_id: str, summary: str, *, ok: bool, detail: str = '') -> None:
         root = self.jobs_dir()
         job_dir = root / job_id if root is not None else None
+        result = first_line(summary, 200)
         if job_dir is not None:
-            self._mark_notified(job_dir)
+            fields = {'notified': True}
+            if result:
+                fields['result'] = result
+            self._update_status(job_dir, **fields)
         dialog = self._dialogs.get(job_id)
         if dialog is not None:
             try:
@@ -544,11 +914,17 @@ class JobSupervisor:
                 return
             except RuntimeError:
                 self._dialogs.pop(job_id, None)
-        if ok:
-            info_dialog(
-                self.gui, 'AO3 Scraper', summary, det_msg=detail or None, show=True
-            )
-        else:
-            error_dialog(
-                self.gui, 'AO3 Scraper', summary, det_msg=detail or None, show=True
-            )
+        status = {}
+        if job_dir is not None:
+            status = read_json(job_dir / 'status.json') or {}
+        status.setdefault('id', job_id)
+        popup = JobNotifyDialog(
+            self.gui,
+            summary=summary,
+            detail=detail,
+            ok=ok,
+            retryable=job_is_retryable(status),
+        )
+        popup.exec_()
+        if popup.should_retry:
+            self.retry(job_id)

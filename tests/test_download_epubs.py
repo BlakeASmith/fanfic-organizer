@@ -10,6 +10,7 @@ import requests
 from download_epubs import (
     DownloadOutcome,
     DownloadReport,
+    JsonlWriter,
     classify_work_page,
     download_from_jsonl,
     download_record_epub,
@@ -75,6 +76,7 @@ def test_download_records_keeps_manifest_if_later_work_crashes(
 
     manifest = (tmp_path / "results.jsonl").read_text(encoding="utf-8")
     assert "50448730" in manifest
+    assert "99" in manifest
     assert (tmp_path / "epubs" / "50448730.epub").exists()
 
 
@@ -429,6 +431,63 @@ def test_write_manifest_replaces_atomically(tmp_path: Path):
     assert len(lines) == 2
     assert "epubs/1.epub" in lines[0]
     assert not path.with_suffix(".jsonl.tmp").exists()
+
+
+def test_jsonl_writer_upserts_by_work_id(tmp_path: Path):
+    path = tmp_path / "results.jsonl"
+    writer = JsonlWriter(path)
+    assert path.is_file()
+    assert path.read_text(encoding="utf-8") == ""
+    writer.upsert({"work_id": "1", "title": "One"})
+    writer.upsert({"work_id": "2", "title": "Two"})
+    writer.upsert({"work_id": "1", "title": "One", "epub_file": "epubs/1.epub"})
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(lines) == 2
+    assert "epubs/1.epub" in lines[0]
+    assert '"work_id": "2"' in lines[1]
+
+
+def test_download_records_keeps_pending_works_in_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    seen: list[str] = []
+
+    def fake_download(record, dest, session, **kwargs):
+        seen.append((dest / "results.jsonl").read_text(encoding="utf-8"))
+        updated = dict(record)
+        updated["epub_file"] = f"epubs/{record['work_id']}.epub"
+        return DownloadOutcome(
+            record=updated, status="downloaded", epub_file=updated["epub_file"]
+        )
+
+    monkeypatch.setattr("ao3kit.epubs.download_record_epub", fake_download)
+    monkeypatch.setattr("ao3kit.epubs.apply_request_delay", lambda *_a, **_k: None)
+    download_records(
+        [
+            {
+                "work_id": "1",
+                "url": "https://archiveofourown.org/works/1",
+                "title": "One",
+            },
+            {
+                "work_id": "2",
+                "url": "https://archiveofourown.org/works/2",
+                "title": "Two",
+            },
+        ],
+        tmp_path,
+        object(),
+        request_delay=0,
+        make_zip=False,
+        simplify_tags=False,
+    )
+    assert "One" in seen[0] and "Two" in seen[0]
+    assert "epub_file" not in seen[0]
+    assert "epubs/1.epub" in seen[1]
+    assert "Two" in seen[1]
+    final = (tmp_path / "results.jsonl").read_text(encoding="utf-8")
+    assert "epubs/1.epub" in final
+    assert "epubs/2.epub" in final
 
 
 def test_download_cli_omits_remap_summary_without_simplify(

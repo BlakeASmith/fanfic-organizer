@@ -119,6 +119,14 @@ def read_log_tail(
     return '\n'.join(parts[-lines:]) + '\n'
 
 
+def first_line(value: Any, limit: int = 120) -> str:
+    """First non-empty line of ``value``, truncated. Empty input → ``''``."""
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    return text.splitlines()[0][:limit]
+
+
 def format_job_header(status: dict[str, Any] | None, log_path: Path) -> str:
     status = status or {}
     title = status.get('title') or status.get('id') or 'Job'
@@ -131,12 +139,53 @@ def format_job_header(status: dict[str, Any] | None, log_path: Path) -> str:
         state = 'Finished'
     else:
         state = 'Not running'
-    message = str(status.get('message') or '').strip()
+    message = first_line(status.get('message'), 200)
     bits = [f'{title} — {state}']
     if message:
-        bits.append(message.splitlines()[0][:200])
+        bits.append(message)
+    result = first_line(status.get('result'), 200)
+    if result:
+        bits.append(result)
     bits.append(f'Log: {log_path}')
     return '\n'.join(bits)
+
+
+def job_is_retryable(status: dict[str, Any] | None) -> bool:
+    """True when a finished failed/stopped job can be run again from its spec."""
+    data = dict(status or {})
+    if str(data.get('id') or '') == 'warm':
+        return False
+    if data.get('running'):
+        return False
+    if str(data.get('ingest') or '') == 'pending':
+        return False
+    ingest = str(data.get('ingest') or '')
+    if ingest in ('cancelled', 'failed', 'skipped'):
+        return True
+    return data.get('exit_code') not in (None, 0)
+
+
+def job_is_deletable(status: dict[str, Any] | None) -> bool:
+    """True when a job can be removed from the list (not running, not ingesting)."""
+    data = dict(status or {})
+    if str(data.get('id') or '') == 'warm':
+        return False
+    if data.get('running'):
+        return False
+    return str(data.get('ingest') or '') != 'pending'
+
+
+def job_clear_bucket(status: dict[str, Any] | None) -> str | None:
+    """``finished``, ``failed``, or ``stopped`` when deletable; otherwise ``None``."""
+    if not job_is_deletable(status):
+        return None
+    data = dict(status or {})
+    ingest = str(data.get('ingest') or '')
+    if ingest == 'cancelled':
+        return 'stopped'
+    if ingest in ('failed', 'skipped') or data.get('exit_code') not in (None, 0):
+        return 'failed'
+    return 'finished'
 
 
 def job_paths(job_dir: Path) -> dict[str, Path]:

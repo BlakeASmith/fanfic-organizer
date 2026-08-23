@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 SleepFn = Callable[[float], None]
 StopFn = Callable[[], bool]
@@ -24,6 +24,35 @@ LOG_READ_MAX_BYTES = 2_000_000
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def looks_like_calibre_binary(python: str) -> bool:
+    """True for Calibre GUI / calibre-debug (not a regular CPython)."""
+    name = Path(python).name.lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return "calibre" in name
+
+
+def ao3kit_argv(
+    args: Sequence[str],
+    *,
+    python: str | None = None,
+    launcher: str | None = None,
+) -> list[str]:
+    """Build ``python -m ao3kit …`` or a Calibre ``calibre-debug -e`` launcher.
+
+    Frozen Calibre Python ignores ``PYTHONPATH`` and does not accept ``-m``,
+    so bundled plugin jobs set ``AO3KIT_LAUNCHER`` to ``run_ao3kit.py``.
+    """
+    python = python or sys.executable
+    script = (launcher if launcher is not None else os.environ.get("AO3KIT_LAUNCHER", "")).strip()
+    extra = [str(part) for part in args]
+    if script:
+        if looks_like_calibre_binary(python):
+            return [python, "-e", script, "--", *extra]
+        return [python, "-u", script, *extra]
+    return [python, "-u", "-m", "ao3kit", *extra]
 
 
 def atomic_write_text(path: Path, text: str) -> None:

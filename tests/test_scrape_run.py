@@ -147,6 +147,23 @@ def test_build_download_argv_skips_zip_and_auto_simplify():
     assert "--delay" not in argv
 
 
+def test_build_cover_argv():
+    mod = load_scrape_run()
+    argv = mod.build_cover_argv(
+        "/tmp/in.jsonl",
+        "/tmp/bundle",
+        "/tmp/covers",
+        {"username": "emily", "password": "secret"},
+    )
+    assert argv[:3] == ["cover", "--jsonl", "/tmp/in.jsonl"]
+    assert argv[argv.index("--dir") + 1] == "/tmp/bundle"
+    assert argv[argv.index("--png-dir") + 1] == "/tmp/covers"
+    assert "--replace" in argv
+    assert "--verbose" in argv
+    assert "--username" not in argv
+    assert "--password" not in argv
+
+
 def test_prepare_download_command_writes_jsonl(tmp_path: Path):
     mod = load_scrape_run()
     records = [

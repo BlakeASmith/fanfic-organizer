@@ -15,6 +15,7 @@ work to manage fan-fiction and metadata cleaning etc.
 ```
 ao3kit/                 # Application package
   http.py / rate.py / rate_store.py / scrape.py / series.py / similar.py / epubs.py
+  covers.py # generated EPUB covers (title/author, fandom-coloured)
   jobs.py / proc.py     # detachable background jobs (pid, log, start/stop)
   webapp.py / api.py     # deprecated frozen web UI + REST API
   config.py             # User settings + rule file storage (.ao3kit/)
@@ -26,7 +27,7 @@ ao3kit/                 # Application package
 templates/              # Deprecated Jinja2 templates for the frozen web UI
 calibre-plugin/         # Calibre plugin (search/scrape via ao3kit + JSONL/zip import)
 calibre_dev/            # Dev: lock-aware Calibre restart + FastMCP server
-makeplugin.py           # Zip / install plugin; optional --restart
+makeplugin.py           # Zip (self-contained release) / install plugin; optional --restart
 .cursor/mcp.json        # calibre-dev MCP (stdio)
 ```
 
@@ -41,7 +42,7 @@ The CLI and Calibre plugin share one core. Prefer implementing behavior in `ao3k
 | Surface | Entry | Owns |
 |---|---|---|
 | CLI | `python -m ao3kit …` | Full toolkit (scrape, tags, download, job, config, login, rate) |
-| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via ao3kit subprocess; import JSONL/zip; import series; simplify selected tags, fandoms, and relationships; edit collections of selected books (which rules, pins, excludes); recompute collections from rules (hand-adds become per-work pins); **Running jobs** (attach logs / stop / background); background tag cache; tag graph; collections & tag rules; Tag Purge of rare Tags-column values |
+| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via ao3kit subprocess; import JSONL/zip; import series; simplify selected tags, fandoms, and relationships; edit collections of selected books (which rules, pins, excludes); recompute collections from rules (hand-adds become per-work pins); **Running jobs** (attach logs / stop / retry / delete / clear / background); background tag cache; tag graph; collections & tag rules; Tag Purge of rare Tags-column values; generated EPUB covers |
 | Web UI (deprecated) | `ao3kit.webapp` `/` | Frozen HTMX scrape/download/settings — do not extend |
 | REST API (deprecated) | `ao3kit.api` `/api/v1` | Frozen JSON jobs — do not extend |
 
@@ -55,6 +56,10 @@ The CLI and Calibre plugin share one core. Prefer implementing behavior in `ao3k
 
 ## Calibre plugin (new library)
 
+End users install **AO3Scraper.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config/cache for that bundled copy live next to the extracted runtime under Calibre’s plugins folder (`.ao3kit` / `.cache` are kept across upgrades).
+
+A git checkout still wins when `ao3kit_project` is set or `~/emily/ao3` exists — that is the dev path. `python makeplugin.py install` stays `calibre-customize -b` (plugin UI only, shells out to the checkout). `python makeplugin.py zip` is the fat release artifact.
+
 **Always reinstall after every change.** When you finish work in this repo, run `python makeplugin.py install` before you stop — even if you only touched `ao3kit/` (the plugin shells out to that checkout) or docs. Calibre keeps the old plugin zip until you install again. Tell the user to **restart Calibre** so it loads the new zip. Do not wait for them to ask.
 
 ### Plugin reinstall and Calibre restart (dev)
@@ -63,6 +68,7 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 
 | Command | What it does |
 |---|---|
+| `python makeplugin.py zip` | Self-contained `AO3Scraper.zip` (plugin + ao3kit + vendor) for GitHub Releases. |
 | `python makeplugin.py install` | `calibre-customize -b` only. Then tell the user to restart. |
 | `python makeplugin.py install --restart` | Install, then quit and start Calibre. |
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |
@@ -82,17 +88,29 @@ MCP restart uses `lock_timeout=0` by default: if another agent holds the lock, t
 
 The plugin is for a **new** Calibre library that should look like the existing FanFicFare fanfic library. Do not run Search AO3 / Import / Download EPUB / Import series / Fill series / Simplify / Tag Purge / “create columns” against a library you want left untouched — those actions write to whichever library is currently open. Installing the plugin does not modify a library by itself.
 
-**Search similar** (actions menu) builds an AO3 search from the selected library book(s). Fandoms, authors, relationships, characters, and additional tags are merged across the selection and shown in dropdowns so you can add a fandom plus a ship or two. AO3 ANDs every selected tag — pick a few. Then Search and import runs the same scrape/download path as Search AO3. Work id is optional; FanFicFare `#characters` is used when that column exists.
+The toolbar button opens the plugin menu. The menu is grouped:
 
-**Search AO3 and import** (toolbar button and first menu item) uses the same scrape criteria and filters as the CLI. It starts a detachable **background job** (`python -m ao3kit job start`) whose steps are `scrape` (with `--download` when EPUBs are requested) and optional `tags enrich`. Search, native EPUB download, and simplify share one job, one login, and the host-wide rate limiter. The log window is an attach view: **Background** (or closing the window) detaches without stopping work; **Cancel** stops the process. **Running jobs…** lists every job (including the tag-cache warmer) so you can reopen the log or stop it. Paste a works-search URL or an AO3 **series** URL (`/series/ID`), or fill the form; **Fill from URL** runs `scrape --parse-only` (no network scrape) to populate fields. A series URL imports every work on that series page. JSONL/zip import remains available for files produced outside Calibre. Download, import-series, fill-series, simplify, and recompute collections use the same job wrapper.
+- **Search AO3 and import…** / **Search similar…** / **Import JSONL or zip…**
+- **Selected books** — **Complete selected** (series + missing EPUBs + simplify tags), download EPUB, generate covers, import rest of series, fill series, simplify tags, edit / recompute / add collections (disabled when nothing is selected; the label shows the selection count)
+- **Running jobs…**
+- **Tags and collections** — Collections & tag rules, tag graph, tag purge, warm / log / stop tag cache
+- **Plugin settings…**
 
-**Download EPUB for selected books** (actions menu) downloads the native AO3 EPUB for selected library books that have an AO3 work id / URL and do not already have an EPUB format. It runs as a background job whose step is `python -m ao3kit download` (same host-wide limiter) and attaches each file with Calibre `add_format` as soon as that download finishes, so earlier books are readable in the library while later ones are still fetching. Books that already have an EPUB are skipped; existing files are never replaced. Metadata and tags are left unchanged.
+**Search similar** (menu; needs a selection) builds an AO3 search from the selected library book(s). Fandoms, authors, relationships, characters, and additional tags are merged across the selection and shown in dropdowns so you can add a fandom plus a ship or two. AO3 ANDs every selected tag — pick a few. Then Search and import runs the same scrape/download path as Search AO3. Work id is optional; FanFicFare `#characters` is used when that column exists.
 
-**Import rest of series for selected books** (actions menu) looks up the AO3 series for the selection (from stored series metadata, the `ao3series` identifier, or a work-page fetch) and imports every other part. It runs as a background job whose step is `python -m ao3kit scrape --series-from`. Existing books are updated with series metadata; existing EPUBs are left unchanged. Native EPUB download and tag simplify follow plugin settings.
+**Search AO3 and import** (menu) uses the same scrape criteria and filters as the CLI. It starts a detachable **background job** (`python -m ao3kit job start`) whose steps are `scrape` (with `--download` when EPUBs are requested) and optional `tags enrich`. Search, native EPUB download, and simplify share one job, one login, and the host-wide rate limiter. Matched works appear in the library **as soon as they are scraped**; native EPUBs attach to those rows as each file finishes downloading. Simplify still runs after the scrape (and rewrites tags on the books already added). The log window is an attach view: **Background** (or closing the window) detaches without stopping work; **Cancel** stops the process; **Retry** on a failed or stopped job re-runs it from the start (existing EPUBs and cached tags are skipped). If the log is closed, the completion popup also has **Retry**. **Running jobs…** lists every job (including the tag-cache warmer and the live **tag graph viewer**) so you can reopen the log, stop it, retry a failure, delete selected jobs (Shift-click or ⌘-click for more than one), or clear finished / failed jobs from the list (the library is unchanged). Paste a works-search URL or an AO3 **series** URL (`/series/ID`), or fill the form; **Fill from URL** runs `scrape --parse-only` (no network scrape) to populate fields. A series URL imports every work on that series page. JSONL/zip import remains available for files produced outside Calibre. Download, import-series, fill-series, simplify, and recompute collections use the same job wrapper.
 
-**Fill series for selected books** (actions menu) looks up AO3 series membership for books already in the library and writes Calibre’s Series field, series index, and `ao3series`. It runs as a background job whose step is `python -m ao3kit scrape --fill-series-from`. Other works in the series are not imported. Tags and EPUBs are left unchanged. Books that are not in a series are left as they are. Works that already have a complete series id + name + part number are skipped on AO3 (no extra fetch).
+**Complete selected** (Selected books) runs the usual selected-book work in one job: fill Series, import the rest of each AO3 series, download missing native EPUBs, simplify tags/fandoms/relationships, and recompute collections. Existing library EPUBs are copied into the job so AO3 is not hit again for them. New series-mates appear in the library as they are found. Same steps as `scrape --series-from --download` then `tags enrich`.
 
-**Plugin settings** hold optional AO3 login and import defaults (download native EPUBs, simplify tags/fandoms/relationships, update existing books, **always import the rest of the series**). When that series option is on, Search AO3, Search similar, a series URL, and JSONL/zip import also fetch every other work in the same series (`scrape --include-series` / `--series-from`). Search filters apply only to the original matches; series-mates are added in full. **Test login** on that page checks the username and password against AO3 (via `python -m ao3kit login`) without saving yet. Leave login blank for anonymous access or to use the ao3kit project `.env`. Request pacing is the host-wide rate limiter, not a plugin delay setting. Search / Import dialogs still let you override download, simplify, and update-existing for that run. Download native EPUBs is on by default; simplification and full-series auto-import stay off unless enabled in settings (or simplify is checked on the dialog).
+**Download EPUB** (Selected books) downloads the native AO3 EPUB for selected library books that have an AO3 work id / URL and do not already have an EPUB format. It runs as a background job whose step is `python -m ao3kit download` (same host-wide limiter) and attaches each file with Calibre `add_format` as soon as that download finishes, so earlier books are readable in the library while later ones are still fetching. Books that already have an EPUB are skipped; existing files are never replaced. Metadata and tags are left unchanged. Generated covers follow plugin settings / `.ao3kit` `cover.enabled` (on by default).
+
+**Generate covers** (Selected books) stamps an auto-generated cover (title, author, word count, and quality score on a fandom-coloured field, like [add-cover-to-ao3-files](https://github.com/alexwlchan/add-cover-to-ao3-files)) into each selected EPUB and sets the Calibre thumbnail. Books without an EPUB still get a Calibre cover from library metadata. Style (fields, colours, font, size) is in Plugin settings → Cover style and `python -m ao3kit config set cover.<key>`.
+
+**Import rest of series** (Selected books) looks up the AO3 series for the selection (from stored series metadata, the `ao3series` identifier, or a work-page fetch) and imports every other part. It runs as a background job whose step is `python -m ao3kit scrape --series-from`. New parts show in the library as they are found; EPUBs attach as they download. Existing books are updated with series metadata; existing EPUBs are left unchanged. Native EPUB download and tag simplify follow plugin settings.
+
+**Fill series** (Selected books) looks up AO3 series membership for books already in the library and writes Calibre’s Series field, series index, and `ao3series`. It runs as a background job whose step is `python -m ao3kit scrape --fill-series-from`. Other works in the series are not imported. Tags and EPUBs are left unchanged. Books that are not in a series are left as they are. Works that already have a complete series id + name + part number are skipped on AO3 (no extra fetch).
+
+**Plugin settings** hold optional AO3 login and import defaults (download native EPUBs, generate covers, simplify tags/fandoms/relationships, update existing books, **always import the rest of the series**). Cover style (which lines to show, fandom colour overrides, font, size) is on that page. When that series option is on, Search AO3, Search similar, a series URL, and JSONL/zip import also fetch every other work in the same series (`scrape --include-series` / `--series-from`). Search filters apply only to the original matches; series-mates are added in full. **Test login** on that page checks the username and password against AO3 (via `python -m ao3kit login`) without saving yet. Leave login blank for anonymous access or to use the ao3kit project `.env`. Request pacing is the host-wide rate limiter, not a plugin delay setting. Search / Import dialogs still let you override download, simplify, and update-existing for that run. Download native EPUBs and generated covers are on by default; simplification and full-series auto-import stay off unless enabled in settings (or simplify is checked on the dialog).
 
 On first import into an empty library (or via the settings checkbox) it creates and fills:
 
@@ -112,13 +130,13 @@ Count Pages columns (page count / readability) are not created. There is no sepa
 
 After **Import** (with simplify) or **Simplify tags, fandoms & relationships for selected books**, the plugin prints a unique `before → after` remapping summary in the progress log and in the completion dialog (Show details). The same AO3 synonym collapse and user tag rules run on Tags, Fandom, and Relationships. Fandom metatags (e.g. Marvel) are appended to Fandom only.
 
-**Edit collections of selected books** (actions menu, and a button on **Collections & tag rules**) lists each selected book and collection, shows which rules put it there or keep it out, and lets you Always / Never pin, add a book to an existing or new collection (even when no rule matches, or it already belongs to a different one), keep an unexplained membership as a pin, edit or turn off shared rules, or write the computed set back to Calibre. It does not fetch AO3 or change tags. **Recompute collections for selected books** and **Add selected books to a collection** remain shortcuts. **Collections & tag rules** has two tabs. **Collections** are computed from rules (tag contains / is exactly, fandom, author, or a single AO3 work). Recompute and add use those rules only — they do not fetch AO3 or run tag keep/rename/drop. Recompute replaces the Collections column. Adding a book to a collection by hand — in Calibre, or **Add selected books to a collection** — is saved as a per-work pin so the next recompute puts it back. Use a **Never** rule to keep matching books out; removing a collection in Calibre alone does not stick. Plugin settings can turn off remembering hand-adds (`collections_remember_manual_adds`). **Tag rules** keep / rename / remove tags. Uncheck **On** to ignore a rule; double-click a row to edit. **Try a tag** shows AO3’s usual name plus tag rules. Older mapping rows that named a collection still apply on Simplify until you move them to the Collections tab.
+**Edit collections** (Selected books, and a button on **Collections & tag rules**) lists each selected book and collection, shows which rules put it there or keep it out, and lets you Always / Never pin, add a book to an existing or new collection (even when no rule matches, or it already belongs to a different one), keep an unexplained membership as a pin, edit or turn off shared rules, or write the computed set back to Calibre. It does not fetch AO3 or change tags. **Recompute collections** and **Add to a collection** remain shortcuts under Selected books. **Collections & tag rules** has two tabs. **Collections** are computed from rules (tag contains / is exactly, fandom, author, or a single AO3 work). Recompute and add use those rules only — they do not fetch AO3 or run tag keep/rename/drop. Recompute replaces the Collections column. Adding a book to a collection by hand — in Calibre, or **Add selected books to a collection** — is saved as a per-work pin so the next recompute puts it back. Use a **Never** rule to keep matching books out; removing a collection in Calibre alone does not stick. Plugin settings can turn off remembering hand-adds (`collections_remember_manual_adds`). **Tag rules** keep / rename / remove tags. Uncheck **On** to ignore a rule; double-click a row to edit. **Try a tag** shows AO3’s usual name plus tag rules. Older mapping rows that named a collection still apply on Simplify until you move them to the Collections tab.
 
-**Warm tag cache in background** (actions menu) collects unique tags / fandoms / ships / characters from the **whole open library**, writes them to `.cache/tag_warm_names.txt`, and shells out to `python -m ao3kit tags warm start`. The daemon fetches uncached AO3 mappings slowly so Search / Download / Simplify can still run; it does not write Calibre metadata. If a warmer is already running, this updates the names file and the daemon picks it up on the next poll. It shows up as job id `warm` in **Running jobs…**. **Background tag cache log** attaches to `.cache/tag_warm.log` (same as `python -m ao3kit tags warm log --follow` or `python -m ao3kit job attach warm`). **Stop background tag cache** sends `tags warm stop` (or `job stop warm`) and shows which tags were cached this run (Show details for the full list).
+**Warm tag cache** (Tags and collections) collects unique tags / fandoms / ships / characters from the **whole open library**, writes them to `.cache/tag_warm_names.txt`, and shells out to `python -m ao3kit tags warm start`. The daemon fetches uncached AO3 mappings slowly so Search / Download / Simplify can still run; it does not write Calibre metadata. If a warmer is already running, this updates the names file and the daemon picks it up on the next poll. It shows up as job id `warm` in **Running jobs…**. **Tag cache log** attaches to `.cache/tag_warm.log` (same as `python -m ao3kit tags warm log --follow` or `python -m ao3kit job attach warm`). **Stop tag cache** sends `tags warm stop` (or `job stop warm`) and shows which tags were cached this run (Show details for the full list).
 
-**Tag graph** (actions menu) shells out to `python -m ao3kit tags graph`. If more than one book is selected, only those books seed the graph; otherwise it uses the whole open library. Each book is a work node linked to all of its tags, fandoms, ships, and characters; tags that share a work are connected through that work. Synonym and metatag links from the cache are included. Uncached names show as missing. It does not change the library or fetch AO3. Warm the tag cache first for a fuller picture.
+**Tag graph** (Tags and collections) starts a long-running **Tag graph viewer** job (`python -m ao3kit tags graph serve`, job id `graph` in **Running jobs…**). If more than one book is selected, only those books seed the dump; otherwise it uses the whole open library. Each book is a work node linked to all of its tags, fandoms, ships, and characters; tags that share a work are connected through that work. Synonym and metatag links from the cache are included. Uncached names show as missing. Layout is a stable packing (no heavy force simulation). Default grouping is fandom; the viewer can switch to largest fandom, **crossovers (mixed franchises)** (related tags like Doctor Who / Doctor Who (2005) count as one), relationship, or one group, then optionally settle the focused neighborhood. Shared tags sit between groups. Warm the tag cache first for a fuller picture. **Find similar** on a work or a tag opens the same search-tuning controls as the plugin Search similar dialog. Works start with fandoms pre-checked; tags start with that tag checked (optional authors, ships, characters, tags, excludes, extra query, sort, complete, max results). It queues that scrape/import using plugin download/simplify defaults; new works are written into the library as they scrape and the viewer reloads from `.cache/tag_graph_works.jsonl`. Refresh the page after viewer code changes. `python -m ao3kit tags graph serve` is the same server if you start it yourself.
 
-**Tag Purge** (actions menu) lists Tags-column values that appear on at most *N* works **in the whole library** (default *N* = 1). The opening list can be *seeded* from the current selection or currently shown books; the count beside each tag is still library-wide, and **Purge removes those tags from every book in the open library**. A **Filter tags** box fuzzy-matches tag names (comma-separated terms are OR). The dialog states that purge is library-wide. **Show tags** refreshes the checklist after changing the max-works seed. Fandom / Relationships / Collections / Original Tags are unchanged.
+**Tag purge** (Tags and collections) lists Tags-column values that appear on at most *N* works **in the whole library** (default *N* = 1). The opening list can be *seeded* from the current selection or currently shown books; the count beside each tag is still library-wide, and **Purge removes those tags from every book in the open library**. A **Filter tags** box fuzzy-matches tag names (comma-separated terms are OR). The dialog states that purge is library-wide. **Show tags** refreshes the checklist after changing the max-works seed. Fandom / Relationships / Collections / Original Tags are unchanged.
 
 ## Setup
 
@@ -152,6 +170,8 @@ python -m ao3kit tags warm log --follow
 python -m ao3kit tags warm stop
 python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
 python -m ao3kit tags graph --jsonl results.jsonl -o tag-graph.html
+python -m ao3kit tags graph serve
+python -m ao3kit tags graph reload
 python -m ao3kit job start --title "Search" -- scrape -o results.jsonl --verbose
 python -m ao3kit job start -- scrape -o results.jsonl --and tags enrich --jsonl results.jsonl -o cleaned.jsonl
 python -m ao3kit job list
@@ -159,7 +179,17 @@ python -m ao3kit job status
 python -m ao3kit job log <id> --follow
 python -m ao3kit job attach <id>
 python -m ao3kit job stop <id>
+python -m ao3kit job retry <id>
+python -m ao3kit job delete <id>
+python -m ao3kit job clear --finished
 python -m ao3kit download -i results.jsonl -o epubs/
+python -m ao3kit download -i results.jsonl -o epubs/ --no-cover
+python -m ao3kit cover epubs/50448730.epub
+python -m ao3kit cover --dir epubs/
+python -m ao3kit cover --jsonl results.jsonl --dir epubs/
+python -m ao3kit cover preview --title "Ship Happens" --author "Ann Thology" --fandom "Star Wars" -o cover.png
+python -m ao3kit config set cover.enabled true
+python -m ao3kit config set cover.fields title,author,wordcount,score,fandom
 python -m ao3kit config init
 python -m ao3kit config collections add --match mentions --values "River Song" --collection "River Song"
 python -m ao3kit config collections pin --work-id 50448730 --collection Jegulus
@@ -193,22 +223,40 @@ Layout (under `.cache/jobs/<id>/`, override with `AO3KIT_JOBS_DIR`):
 
 | File | Role |
 |---|---|
-| `spec.json` | Title, kind, argv **steps** (each step is `python -m ao3kit …`), optional plugin ingest hints |
-| `status.json` | pid, running, last log line, exit code, ingest state |
+| `spec.json` | Title, kind, argv **steps**, **result** (how to compute the return value), optional plugin ingest hints |
+| `status.json` | pid, running, last log line, exit code, ingest state, **result** (one-line outcome), retry count |
 | `job.pid` / `job.log` | Worker pid and combined stdout/stderr |
 | `work/` | JSONL, EPUBs, criteria files for that run |
 
 ```bash
 python -m ao3kit job start --title "Search" --kind scrape -- scrape -o results.jsonl --verbose
 python -m ao3kit job start --dir .cache/jobs/<id>          # plugin: spec.json already written
+python -m ao3kit job start --result-json '{"source":"jsonl_count","path":"results.jsonl","label":"work"}' -- scrape -o results.jsonl
 python -m ao3kit job list
 python -m ao3kit job status <id>
 python -m ao3kit job log <id> --follow
 python -m ao3kit job attach <id>                           # alias of log --follow
 python -m ao3kit job stop <id>
+python -m ao3kit job retry <id>                            # re-run from spec; keeps work/ and log
+python -m ao3kit job delete <id>
+python -m ao3kit job clear --finished
+python -m ao3kit job clear --failed --stopped
+python -m ao3kit job clear --inactive                      # finished + failed + stopped
 ```
 
-Separate steps with `--and`. JSON is on stdout; a one-line summary is on stderr. `tags warm` stays a named singleton (id `warm`) and appears in `job list` for the default jobs dir. The Calibre plugin starts every search / download / simplify / series / collections run this way, shows the log while you are attached, and **Running jobs…** lists them all. Calibre library writes happen in the plugin after the job process exits (`status.ingest: pending` → import / attach EPUB / apply cleaned tags). Closing Calibre before ingest finishes is safe: the next plugin launch picks up pending ingest from disk. The frozen web UI / REST API still use their own in-memory jobs and are not this store.
+Separate steps with `--and`. JSON is on stdout; a one-line summary is on stderr. Each job declares its own **result** in `spec.result` (`jsonl_count`, `log_match`, `json_field`, or `last_log`). The worker writes that to `status.result`; `job list` / **Running jobs…** show it in a Result column. After Calibre ingest the plugin replaces the result with the library summary (imported N books, simplified tags, …). `tags warm` stays a named singleton (id `warm`) and appears in `job list` for the default jobs dir. The Calibre plugin starts every search / download / simplify / series / collections run this way, shows the log while you are attached, and **Running jobs…** lists them all. Failed or stopped jobs can be retried from that list, the log window, or the completion popup if the log is closed (**Retry**): the same steps run again from the start; `work/` (EPUBs, JSONL) and the tag cache are kept, so downloads skip files already on disk. Existing library EPUBs are not replaced. **Delete** / **Clear finished** / **Clear failed** (and `job delete` / `job clear`) remove job directories from the list only; they do not change the Calibre library. Search and series import write books into the library **while the job is still running** (metadata as each work is scraped, EPUB as each file lands). A final ingest after the process exits (`status.ingest: pending`) applies simplified tags and catches anything missed. Closing Calibre before that final ingest is safe: the next plugin launch picks up pending ingest from disk. The frozen web UI / REST API still use their own in-memory jobs and are not this store.
+
+### EPUB covers
+
+Native AO3 EPUBs have no cover image. `ao3kit.covers` generates one (title, author, word count, and quality score on a dark fandom-coloured gradient, same idea as [add-cover-to-ao3-files](https://github.com/alexwlchan/add-cover-to-ao3-files)) and stamps it into the EPUB OPF. Same-fandom works get the same colour so a grid view groups them. Style lives in `.ao3kit/config.yaml` under `cover:` (fields, font, size, palette, per-fandom colour map). Download/scrape use `cover.enabled` (default on); pass `--no-cover` to skip. The Calibre plugin settings page has the same knobs plus **Selected books → Generate covers**.
+
+```bash
+python -m ao3kit config set cover.enabled true
+python -m ao3kit config set cover.fields title,author,wordcount,score,fandom
+python -m ao3kit config set cover.color_seed fandom
+python -m ao3kit config set cover.fandom_colors "Star Wars = #c41e3a"
+python -m ao3kit cover --dir epubs/
+```
 
 ### Series
 
@@ -249,8 +297,8 @@ Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolve
 3. Index every synonym listed on the canonical page as one *tree* (shared `root` + `fetched_at`) → later raw forms resolve with **zero** fetches.
 4. Persist to `.cache/ao3_tag_cache.sqlite` (gitignored; legacy `.json` is imported once on open).
 5. Trees older than `tag_cache_ttl_days` (default **90**; `0` = never) are purged automatically so wrangling stays fresh.
-6. **Background warming** (`tags warm start`) detaches a slow daemon that re-scans JSONL / names files for uncached tags and fetches them through `TagResolver` (host-wide limiter plus `tag_warm_interval`, default 10s extra between fetches). It does not raise the shared scrape/download interval. Idle-exits after a few empty polls. Calibre **Warm tag cache in background…** dumps library tags to a names file and runs the same command.
-7. **Tag graph** (`tags graph`) reads the cache (no AO3 fetch) and writes an HTML / JSON / DOT view of works plus synonym and metatag links. `--jsonl` places each work as a node linked to its tags. Calibre **Tag graph…** dumps selected books (when more than one is selected) or the whole library as JSONL, then opens the HTML.
+6. **Background warming** (`tags warm start`) detaches a slow daemon that re-scans JSONL / names files for uncached tags and fetches them through `TagResolver` (host-wide limiter plus `tag_warm_interval`, default 10s extra between fetches). It does not raise the shared scrape/download interval. Idle-exits after a few empty polls. Calibre **Warm tag cache…** dumps library tags to a names file and runs the same command.
+7. **Tag graph** (`tags graph`) reads the cache (no AO3 fetch) and writes an HTML / JSON / DOT view of works plus synonym and metatag links. `--jsonl` places each work as a work node linked to its tags. Positions are precomputed (fandom clusters, bridge tags in the middle); the viewer can regroup by largest fandom, mixed-franchise crossovers, ships, or one group, and optionally settle the focused neighborhood. Calibre **Tag graph…** dumps JSONL, starts a `tags graph serve` job (id `graph`), and opens the live viewer. **Find similar** on a work or a tag lets you pick fandoms, ships, characters, tags, excludes, extra query, and filters, then queues a scrape/import; the dump updates as Calibre indexes matches. Clicking a tag starts the search with that tag. `python -m ao3kit tags graph serve` is the same server for UI iteration; **Reload data** rebuilds from the JSONL dump.
 
 ```bash
 python -m ao3kit tags resolve "wolfstar" "Kisses" "Slow Burn"
@@ -273,6 +321,8 @@ python -m ao3kit tags warm log --follow
 python -m ao3kit tags warm stop
 python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
 python -m ao3kit tags graph --jsonl results.jsonl -o tag-graph.html
+python -m ao3kit tags graph serve
+python -m ao3kit tags graph reload
 ```
 
 ### User config & rules storage

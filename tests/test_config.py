@@ -25,6 +25,8 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
     assert cfg.settings.request_delay == DEFAULT_REQUEST_DELAY
     assert cfg.settings.tag_warm_interval == 10.0
     assert cfg.settings.include_metatags is True
+    assert cfg.settings.cover.enabled is True
+    assert cfg.settings.cover.fields == ["title", "author", "wordcount", "score"]
     rules = load_tag_rules(cfg.active_rules_path())
     assert rules.resolve_canonical is True
 
@@ -64,6 +66,35 @@ def test_reject_unsafe_rule_name(tmp_path: Path):
 def test_settings_from_dict_ignores_unknown():
     settings = UserSettings.from_dict({"request_delay": 3, "nope": 1})
     assert settings.request_delay == 3.0
+    assert settings.cover.enabled is True
+
+
+def test_config_set_cover_dotted_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from ao3kit.config_cli import main as config_main
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AO3KIT_HOME", str(home))
+    init_user_config(home=home)
+    assert config_main(["--home", str(home), "set", "cover.enabled", "false"]) == 0
+    assert config_main(["--home", str(home), "set", "cover.fields", "title,author,fandom"]) == 0
+    reloaded = load_user_config(home=home)
+    assert reloaded.settings.cover.enabled is False
+    assert "fandom" in reloaded.settings.cover.fields
+    assert (
+        config_main(
+            [
+                "--home",
+                str(home),
+                "merge",
+                '{"cover": {"width": 720, "color_mode": "solid"}}',
+            ]
+        )
+        == 0
+    )
+    reloaded = load_user_config(home=home)
+    assert reloaded.settings.cover.width == 720
+    assert reloaded.settings.cover.color_mode == "solid"
+    assert reloaded.settings.cover.enabled is False
 
 
 def test_resolve_request_delay_none_uses_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

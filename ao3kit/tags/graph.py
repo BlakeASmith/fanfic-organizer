@@ -12,13 +12,17 @@ CLI::
 
     python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
     python -m ao3kit tags graph --jsonl results.jsonl -o graph.json
+    python -m ao3kit tags graph serve
+    python -m ao3kit tags graph reload
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import math
+import os
 import sys
 import webbrowser
 from collections import defaultdict, deque
@@ -38,12 +42,28 @@ from ao3kit.tags.warm import EXTRA_NAME_KEYS, collect_warm_names, load_jsonl_rec
 SynonymMode = Literal["seed", "all", "none"]
 GraphFormat = Literal["html", "json", "dot"]
 
-DEFAULT_GRAPH_HTML = (
-    Path(__file__).resolve().parents[2] / ".cache" / "tag-graph.html"
-)
+_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
+DEFAULT_GRAPH_HTML = _CACHE_DIR / "tag-graph.html"
+DEFAULT_GRAPH_JSONL = _CACHE_DIR / "tag_graph_works.jsonl"
+DEFAULT_GRAPH_JSON = _CACHE_DIR / "tag-graph.json"
+DEFAULT_GRAPH_SERVE_STAMP = _CACHE_DIR / "tag-graph-serve.json"
+DEFAULT_GRAPH_PORT = 8767
 
-# Calibre / FanFicFare status labels, not AO3 tags on the work.
-_SKIP_WORK_TAGS = frozenset({"completed", "complete", "fanfiction"})
+# Calibre / FanFicFare status labels, plus AO3 archive warnings (not content tags).
+_SKIP_WORK_TAGS = frozenset(
+    {
+        "completed",
+        "complete",
+        "fanfiction",
+        "creator chose not to use archive warnings",
+        "no archive warnings apply",
+        "graphic depictions of violence",
+        "major character death",
+        "rape/non-con",
+        "underage",
+    }
+)
+_RELATED_FANDOMS_SUFFIX = " & related fandoms"
 
 
 @dataclass
@@ -59,6 +79,9 @@ class TagGraphNode:
     component: int = 0
     kind: str = "tag"
     url: str | None = None
+    x: float = 0.0
+    y: float = 0.0
+    cluster: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +96,9 @@ class TagGraphNode:
             "component": self.component,
             "kind": self.kind,
             "url": self.url,
+            "x": self.x,
+            "y": self.y,
+            "cluster": self.cluster,
         }
 
 
@@ -103,11 +129,7 @@ class TagGraphEdge:
 
 
 def edge_weight(kind: str, *, hub_degree: int = 1) -> float:
-    """Link magnitude for the viewer: higher is a shorter, stiffer spring.
-
-    AO3 works routinely carry dozens of tags. Extra tags must not weaken
-    the spokes (that inflates a halo); busy works get a slight hold bonus.
-    """
+    """Line weight in the viewer. Busy works keep strong spokes."""
     if kind == "synonym":
         return 2.0
     if kind == "metatag":
@@ -125,6 +147,7 @@ class TagGraphComponent:
     title: str = ""
     library_count: int = 0
     category: str | None = None
+    work_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +159,7 @@ class TagGraphComponent:
             "title": self.title,
             "library_count": self.library_count,
             "category": self.category,
+            "work_count": self.work_count,
         }
 
 
@@ -151,12 +175,14 @@ class TagGraph:
     metatag_edges: int
     work_count: int = 0
     work_edges: int = 0
+    hubs: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
             "components": [item.to_dict() for item in self.components],
+            "hubs": list(self.hubs),
             "seed_count": self.seed_count,
             "cached_seed": self.cached_seed,
             "missing_seed": self.missing_seed,
@@ -451,6 +477,7 @@ def _assign_components(
                 if len(sample) >= 4:
                     break
         library_count = sum(1 for node in members if node.in_seed)
+        work_count = sum(1 for node in members if node.kind == "work")
         components.append(
             TagGraphComponent(
                 id=index,
@@ -461,11 +488,458 @@ def _assign_components(
                 title=hub.name,
                 library_count=library_count,
                 category=hub.category,
+                work_count=work_count,
             )
         )
         for node in members:
             node.component = index
     return components
+
+
+_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+
+
+def _stable_angle(text: str) -> float:
+    h = 2166136261
+    for char in text:
+        h = ((h ^ ord(char)) * 16777619) & 0xFFFFFFFF
+    return (h / 0xFFFFFFFF) * math.pi * 2
+
+
+def _sunflower(count: int, spacing: float) -> list[tuple[float, float]]:
+    if count <= 0:
+        return []
+    if count == 1:
+        return [(0.0, 0.0)]
+    return [
+        (
+            spacing * math.sqrt(index + 0.5) * math.cos(index * _GOLDEN_ANGLE),
+            spacing * math.sqrt(index + 0.5) * math.sin(index * _GOLDEN_ANGLE),
+        )
+        for index in range(count)
+    ]
+
+
+def _node_radius(node: TagGraphNode) -> float:
+    depth = math.log(1 + max(node.degree, 0))
+    if node.kind == "work":
+        return 10.0 + depth * 0.7
+    return 3.8 + depth * 0.5
+
+
+def graph_hubs(
+    nodes: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+    *,
+    limit: int = 16,
+) -> list[dict[str, Any]]:
+    """Tags that appear on two or more works — the useful overlap."""
+    works_per_tag: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        if edge.kind == "work":
+            works_per_tag[edge.target] += 1
+    hubs: list[dict[str, Any]] = []
+    for node in nodes:
+        if node.kind == "work":
+            continue
+        count = works_per_tag.get(node.id, 0)
+        if count < 2:
+            continue
+        hubs.append(
+            {
+                "id": node.id,
+                "name": node.name,
+                "works": count,
+                "category": node.category,
+            }
+        )
+    hubs.sort(key=lambda item: (-int(item["works"]), str(item["name"]).casefold()))
+    return hubs[:limit]
+
+
+def _work_tag_index(
+    edges: Sequence[TagGraphEdge],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    tag_works: dict[str, list[str]] = defaultdict(list)
+    work_tags: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        if edge.kind != "work":
+            continue
+        work_tags[edge.source].append(edge.target)
+        tag_works[edge.target].append(edge.source)
+    return tag_works, work_tags
+
+
+def fandom_stem(name: str) -> str:
+    """Franchise key: 'Doctor Who (2005)' and 'Doctor Who & Related Fandoms' → doctor who."""
+    text = name.strip().casefold()
+    if text.endswith(_RELATED_FANDOMS_SUFFIX):
+        text = text[: -len(_RELATED_FANDOMS_SUFFIX)].rstrip()
+    cut = len(text)
+    for sep in (" (", " - "):
+        idx = text.find(sep)
+        if 0 < idx < cut:
+            cut = idx
+    return text[:cut].strip()
+
+
+def fandom_families(
+    nodes: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+) -> dict[str, str]:
+    """Map each fandom node id to a franchise root (metatags + name stems)."""
+    fandoms = [
+        node
+        for node in nodes
+        if node.kind != "work" and node.category == "Fandom"
+    ]
+    parent: dict[str, str] = {node.id: node.id for node in fandoms}
+
+    def find(item: str) -> str:
+        parent.setdefault(item, item)
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left: str, right: str) -> None:
+        a, b = find(left), find(right)
+        if a != b:
+            parent[b] = a
+
+    by_stem: dict[str, list[str]] = defaultdict(list)
+    for node in fandoms:
+        stem = fandom_stem(node.name)
+        if stem:
+            by_stem[stem].append(node.id)
+    for group in by_stem.values():
+        root = group[0]
+        for other in group[1:]:
+            union(root, other)
+    by_id = {node.id: node for node in nodes}
+    for edge in edges:
+        if edge.kind != "metatag":
+            continue
+        src, dst = by_id.get(edge.source), by_id.get(edge.target)
+        if src is None or dst is None:
+            continue
+        if src.category != "Fandom" or dst.category != "Fandom":
+            continue
+        union(src.id, dst.id)
+    return {node.id: find(node.id) for node in fandoms}
+
+
+def _fandom_family_count(
+    fandom_ids: Sequence[str],
+    by_id: dict[str, TagGraphNode],
+    families: dict[str, str] | None,
+) -> int:
+    roots: set[str] = set()
+    for tag_id in fandom_ids:
+        if families:
+            roots.add(families.get(tag_id, tag_id))
+            continue
+        node = by_id.get(tag_id)
+        roots.add(fandom_stem(node.name if node is not None else tag_id) or tag_id)
+    return len(roots)
+
+
+def _family_cluster_name(
+    fandom_ids: Sequence[str],
+    families: dict[str, str],
+    tag_works: dict[str, list[str]],
+    by_id: dict[str, TagGraphNode],
+) -> str:
+    """Public name for one franchise: most works, then shortest tag."""
+    root = families.get(fandom_ids[0], fandom_ids[0]) if families else fandom_ids[0]
+    pool = [
+        fid for fid in fandom_ids if (families.get(fid, fid) if families else fid) == root
+    ] or list(fandom_ids)
+    return max(
+        pool,
+        key=lambda name: (
+            len(tag_works.get(name, ())),
+            -len((by_id[name].name if by_id.get(name) is not None else name)),
+            name.casefold(),
+        ),
+    )
+
+
+def _cluster_key(
+    work_id: str,
+    work_tags: dict[str, list[str]],
+    tag_works: dict[str, list[str]],
+    by_id: dict[str, TagGraphNode],
+    *,
+    mode: str = "fandom",
+    families: dict[str, str] | None = None,
+) -> str:
+    names = work_tags.get(work_id) or []
+    fandoms = [
+        name
+        for name in names
+        if by_id.get(name) is not None and by_id[name].category == "Fandom"
+    ]
+    ships = [
+        name
+        for name in names
+        if by_id.get(name) is not None and by_id[name].category == "Relationship"
+    ]
+    if mode == "one":
+        return "_all"
+    if mode == "crossover":
+        if _fandom_family_count(fandoms, by_id, families) >= 2:
+            return "_crossover"
+        if fandoms:
+            return _family_cluster_name(fandoms, families or {}, tag_works, by_id)
+    if mode == "ship":
+        pool = ships or fandoms or names
+    elif mode in {"fandom", "crossover"}:
+        pool = fandoms or names
+    elif mode == "fandom-large":
+        pool = fandoms or names
+    else:
+        pool = fandoms or names
+    if not pool:
+        return "_other"
+    if mode == "fandom-large":
+        return max(
+            pool,
+            key=lambda name: (len(tag_works.get(name, ())), name.casefold()),
+        )
+    return min(
+        pool, key=lambda name: (len(tag_works.get(name, ())), name.casefold())
+    )
+
+
+def work_cluster_key(
+    work_id: str,
+    nodes: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+    *,
+    mode: str = "fandom",
+) -> str:
+    """Which layout group a work belongs to (fandom, crossovers, ship, …)."""
+    by_id = {node.id: node for node in nodes}
+    tag_works, work_tags = _work_tag_index(edges)
+    families = fandom_families(nodes, edges) if mode == "crossover" else None
+    return _cluster_key(
+        work_id, work_tags, tag_works, by_id, mode=mode, families=families
+    )
+
+
+def _layout_cluster(
+    works: Sequence[TagGraphNode],
+    local_tags: Sequence[TagGraphNode],
+    tag_works: dict[str, list[str]],
+) -> float:
+    """Pack one fandom around the origin. Shared tags sit between its works."""
+    work_at = {}
+    for work, (x, y) in zip(works, _sunflower(len(works), 38.0)):
+        work.x, work.y = x, y
+        work_at[work.id] = work
+    exclusive: dict[str, list[TagGraphNode]] = defaultdict(list)
+    for tag in local_tags:
+        hosts = [wid for wid in tag_works.get(tag.id, ()) if wid in work_at]
+        if len(hosts) >= 2:
+            tag.x = sum(work_at[wid].x for wid in hosts) / len(hosts)
+            tag.y = sum(work_at[wid].y for wid in hosts) / len(hosts)
+        elif len(hosts) == 1:
+            exclusive[hosts[0]].append(tag)
+        else:
+            tag.x, tag.y = 0.0, 0.0
+    for work_id, group in exclusive.items():
+        host = work_at[work_id]
+        for tag, (x, y) in zip(group, _sunflower(len(group), 12.0)):
+            dist = math.hypot(x, y)
+            if dist < 1e-6:
+                tag.x = host.x + 22.0
+                tag.y = host.y
+            else:
+                scale = (dist + 20.0) / dist
+                tag.x = host.x + x * scale
+                tag.y = host.y + y * scale
+    radius = 40.0
+    for node in list(works) + list(local_tags):
+        radius = max(radius, math.hypot(node.x, node.y) + _node_radius(node) + 12.0)
+    return radius
+
+
+def _place_relative(
+    leftover: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+    by_id: dict[str, TagGraphNode],
+) -> None:
+    if not leftover:
+        return
+    leftover_ids = {node.id for node in leftover}
+    adj: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        adj[edge.source].append(edge.target)
+        adj[edge.target].append(edge.source)
+    for _round in range(5):
+        for node in leftover:
+            nbrs = [
+                by_id[other]
+                for other in adj.get(node.id, ())
+                if other in by_id and other not in leftover_ids
+            ]
+            if not nbrs and _round > 0:
+                nbrs = [by_id[other] for other in adj.get(node.id, ()) if other in by_id]
+            if not nbrs:
+                continue
+            node.x = sum(item.x for item in nbrs) / len(nbrs)
+            node.y = sum(item.y for item in nbrs) / len(nbrs)
+            node.x += 10.0 * math.cos(_stable_angle(node.id))
+            node.y += 10.0 * math.sin(_stable_angle(node.id))
+
+
+def _layout_by_component(
+    nodes: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+) -> None:
+    groups: dict[int, list[TagGraphNode]] = defaultdict(list)
+    for node in nodes:
+        groups[node.component].append(node)
+    placed: list[tuple[float, float, float]] = []
+    for cid in sorted(groups, key=lambda key: (-len(groups[key]), key)):
+        members = groups[cid]
+        for node, (x, y) in zip(members, _sunflower(len(members), 22.0)):
+            node.x, node.y = x, y
+        radius = 16.0 + max(
+            (math.hypot(node.x, node.y) + _node_radius(node) for node in members),
+            default=20.0,
+        )
+        cx = cy = 0.0
+        if placed:
+            for step in range(1, 4000):
+                dist = math.sqrt(step) * 48.0
+                ang = step * _GOLDEN_ANGLE
+                cand_x = dist * math.cos(ang)
+                cand_y = dist * math.sin(ang)
+                if all(
+                    math.hypot(cand_x - px, cand_y - py) >= radius + pr + 36.0
+                    for px, py, pr in placed
+                ):
+                    cx, cy = cand_x, cand_y
+                    break
+        for node in members:
+            node.x += cx
+            node.y += cy
+        placed.append((cx, cy, radius))
+
+
+def _nudge_apart(nodes: Sequence[TagGraphNode], *, rounds: int = 3, gap: float = 8.0) -> None:
+    items = list(nodes)
+    radii = {node.id: _node_radius(node) for node in items}
+    cell = 28.0
+    for _round in range(rounds):
+        bins: dict[tuple[int, int], list[TagGraphNode]] = defaultdict(list)
+        for node in items:
+            bins[(int(node.x // cell), int(node.y // cell))].append(node)
+        for node in items:
+            cx, cy = int(node.x // cell), int(node.y // cell)
+            for ix in (cx - 1, cx, cx + 1):
+                for iy in (cy - 1, cy, cy + 1):
+                    for other in bins.get((ix, iy), ()):
+                        if other is node:
+                            continue
+                        dx = node.x - other.x
+                        dy = node.y - other.y
+                        dist = math.hypot(dx, dy) or 0.01
+                        need = radii[node.id] + radii[other.id] + gap
+                        if dist >= need:
+                            continue
+                        push = min((need - dist) * 0.5, 10.0)
+                        node.x += dx / dist * push
+                        node.y += dy / dist * push
+
+
+def layout_tag_graph(
+    nodes: Sequence[TagGraphNode],
+    edges: Sequence[TagGraphEdge],
+) -> None:
+    """Stable geometric layout. No physics.
+
+    Works pack by fandom. Tags shared across fandoms sit in the middle so
+    you can see what actually connects the library.
+    """
+    if not nodes:
+        return
+    by_id = {node.id: node for node in nodes}
+    for node in nodes:
+        node.x = 0.0
+        node.y = 0.0
+        node.cluster = ""
+    works = [node for node in nodes if node.kind == "work"]
+    tags = [node for node in nodes if node.kind != "work"]
+    if not works:
+        _layout_by_component(nodes, edges)
+        _nudge_apart(nodes)
+        for node in nodes:
+            node.x = round(node.x, 1)
+            node.y = round(node.y, 1)
+        return
+
+    tag_works, work_tags = _work_tag_index(edges)
+    clusters: dict[str, list[TagGraphNode]] = defaultdict(list)
+    for work in works:
+        key = _cluster_key(work.id, work_tags, tag_works, by_id)
+        work.cluster = key
+        clusters[key].append(work)
+
+    tag_cluster_names: dict[str, set[str]] = defaultdict(set)
+    for tag in tags:
+        for work_id in tag_works.get(tag.id, ()):
+            work = by_id.get(work_id)
+            if work is not None and work.cluster:
+                tag_cluster_names[tag.id].add(work.cluster)
+
+    local_by_cluster: dict[str, list[TagGraphNode]] = defaultdict(list)
+    global_tags: list[TagGraphNode] = []
+    leftover: list[TagGraphNode] = []
+    for tag in tags:
+        names = tag_cluster_names.get(tag.id) or set()
+        if len(names) >= 2:
+            global_tags.append(tag)
+            tag.cluster = ""
+        elif len(names) == 1:
+            key = next(iter(names))
+            tag.cluster = key
+            local_by_cluster[key].append(tag)
+        else:
+            leftover.append(tag)
+
+    ordered_keys = sorted(
+        clusters, key=lambda key: (-len(clusters[key]), key.casefold())
+    )
+    packed: list[tuple[str, float]] = []
+    for key in ordered_keys:
+        packed.append(
+            (key, _layout_cluster(clusters[key], local_by_cluster[key], tag_works))
+        )
+
+    global_r = 0.0
+    for tag, (x, y) in zip(global_tags, _sunflower(len(global_tags), 18.0)):
+        tag.x, tag.y = x, y
+        global_r = max(global_r, math.hypot(x, y) + _node_radius(tag))
+
+    n_c = len(packed)
+    if n_c > 1:
+        max_cr = max(radius for _key, radius in packed)
+        ring = global_r + max_cr + 70.0
+        for index, (key, _radius) in enumerate(packed):
+            ang = (2 * math.pi * index / n_c) - math.pi / 2
+            cx, cy = ring * math.cos(ang), ring * math.sin(ang)
+            for node in clusters[key] + local_by_cluster[key]:
+                node.x += cx
+                node.y += cy
+
+    _place_relative(leftover, edges, by_id)
+    _nudge_apart(nodes)
+    for node in nodes:
+        node.x = round(node.x, 1)
+        node.y = round(node.y, 1)
 
 
 def build_tag_graph(
@@ -618,6 +1092,7 @@ def build_tag_graph(
         key=lambda node: (not node.in_seed, node.name.casefold()),
     )
     components = _assign_components(ordered_nodes, edges)
+    layout_tag_graph(ordered_nodes, edges)
     synonym_count = sum(1 for edge in edges if edge.kind == "synonym")
     metatag_count = sum(1 for edge in edges if edge.kind == "metatag")
     work_edge_count = sum(1 for edge in edges if edge.kind == "work")
@@ -632,11 +1107,75 @@ def build_tag_graph(
         metatag_edges=metatag_count,
         work_count=len(work_list),
         work_edges=work_edge_count,
+        hubs=graph_hubs(ordered_nodes, edges),
     )
 
 
 def graph_payload(graph: TagGraph) -> dict[str, Any]:
     return graph.to_dict()
+
+
+def empty_graph_payload() -> dict[str, Any]:
+    return {
+        "nodes": [],
+        "edges": [],
+        "components": [],
+        "hubs": [],
+        "seed_count": 0,
+        "cached_seed": 0,
+        "missing_seed": 0,
+        "synonym_edges": 0,
+        "metatag_edges": 0,
+        "work_count": 0,
+        "work_edges": 0,
+    }
+
+
+def load_tag_graph(
+    *,
+    jsonl_paths: Sequence[Path | str] = (),
+    names_files: Sequence[Path | str] = (),
+    tags: Sequence[str] = (),
+    cache_path: Path,
+    ttl_days: float,
+    synonyms: SynonymMode = "seed",
+    include_metatags: bool = True,
+) -> TagGraph:
+    """Build a graph from JSONL / names / the tag cache. Does not fetch AO3."""
+    jsonl = [Path(path) for path in jsonl_paths]
+    names = [Path(path) for path in names_files]
+    seed = collect_warm_names(
+        jsonl_paths=jsonl,
+        names_files=names,
+        names=list(tags),
+    )
+    records: list[dict[str, Any]] = []
+    for path in jsonl:
+        if path.is_file():
+            records.extend(load_jsonl_records(path))
+    works = works_from_records(records)
+    if not works and not seed:
+        return TagGraph(
+            nodes=[],
+            edges=[],
+            components=[],
+            seed_count=0,
+            cached_seed=0,
+            missing_seed=0,
+            synonym_edges=0,
+            metatag_edges=0,
+        )
+    cache = TagCache.load(cache_path, ttl_days=ttl_days)
+    try:
+        return build_tag_graph(
+            cache,
+            seed or None,
+            include_metatags=include_metatags,
+            synonyms=synonyms,
+            works=works,
+        )
+    finally:
+        cache.close()
 
 
 def render_dot(graph: TagGraph) -> str:
@@ -674,10 +1213,19 @@ def _json_for_script(payload: dict[str, Any]) -> str:
     return raw.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
+def render_viewer_html(
+    *,
+    payload: dict[str, Any] | None = None,
+    data_url: str | None = None,
+) -> str:
+    """Viewer HTML. Inline ``payload`` for a standalone file, or ``data_url`` to fetch JSON."""
+    data = _json_for_script(payload) if payload is not None else "null"
+    url = json.dumps(data_url) if data_url else "null"
+    return _HTML_TEMPLATE.replace("%%DATA%%", data).replace("%%DATA_URL%%", url)
+
+
 def render_html(graph: TagGraph) -> str:
-    payload = graph_payload(graph)
-    data = _json_for_script(payload)
-    return _HTML_TEMPLATE.replace("%%DATA%%", data)
+    return render_viewer_html(payload=graph_payload(graph))
 
 
 def write_graph(
@@ -730,11 +1278,18 @@ def format_graph_summary(graph: TagGraph, path: Path | None) -> str:
     lines.append(
         f"{linked} nodes have a link; {graph.work_edges} work–tag edges"
     )
+    if graph.hubs:
+        names = ", ".join(str(hub["name"]) for hub in graph.hubs[:4])
+        lines.append(f"{len(graph.hubs)} bridge tags (on 2+ works): {names}")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "serve":
+        return serve_main(argv[1:])
+    if argv and argv[0] == "reload":
+        return reload_main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="ao3kit tags graph",
         description=(
@@ -823,26 +1378,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    seed = collect_warm_names(
+    graph = load_tag_graph(
         jsonl_paths=[Path(p) for p in args.jsonl],
         names_files=[Path(p) for p in args.names_file],
-        names=list(args.tags),
+        tags=list(args.tags),
+        cache_path=cache_path,
+        ttl_days=ttl,
+        synonyms=args.synonyms,
+        include_metatags=not args.no_metatags,
     )
-    records: list[dict[str, Any]] = []
-    for path in args.jsonl:
-        records.extend(load_jsonl_records(Path(path)))
-    works = works_from_records(records)
-    cache = TagCache.load(cache_path, ttl_days=ttl)
-    try:
-        graph = build_tag_graph(
-            cache,
-            seed or None,
-            include_metatags=not args.no_metatags,
-            synonyms=args.synonyms,
-            works=works,
-        )
-    finally:
-        cache.close()
 
     out_path = Path(args.output) if args.output else None
     fmt = infer_format(out_path, args.format)
@@ -863,6 +1407,518 @@ def main(argv: list[str] | None = None) -> int:
         if fmt != "html":
             print("warning: --open is meant for HTML output", file=sys.stderr)
         webbrowser.open(target.resolve().as_uri())
+    return 0
+
+
+def graph_sources_fingerprint(
+    jsonl_paths: Sequence[Path],
+    cache_path: Path,
+) -> tuple[tuple[str, int, int], ...]:
+    parts: list[tuple[str, int, int]] = []
+    for path in jsonl_paths:
+        if path.is_file():
+            stat = path.stat()
+            parts.append((str(path), int(stat.st_mtime_ns), int(stat.st_size)))
+        else:
+            parts.append((str(path), 0, 0))
+    if cache_path.is_file():
+        stat = cache_path.stat()
+        parts.append((str(cache_path), int(stat.st_mtime_ns), int(stat.st_size)))
+    else:
+        parts.append((str(cache_path), 0, 0))
+    return tuple(parts)
+
+
+def read_serve_stamp(path: Path | None = None) -> dict[str, Any] | None:
+    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    if not stamp_path.is_file():
+        return None
+    try:
+        data = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    pid = data.get("pid")
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return None
+        except PermissionError:
+            pass
+        except OSError:
+            return None
+    return data
+
+
+def write_serve_stamp(
+    *,
+    port: int,
+    jsonl_paths: Sequence[Path],
+    path: Path | None = None,
+) -> Path:
+    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": os.getpid(),
+        "port": port,
+        "url": f"http://127.0.0.1:{port}/",
+        "jsonl": [str(item) for item in jsonl_paths],
+    }
+    stamp_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return stamp_path
+
+
+def clear_serve_stamp(path: Path | None = None) -> None:
+    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    try:
+        data = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if data.get("pid") not in (None, os.getpid()):
+        return
+    try:
+        stamp_path.unlink()
+    except OSError:
+        pass
+
+
+def parse_similar_work_ids(
+    *,
+    query: str = "",
+    body: dict[str, Any] | None = None,
+) -> list[str]:
+    """Work ids from ``/similar?work_id=`` or a POST body."""
+    from urllib.parse import parse_qs
+
+    ids: list[str] = []
+    qs = parse_qs(query, keep_blank_values=False)
+    for key in ("work_id", "work_ids"):
+        for raw in qs.get(key, []):
+            ids.extend(
+                part.strip() for part in str(raw).split(",") if part.strip()
+            )
+    if body:
+        raw_ids = body.get("work_ids")
+        if raw_ids is None:
+            raw_ids = body.get("work_id")
+        if isinstance(raw_ids, (str, int)):
+            raw_ids = [raw_ids]
+        for item in raw_ids or []:
+            text = str(item).strip()
+            if text:
+                ids.append(text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in ids:
+        if item.startswith("work:"):
+            item = item[5:]
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def parse_similar_tag(
+    *,
+    query: str = "",
+    body: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Tag name and AO3 category from ``/similar?tag=`` or a POST body."""
+    from urllib.parse import parse_qs
+
+    name = ""
+    category = ""
+    qs = parse_qs(query, keep_blank_values=False)
+    if qs.get("tag"):
+        name = str(qs["tag"][0]).strip()
+    if qs.get("category"):
+        category = str(qs["category"][0]).strip()
+    if body:
+        if not name:
+            name = str(body.get("tag") or "").strip()
+        if not category:
+            category = str(body.get("category") or "").strip()
+    return name, category
+
+
+def handle_similar_http(
+    *,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    jsonl_paths: Sequence[Path | str],
+    inbox: Path | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """GET preview or POST queue for Find similar. Reloaded on each request."""
+    from ao3kit.tags.graph_bridge import (
+        facet_bucket_for,
+        queue_similar_command,
+        record_for_tag,
+        records_for_tag_name,
+        records_for_work_ids,
+        select_for_tag,
+        similar_preview,
+        similar_scrape_options,
+        similar_search_is_usable,
+    )
+
+    query = path.split("?", 1)[1] if "?" in path else ""
+    work_ids = parse_similar_work_ids(query=query, body=body)
+    tag, category = parse_similar_tag(query=query, body=body)
+    seed: dict[str, Any]
+    titles: list[str] | None = None
+    selected = None
+    if work_ids:
+        records = records_for_work_ids(jsonl_paths, work_ids)
+        if not records:
+            return 404, {"ok": False, "error": "work not in graph dump"}
+        seed = {"kind": "work", "work_ids": work_ids}
+    elif tag:
+        neighbors = records_for_tag_name(jsonl_paths, tag)
+        seed_record = record_for_tag(tag, category)
+        records = ([seed_record] if seed_record else []) + neighbors
+        selected = select_for_tag(tag, category)
+        seed = {
+            "kind": "tag",
+            "name": tag,
+            "category": category,
+            "bucket": facet_bucket_for(tag, category),
+        }
+        titles = [tag]
+    else:
+        return 400, {"ok": False, "error": "work_id or tag is required"}
+    if method.upper() == "GET":
+        payload = similar_preview(records, selected=selected)
+        payload["ok"] = True
+        payload["seed"] = seed
+        if seed.get("kind") == "tag":
+            payload["hint"] = (
+                "Search AO3 for this tag. Check a fandom or ship only "
+                "if you want AO3 to AND them."
+            )
+        return 200, payload
+
+    data = body or {}
+    select = data.get("select")
+    if select is not None and not isinstance(select, dict):
+        return 400, {"ok": False, "error": "select must be an object"}
+    if select is None and selected is not None:
+        select = selected.to_dict()
+    scrape_kwargs = {
+        "include": data.get("include"),
+        "select": select,
+        "max_results": str(data.get("max_results") or "25"),
+        "sort_column": str(data.get("sort_column") or "kudos_count"),
+        "complete": data.get("complete"),
+        "language_id": str(data.get("language_id") or "en"),
+        "min_score": str(data.get("min_score") or ""),
+        "min_kudos": str(data.get("min_kudos") or ""),
+        "min_words": str(data.get("min_words") or ""),
+        "complete_only": bool(data.get("complete_only")),
+    }
+    if not similar_search_is_usable(similar_scrape_options(records, **scrape_kwargs)):
+        return 400, {
+            "ok": False,
+            "error": (
+                "Add a fandom, author, tag, or query so AO3 has something to search."
+            ),
+        }
+    queued = queue_similar_command(
+        work_ids=work_ids,
+        records=records,
+        inbox=inbox,
+        tag=tag or None,
+        titles=titles,
+        **scrape_kwargs,
+    )
+    return 200, {
+        "ok": True,
+        "queued": True,
+        "id": queued.get("id"),
+        "titles": queued.get("titles") or [],
+        "fandoms": queued.get("fandoms") or [],
+        "select": queued.get("select"),
+        "tag": queued.get("tag"),
+        "message": (
+            "Queued for Calibre. Keep the plugin open — "
+            "the graph updates as works are imported."
+        ),
+    }
+
+
+def notify_running_server(
+    *,
+    stamp_path: Path | None = None,
+    timeout: float = 60.0,
+) -> str | None:
+    """Ask a running ``tags graph serve`` to rebuild. Returns the viewer URL."""
+    stamp = read_serve_stamp(stamp_path)
+    if not stamp:
+        return None
+    url = str(stamp.get("url") or "").rstrip("/")
+    if not url:
+        return None
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url + "/rebuild", data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            response.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    return url + "/"
+
+
+def reload_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="ao3kit tags graph reload")
+    parser.add_argument("--stamp", type=Path, default=DEFAULT_GRAPH_SERVE_STAMP)
+    parser.add_argument("--timeout", type=float, default=60.0)
+    args = parser.parse_args(list(argv or []))
+    url = notify_running_server(stamp_path=args.stamp, timeout=args.timeout)
+    if not url:
+        print("No tag graph server is running.", file=sys.stderr)
+        print("Start one: python -m ao3kit tags graph serve", file=sys.stderr)
+        return 2
+    print(json.dumps({"ok": True, "url": url}))
+    return 0
+
+
+def serve_main(argv: list[str] | None = None) -> int:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    parser = argparse.ArgumentParser(
+        prog="ao3kit tags graph serve",
+        description=(
+            "Serve the tag graph viewer over HTTP. Refresh the page after "
+            "editing the viewer; Reload data after Calibre dumps JSONL."
+        ),
+    )
+    parser.add_argument(
+        "--jsonl",
+        action="append",
+        default=[],
+        help=f"Work JSONL (default: {DEFAULT_GRAPH_JSONL})",
+    )
+    parser.add_argument("--names-file", action="append", default=[])
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("AO3KIT_GRAPH_PORT") or DEFAULT_GRAPH_PORT),
+    )
+    parser.add_argument("--cache", type=Path, default=DEFAULT_TAG_CACHE_PATH)
+    parser.add_argument("--cache-ttl-days", type=float, default=None)
+    parser.add_argument("--synonyms", choices=("seed", "all", "none"), default="seed")
+    parser.add_argument("--no-metatags", action="store_true")
+    parser.add_argument(
+        "--stamp",
+        type=Path,
+        default=DEFAULT_GRAPH_SERVE_STAMP,
+        help="PID/URL stamp so Calibre Tag graph can refresh this viewer",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        default=True,
+        help="Open the viewer in a browser (default)",
+    )
+    parser.add_argument(
+        "--no-open",
+        action="store_false",
+        dest="open",
+        help="Do not open a browser",
+    )
+    args = parser.parse_args(list(argv or []))
+
+    from ao3kit.config import load_user_config
+
+    user_cfg = load_user_config(ensure=True)
+    ttl = (
+        float(args.cache_ttl_days)
+        if args.cache_ttl_days is not None
+        else float(user_cfg.settings.tag_cache_ttl_days)
+    )
+    jsonl_paths = [Path(item) for item in args.jsonl] or [DEFAULT_GRAPH_JSONL]
+    names_files = [Path(item) for item in args.names_file]
+    cache_path = Path(args.cache)
+    existing = read_serve_stamp(args.stamp)
+    if existing:
+        url = str(existing.get("url") or "")
+        print(
+            f"Already serving at {url} (pid {existing.get('pid')})",
+            file=sys.stderr,
+        )
+        if args.open and url:
+            webbrowser.open(url)
+        return 0
+
+    state: dict[str, Any] = {"payload": None, "fingerprint": None}
+    lock = threading.Lock()
+
+    def fingerprint() -> tuple[tuple[str, int, int], ...]:
+        return graph_sources_fingerprint(jsonl_paths, cache_path)
+
+    def build_payload(*, force: bool = False) -> dict[str, Any]:
+        with lock:
+            mark = fingerprint()
+            if not force and state["payload"] is not None and state["fingerprint"] == mark:
+                return state["payload"]
+            if not cache_path.is_file():
+                payload = empty_graph_payload()
+            else:
+                import importlib
+
+                import ao3kit.tags.graph as live
+
+                live = importlib.reload(live)
+                graph = live.load_tag_graph(
+                    jsonl_paths=jsonl_paths,
+                    names_files=names_files,
+                    cache_path=cache_path,
+                    ttl_days=ttl,
+                    synonyms=args.synonyms,
+                    include_metatags=not args.no_metatags,
+                )
+                payload = live.graph_payload(graph)
+            state["payload"] = payload
+            state["fingerprint"] = mark
+            DEFAULT_GRAPH_JSON.parent.mkdir(parents=True, exist_ok=True)
+            DEFAULT_GRAPH_JSON.write_text(
+                json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+            return payload
+
+    def live_graph_mod():
+        import importlib
+        import ao3kit.tags.graph_bridge as bridge
+        import ao3kit.tags.graph as live
+
+        importlib.reload(bridge)
+        return importlib.reload(live)
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *log_args: object) -> None:
+            sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % log_args))
+
+        def _send(self, code: int, body: bytes, content_type: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path in {"/", "/index.html"}:
+                import importlib
+
+                with lock:
+                    import ao3kit.tags.graph as live
+
+                    live = importlib.reload(live)
+                    html = live.render_viewer_html(data_url="/graph.json")
+                self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+                return
+            if path == "/graph.json":
+                payload = build_payload()
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/status":
+                payload = build_payload()
+                from ao3kit.tags.graph_bridge import pending_inbox_count
+
+                status = {
+                    "url": f"http://127.0.0.1:{args.port}/",
+                    "jsonl": [str(item) for item in jsonl_paths],
+                    "works": payload.get("work_count", 0),
+                    "nodes": len(payload.get("nodes") or []),
+                    "pending_commands": pending_inbox_count(),
+                    "live": True,
+                }
+                body = json.dumps(status).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/similar":
+                live = live_graph_mod()
+                code, payload = live.handle_similar_http(
+                    method="GET",
+                    path=self.path,
+                    body=None,
+                    jsonl_paths=jsonl_paths,
+                )
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._send(code, body, "application/json; charset=utf-8")
+                return
+            self._send(404, b'{"error":"not found"}\n', "application/json")
+
+        def _read_json_body(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                data = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+
+        def do_POST(self) -> None:  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path == "/similar":
+                body = self._read_json_body()
+                live = live_graph_mod()
+                code, payload = live.handle_similar_http(
+                    method="POST",
+                    path=self.path,
+                    body=body,
+                    jsonl_paths=jsonl_paths,
+                )
+                self._send(
+                    code,
+                    json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    "application/json; charset=utf-8",
+                )
+                return
+            if path != "/rebuild":
+                self._send(404, b'{"error":"not found"}\n', "application/json")
+                return
+            payload = build_payload(force=True)
+            body = json.dumps(
+                {
+                    "ok": True,
+                    "works": payload.get("work_count", 0),
+                    "nodes": len(payload.get("nodes") or []),
+                }
+            ).encode("utf-8")
+            self._send(200, body, "application/json; charset=utf-8")
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    port = httpd.server_address[1]
+    stamp = write_serve_stamp(port=port, jsonl_paths=jsonl_paths, path=args.stamp)
+    atexit.register(clear_serve_stamp, args.stamp)
+    url = f"http://127.0.0.1:{port}/"
+    missing = [str(path) for path in jsonl_paths if not path.is_file()]
+    print(f"Tag graph viewer {url}", file=sys.stderr)
+    print(f"JSONL: {', '.join(str(path) for path in jsonl_paths)}", file=sys.stderr)
+    if missing:
+        print(
+            "No dump yet — in Calibre use Tag graph… to write "
+            f"{DEFAULT_GRAPH_JSONL.name}, then Reload data.",
+            file=sys.stderr,
+        )
+    print("Refresh the page after viewer edits. POST /rebuild after a Calibre dump.", file=sys.stderr)
+    if args.open:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
+    finally:
+        httpd.server_close()
+        clear_serve_stamp(stamp)
     return 0
 
 
@@ -895,25 +1951,38 @@ h1 { font-size: 15px; font-weight: 600; margin: 0; }
 .toolbar {
   flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
   padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
-  position: relative;
+  position: relative; z-index: 8;
 }
 .toolbar input[type="search"], .toolbar select {
   background: var(--bg); color: var(--text); border: 1px solid var(--line);
-  padding: 6px 8px; min-width: 200px;
+  padding: 6px 8px; min-width: 180px;
 }
-.toolbar label { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.toolbar input[type="number"] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  padding: 6px 4px; min-width: 3.2em; width: 3.6em;
+}
+#cluster-mode { min-width: 190px; }
+.toolbar button.tool {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  padding: 6px 10px; cursor: pointer;
+}
+.toolbar button.tool:hover, #detail button.tool:hover { background: var(--card); }
+#detail button.tool {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  padding: 6px 10px; cursor: pointer; margin-top: 4px;
+}
 .legend { display: flex; flex-wrap: wrap; gap: 8px 12px; color: var(--muted); margin-left: auto; }
 .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
   margin-right: 4px; vertical-align: -1px; }
 #suggest {
-  position: absolute; left: 16px; top: 100%; z-index: 5; width: 360px; max-height: 280px;
+  position: absolute; left: 16px; top: 100%; z-index: 9; width: 360px; max-height: 280px;
   overflow: auto; background: var(--panel); border: 1px solid var(--line); display: none;
 }
 #suggest button {
   display: block; width: 100%; text-align: left; background: transparent; border: 0;
   color: var(--text); padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--line);
 }
-#suggest button:hover, #suggest button.active { background: var(--card); }
+#suggest button:hover { background: var(--card); }
 #suggest .sub { color: var(--muted); font-size: 11px; }
 main {
   flex: 1 1 auto; min-height: 0;
@@ -924,7 +1993,7 @@ main {
 canvas { width: 100%; height: 100%; display: block; }
 #hint {
   position: absolute; left: 12px; bottom: 12px; color: var(--muted); font-size: 11px;
-  pointer-events: none;
+  pointer-events: none; max-width: 70%;
 }
 #zoom {
   position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 4px;
@@ -943,7 +2012,6 @@ canvas { width: 100%; height: 100%; display: block; }
 #detail .name { font-size: 15px; font-weight: 600; }
 #detail .meta { color: var(--muted); margin: 4px 0 8px; }
 #detail a { color: var(--accent); text-decoration: none; }
-#detail ul { margin: 4px 0 0; padding-left: 0; list-style: none; }
 .comp {
   display: block; width: 100%; text-align: left; background: transparent;
   border: 0; color: var(--text); padding: 7px 6px; cursor: pointer;
@@ -953,21 +2021,41 @@ canvas { width: 100%; height: 100%; display: block; }
 .comp .k { color: var(--muted); font-size: 11px; }
 #cf { min-width: 0; width: 100%; margin-bottom: 8px;
   background: var(--bg); color: var(--text); border: 1px solid var(--line); padding: 6px 8px; }
-.settings {
-  display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
-  padding: 6px 16px; border-bottom: 1px solid var(--line);
-  background: #1e1e1e; color: var(--muted); font-size: 12px;
+.similar-panel { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.similar-panel h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 600; margin: 10px 0 4px;
 }
-.settings label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.settings input[type="range"] { width: 92px; accent-color: var(--accent); }
-.settings select {
-  background: var(--bg); color: var(--text); border: 1px solid var(--line);
-  padding: 4px 6px;
+.similar-panel h3:first-child { margin-top: 0; }
+.similar-shortcuts { display: flex; gap: 8px; margin: 0 0 8px; }
+.similar-shortcuts button {
+  background: transparent; color: var(--accent); border: 0; padding: 0;
+  cursor: pointer; font-size: 11px;
 }
-.settings button {
-  background: var(--card); color: var(--text); border: 1px solid var(--line);
-  padding: 4px 8px; cursor: pointer; border-radius: 4px;
+.facet-list {
+  max-height: 7.2em; overflow: auto; margin: 0 0 4px;
+  border: 1px solid var(--line); padding: 4px 6px; background: var(--bg);
 }
+.facet-list label {
+  display: flex; gap: 6px; align-items: flex-start; padding: 2px 0; cursor: pointer;
+}
+.facet-list .n { flex: 1; min-width: 0; word-break: break-word; }
+.facet-list .k { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
+.similar-and { color: var(--muted); font-size: 11px; margin: 8px 0; }
+.similar-panel .row {
+  display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px;
+}
+.similar-panel input[type=text],
+.similar-panel input[type=number],
+.similar-panel input[type=search],
+.similar-panel select {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); padding: 5px 6px;
+}
+.similar-panel details { margin: 8px 0; color: var(--muted); }
+.similar-panel details summary { cursor: pointer; }
+.similar-panel .tool { width: 100%; margin-top: 8px; }
+.similar-panel .tool:disabled { opacity: .6; cursor: default; }
 </style>
 </head>
 <body>
@@ -981,12 +2069,21 @@ canvas { width: 100%; height: 100%; display: block; }
   <label><input type="checkbox" id="show-works" checked/> Works</label>
   <label><input type="checkbox" id="show-syn" checked/> Synonyms</label>
   <label><input type="checkbox" id="show-meta" checked/> Metatags</label>
-  <label><input type="checkbox" id="show-physics" checked/> Physics</label>
-  <select id="names-mode" title="When to show node names">
-    <option value="hover">Names: hover</option>
-    <option value="works" selected>Names: works</option>
-    <option value="all">Names: all</option>
-  </select>
+  <label><input type="checkbox" id="bridges-only"/> Bridges only</label>
+  <label title="Hover only names the node under the cursor; click still sets focus"><input type="checkbox" id="pin-mode"/> Pin mode</label>
+  <label>Cluster
+    <select id="cluster-mode" title="How to group works">
+      <option value="fandom" selected>Specific fandom</option>
+      <option value="fandom-large">Largest fandom</option>
+      <option value="crossover">Crossovers (mixed franchises)</option>
+      <option value="ship">Relationship</option>
+      <option value="one">One group</option>
+    </select>
+  </label>
+  <label title="Gently pull the focused neighborhood together (short, capped)"><input type="checkbox" id="settle-on" checked/> Settle focus</label>
+  <label title="How many links away from the focused node to name">Hops <input id="label-hops" type="number" min="0" max="6" value="1"/></label>
+  <label title="0 = off. Name every node with at least this many links">Degree ≥ <input id="label-degree" type="number" min="0" max="999" value="0"/></label>
+  <button type="button" class="tool" id="reload-data" hidden title="Rebuild from the Calibre JSONL dump">Reload data</button>
   <div class="legend">
     <span><i class="swatch" style="background:var(--work)"></i>Work</span>
     <span><i class="swatch" style="background:var(--fandom)"></i>Fandom</span>
@@ -997,18 +2094,10 @@ canvas { width: 100%; height: 100%; display: block; }
   </div>
   <div id="suggest"></div>
 </div>
-<div class="settings" id="phys-settings">
-  <label>Bounce <input id="p-bounce" type="range" min="0" max="100" value="62"/></label>
-  <label>Stiffness <input id="p-stiff" type="range" min="20" max="200" value="90"/></label>
-  <label>Repel <input id="p-charge" type="range" min="20" max="200" value="80"/></label>
-  <label>Cluster <input id="p-spread" type="range" min="40" max="180" value="70"/></label>
-  <label>Settle <input id="p-settle" type="range" min="10" max="200" value="80"/></label>
-  <button type="button" id="p-jiggle">Jiggle</button>
-</div>
 <main>
   <div id="canvas-wrap">
     <canvas id="g"></canvas>
-    <div id="hint">Scroll to zoom · ⤢ fits everything · drag a node · Cluster keeps the blob round</div>
+    <div id="hint">Click a tag for its works and shared ships. Click empty space or Esc to clear. Hover names a node without moving focus.</div>
     <div id="zoom">
       <button type="button" id="z-in" title="Zoom in">+</button>
       <button type="button" id="z-out" title="Zoom out">−</button>
@@ -1017,24 +2106,39 @@ canvas { width: 100%; height: 100%; display: block; }
   </div>
   <aside id="sidebar">
     <h2>Selected</h2>
-    <div id="detail">Click a work or tag.</div>
+    <div id="detail">Click a work, tag, bridge, or cluster.</div>
+    <h2>Bridges</h2>
+    <div id="hubs"></div>
+    <h2>Clusters</h2>
+    <div id="clusters"></div>
     <h2 id="list-title">Works</h2>
     <input id="cf" type="search" placeholder="Filter works…"/>
     <div id="comps"></div>
   </aside>
 </main>
 <script>
-const DATA = %%DATA%%;
+const EMBEDDED = %%DATA%%;
+const DATA_URL = %%DATA_URL%%;
+function startGraph(DATA) {
+if (!DATA || !DATA.nodes) DATA = {nodes: [], edges: [], hubs: []};
 const wrap = document.getElementById("canvas-wrap");
 const canvas = document.getElementById("g");
 const ctx = canvas.getContext("2d");
 const catSel = document.getElementById("cat");
 const nodesById = Object.fromEntries(DATA.nodes.map(n => [n.id, n]));
 const adj = {};
+const workCountByTag = {};
+const workTags = {};
+const tagWorks = {};
 for (const n of DATA.nodes) adj[n.id] = [];
 for (const e of DATA.edges) {
   (adj[e.source] || (adj[e.source] = [])).push(e.target);
   (adj[e.target] || (adj[e.target] = [])).push(e.source);
+  if (e.kind === "work") {
+    workCountByTag[e.target] = (workCountByTag[e.target] || 0) + 1;
+    (workTags[e.source] = workTags[e.source] || []).push(e.target);
+    (tagWorks[e.target] = tagWorks[e.target] || []).push(e.source);
+  }
 }
 const cats = [...new Set(DATA.nodes.map(n => n.category).filter(Boolean))].sort();
 for (const c of cats) {
@@ -1043,10 +2147,58 @@ for (const c of cats) {
 const allWorks = DATA.nodes.filter(n => n.kind === "work")
   .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 const tagCount = DATA.nodes.length - allWorks.length;
+const hubIds = new Set((DATA.hubs || []).map(h => h.id));
+
+function fandomStem(name) {
+  let text = String(name || "").trim().toLowerCase();
+  if (text.endsWith(" & related fandoms")) {
+    text = text.slice(0, -" & related fandoms".length).trim();
+  }
+  let cut = text.length;
+  const paren = text.indexOf(" (");
+  const dash = text.indexOf(" - ");
+  if (paren > 0) cut = Math.min(cut, paren);
+  if (dash > 0) cut = Math.min(cut, dash);
+  return text.slice(0, cut).trim();
+}
+function buildFandomFamilies() {
+  const ids = DATA.nodes.filter(n => n.kind !== "work" && n.category === "Fandom").map(n => n.id);
+  const parent = {};
+  function add(id) { if (parent[id] == null) parent[id] = id; }
+  function find(id) {
+    add(id);
+    if (parent[id] !== id) parent[id] = find(parent[id]);
+    return parent[id];
+  }
+  function union(a, b) {
+    a = find(a); b = find(b);
+    if (a !== b) parent[b] = a;
+  }
+  const byStem = {};
+  for (const id of ids) {
+    add(id);
+    const stem = fandomStem((nodesById[id] || {}).name || id);
+    if (!stem) continue;
+    (byStem[stem] = byStem[stem] || []).push(id);
+  }
+  for (const group of Object.values(byStem)) {
+    for (let i = 1; i < group.length; i++) union(group[0], group[i]);
+  }
+  for (const e of DATA.edges) {
+    if (e.kind !== "metatag") continue;
+    const a = nodesById[e.source], b = nodesById[e.target];
+    if (!a || !b || a.category !== "Fandom" || b.category !== "Fandom") continue;
+    union(a.id, b.id);
+  }
+  const out = {};
+  for (const id of ids) out[id] = find(id);
+  return out;
+}
+const fandomFamily = buildFandomFamilies();
 document.getElementById("stats").innerHTML =
   "<span><strong>" + allWorks.length + "</strong> works</span>" +
   "<span><strong>" + tagCount + "</strong> tags</span>" +
-  "<span><strong>" + (DATA.work_edges || 0) + "</strong> work–tag links</span>" +
+  "<span><strong>" + (DATA.hubs || []).length + "</strong> bridges</span>" +
   "<span><strong>" + (DATA.missing_seed || 0) + "</strong> uncached</span>";
 
 function colorFor(n) {
@@ -1059,7 +2211,9 @@ function colorFor(n) {
 }
 function radiusOf(n) {
   const d = Math.log(1 + (n.degree || 0));
-  return n.kind === "work" ? 8 + d * 0.6 : 2.6 + d * 0.45;
+  const bridge = workCountByTag[n.id] || 0;
+  if (n.kind === "work") return 10 + d * 0.7;
+  return (bridge >= 2 ? 5.5 : 3.4) + d * 0.5;
 }
 function kinds() {
   const set = new Set();
@@ -1074,23 +2228,24 @@ let sim = [];
 let simIndex = {};
 let selected = null;
 let hover = null;
+let similarState = { key: null, el: null };
 let view = { x: 0, y: 0, k: 1 };
-let dragging = null;
 let panning = false;
 let lastPtr = null;
 let lastHoverId = null;
-let viewLocked = false;
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 6;
 
 function rebuildVis() {
   const cat = catSel.value;
   const k = kinds();
+  const bridgesOnly = document.getElementById("bridges-only").checked;
   const ids = new Set();
   for (const n of DATA.nodes) {
     if (n.kind === "work") { if (k.has("work")) ids.add(n.id); continue; }
     if (n.status === "synonym" && !k.has("synonym")) continue;
     if (cat && n.category !== cat) continue;
+    if (bridgesOnly && (workCountByTag[n.id] || 0) < 2 && n.category !== "Fandom") continue;
     ids.add(n.id);
   }
   const edges = [];
@@ -1100,336 +2255,262 @@ function rebuildVis() {
   vis = { ids, edges };
 }
 
-function hashAngle(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return ((h >>> 0) % 1000) / 1000 * Math.PI * 2;
-}
-
-let springs = [];
-let alpha = 0;
-let looping = false;
-
-function physicsOn() {
-  return document.getElementById("show-physics").checked;
-}
-
-const SETTING_IDS = ["p-bounce", "p-stiff", "p-charge", "p-spread", "p-settle", "names-mode", "show-physics"];
-function saveSettings() {
-  const s = {};
-  for (const id of SETTING_IDS) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    s[id] = el.type === "checkbox" ? el.checked : el.value;
-  }
-  try { localStorage.setItem("ao3kit-graph-v2", JSON.stringify(s)); } catch (err) {}
-}
-function loadSettings() {
-  try {
-    const s = JSON.parse(localStorage.getItem("ao3kit-graph-v2") || "{}");
-    for (const id of SETTING_IDS) {
-      if (s[id] == null) continue;
-      const el = document.getElementById(id);
-      if (!el) continue;
-      if (el.type === "checkbox") el.checked = !!s[id];
-      else el.value = s[id];
-    }
-  } catch (err) {}
-}
-
 function layoutNodes() {
+  const selId = selected && selected.id;
   sim = [];
   simIndex = {};
-  springs = [];
-  const works = [];
-  const tags = [];
   for (const n of DATA.nodes) {
     if (!vis.ids.has(n.id)) continue;
-    const mass = n.kind === "work"
-      ? 10 + Math.log(1 + (n.degree || 0)) * 1.8
-      : 1.1 + Math.log(1 + (n.degree || 0));
     const node = {
       id: n.id, name: n.name, kind: n.kind, status: n.status, category: n.category,
-      in_seed: n.in_seed, degree: n.degree, url: n.url,
-      x: 0, y: 0, vx: 0, vy: 0, mass: mass,
-      r: radiusOf(n), color: colorFor(n)
+      in_seed: n.in_seed, degree: n.degree, url: n.url, cluster: n.cluster || "",
+      x: n.x || 0, y: n.y || 0,
+      r: radiusOf(n), color: colorFor(n),
+      works: workCountByTag[n.id] || 0
     };
     simIndex[n.id] = sim.length;
     sim.push(node);
-    if (n.kind === "work") works.push(node); else tags.push(node);
   }
-  const nW = Math.max(works.length, 1);
-  const nAll = Math.max(sim.length, 1);
-  const R = 28 + Math.sqrt(nW) * 22;
-  works.forEach((n, i) => {
-    const a = (i / nW) * Math.PI * 2 - Math.PI / 2;
-    const jitter = 8 + Math.sqrt(nW);
-    n.x = Math.cos(a) * R + (Math.random() - 0.5) * jitter;
-    n.y = Math.sin(a) * R + (Math.random() - 0.5) * jitter;
+  selected = selId && simIndex[selId] != null ? sim[simIndex[selId]] : null;
+}
+
+function sunflower(count, spacing) {
+  if (count <= 0) return [];
+  if (count === 1) return [[0, 0]];
+  const g = Math.PI * (3 - Math.sqrt(5));
+  const pts = [];
+  for (let i = 0; i < count; i++) {
+    const r = spacing * Math.sqrt(i + 0.5);
+    const a = i * g;
+    pts.push([r * Math.cos(a), r * Math.sin(a)]);
+  }
+  return pts;
+}
+
+function clusterMode() {
+  return (document.getElementById("cluster-mode") || {}).value || "fandom";
+}
+function settleOn() {
+  return !!(document.getElementById("settle-on") || {}).checked;
+}
+function clusterTitle(key) {
+  if (key === "_crossover") return "Crossovers";
+  if (key === "_all") return "All works";
+  if (key === "_other") return "Other";
+  return key;
+}
+
+function familyClusterName(fandoms) {
+  const root = fandomFamily[fandoms[0]] || fandoms[0];
+  const pool = fandoms.filter(id => (fandomFamily[id] || id) === root);
+  const use = pool.length ? pool : fandoms;
+  const countOf = id => workCountByTag[id] || 0;
+  const lenOf = id => ((nodesById[id] || {}).name || id).length;
+  return use.slice().sort((a, b) =>
+    countOf(b) - countOf(a) || lenOf(a) - lenOf(b) || a.localeCompare(b)
+  )[0];
+}
+
+function jsClusterKey(work) {
+  const mode = clusterMode();
+  const tags = workTags[work.id] || [];
+  const fandoms = tags.filter(id => (nodesById[id] || {}).category === "Fandom");
+  const ships = tags.filter(id => (nodesById[id] || {}).category === "Relationship");
+  if (mode === "one") return "_all";
+  if (mode === "crossover") {
+    const roots = new Set(fandoms.map(id => fandomFamily[id] || id));
+    if (roots.size >= 2) return "_crossover";
+    if (fandoms.length) return familyClusterName(fandoms);
+  }
+  let pool;
+  if (mode === "ship") pool = ships.length ? ships : (fandoms.length ? fandoms : tags);
+  else pool = fandoms.length ? fandoms : tags;
+  if (!pool.length) return "_other";
+  const countOf = id => workCountByTag[id] || 0;
+  if (mode === "fandom-large") {
+    return pool.slice().sort((a, b) => countOf(b) - countOf(a) || a.localeCompare(b))[0];
+  }
+  return pool.slice().sort((a, b) => countOf(a) - countOf(b) || a.localeCompare(b))[0];
+}
+
+function packCluster(works, localTags) {
+  const workAt = {};
+  const pts = sunflower(works.length, 38);
+  works.forEach((work, i) => {
+    work.x = pts[i][0]; work.y = pts[i][1];
+    workAt[work.id] = work;
   });
-  const slot = {};
-  for (const n of tags) {
-    const hosts = [];
-    const links = adj[n.id] || [];
-    for (let i = 0; i < links.length; i++) {
-      const h = sim[simIndex[links[i]]];
-      if (h && h.kind === "work") hosts.push(h);
-    }
-    if (!hosts.length) {
-      const a = hashAngle(n.id);
-      const r = Math.sqrt(nAll) * 10 * Math.random();
-      n.x = Math.cos(a) * r;
-      n.y = Math.sin(a) * r;
-      continue;
-    }
-    if (hosts.length === 1) {
-      const h = hosts[0];
-      const k = (slot[h.id] = (slot[h.id] || 0) + 1) - 1;
-      const perRing = 12;
-      const ring = Math.floor(k / perRing);
-      const iOn = k % perRing;
-      const a = (iOn / perRing) * Math.PI * 2 + ring * 0.28;
-      const rad = h.r + 6 + ring * 7;
-      n.x = h.x + Math.cos(a) * rad;
-      n.y = h.y + Math.sin(a) * rad;
-    } else {
-      let x = 0, y = 0;
-      for (const h of hosts) { x += h.x; y += h.y; }
-      n.x = x / hosts.length;
-      n.y = y / hosts.length;
-    }
+  const exclusive = {};
+  for (const tag of localTags) {
+    const hosts = (tagWorks[tag.id] || []).filter(id => workAt[id]);
+    if (hosts.length >= 2) {
+      tag.x = hosts.reduce((s, id) => s + workAt[id].x, 0) / hosts.length;
+      tag.y = hosts.reduce((s, id) => s + workAt[id].y, 0) / hosts.length;
+    } else if (hosts.length === 1) {
+      (exclusive[hosts[0]] = exclusive[hosts[0]] || []).push(tag);
+    } else { tag.x = 0; tag.y = 0; }
   }
-  for (const e of vis.edges) {
-    const a = sim[simIndex[e.source]], b = sim[simIndex[e.target]];
-    if (!a || !b) continue;
-    const w = e.weight || 1;
-    if (e.kind === "work") {
-      springs.push({
-        a, b, kind: e.kind, weight: w,
-        len: a.r + b.r + 5, str: 1.4 * w, pullOnly: true
-      });
-    } else if (e.kind === "synonym") {
-      springs.push({ a, b, kind: e.kind, weight: w, len: a.r + b.r + 4, str: 1.2 * w, pullOnly: false });
-    } else {
-      springs.push({ a, b, kind: e.kind, weight: w, len: a.r + b.r + 9, str: 0.45 * w, pullOnly: false });
-    }
-  }
-}
-
-function slider(id, fallback) {
-  const el = document.getElementById(id);
-  const v = el ? parseFloat(el.value) : fallback;
-  return Number.isFinite(v) ? v : fallback;
-}
-
-function kick(amount) {
-  if (!physicsOn()) { alpha = 0; return; }
-  alpha = Math.max(alpha, amount);
-  if (!looping) { looping = true; requestAnimationFrame(loop); }
-}
-
-function tick() {
-  const bounce = slider("p-bounce", 62) / 100;
-  const stiff = slider("p-stiff", 90) / 100;
-  const chargeMul = slider("p-charge", 80) / 100;
-  const spread = slider("p-spread", 70) / 100;
-  const friction = 0.78 + bounce * 0.18;
-  const k = dragging ? Math.max(Math.min(alpha, 1), 0.55) : Math.min(alpha, 1);
-  const nCount = Math.max(sim.length, 1);
-  const targetR = (48 + Math.sqrt(nCount) * 13) * (0.36 + spread * 0.7);
-  for (const s of springs) {
-    const a = s.a, b = s.b;
-    let dx = b.x - a.x, dy = b.y - a.y;
-    const dist = Math.hypot(dx, dy) || 0.01;
-    if (s.pullOnly && dist <= s.len) continue;
-    const f = ((dist - s.len) / dist) * s.str * stiff * k;
-    dx *= f; dy *= f;
-    if (a !== dragging) { a.vx += dx / a.mass; a.vy += dy / a.mass; }
-    if (b !== dragging) { b.vx -= dx / b.mass; b.vy -= dy / b.mass; }
-  }
-  const cell = 42;
-  const bins = new Map();
-  for (const n of sim) {
-    const key = (n.x / cell | 0) + ":" + (n.y / cell | 0);
-    let b = bins.get(key);
-    if (!b) { b = []; bins.set(key, b); }
-    b.push(n);
-  }
-  for (const n of sim) {
-    if (n === dragging) continue;
-    const cx = n.x / cell | 0, cy = n.y / cell | 0;
-    for (let ix = cx - 1; ix <= cx + 1; ix++) {
-      for (let iy = cy - 1; iy <= cy + 1; iy++) {
-        const bucket = bins.get(ix + ":" + iy);
-        if (!bucket) continue;
-        for (const o of bucket) {
-          if (o === n) continue;
-          let dx = n.x - o.x, dy = n.y - o.y;
-          let dist2 = dx * dx + dy * dy;
-          if (dist2 === 0) { dx = 0.6; dy = 0.6; dist2 = 0.7; }
-          const towardWork = n.kind === "work" || o.kind === "work";
-          const min = n.r + o.r + (towardWork ? 2 : 5);
-          if (dist2 > min * min * 16) continue;
-          const dist = Math.sqrt(dist2);
-          const charge = (towardWork ? 6 : 16) * chargeMul * k / dist2;
-          const overlap = dist < min ? (min - dist) / dist : 0;
-          const collide = overlap * (0.16 + bounce * 0.22) * k;
-          const push = charge + collide;
-          n.vx += dx * push / n.mass;
-          n.vy += dy * push / n.mass;
-          if (overlap && bounce > 0.35) {
-            const along = (n.vx * dx + n.vy * dy) / dist2;
-            if (along < 0) {
-              n.vx -= dx * along * bounce;
-              n.vy -= dy * along * bounce;
-            }
-          }
-        }
+  for (const workId of Object.keys(exclusive)) {
+    const host = workAt[workId];
+    const group = exclusive[workId];
+    const tpts = sunflower(group.length, 12);
+    group.forEach((tag, i) => {
+      const x = tpts[i][0], y = tpts[i][1];
+      const dist = Math.hypot(x, y);
+      if (dist < 1e-6) { tag.x = host.x + 22; tag.y = host.y; }
+      else {
+        const scale = (dist + 20) / dist;
+        tag.x = host.x + x * scale; tag.y = host.y + y * scale;
       }
-    }
+    });
   }
-  const big = 88;
-  const coarse = new Map();
-  for (const n of sim) {
-    const key = (n.x / big | 0) + ":" + (n.y / big | 0);
-    let c = coarse.get(key);
-    if (!c) { c = { x: 0, y: 0, m: 0 }; coarse.set(key, c); }
-    c.x += n.x * n.mass; c.y += n.y * n.mass; c.m += n.mass;
+  let radius = 40;
+  for (const n of works.concat(localTags)) {
+    radius = Math.max(radius, Math.hypot(n.x, n.y) + n.r + 12);
   }
-  for (const c of coarse.values()) { c.x /= c.m; c.y /= c.m; }
-  const far = 40 * chargeMul * k;
-  for (const n of sim) {
-    if (n === dragging) continue;
-    const cx = n.x / big | 0, cy = n.y / big | 0;
-    for (let ix = cx - 3; ix <= cx + 3; ix++) {
-      for (let iy = cy - 3; iy <= cy + 3; iy++) {
-        if (Math.abs(ix - cx) <= 1 && Math.abs(iy - cy) <= 1) continue;
-        const c = coarse.get(ix + ":" + iy);
-        if (!c) continue;
-        const dx = n.x - c.x, dy = n.y - c.y;
-        const dist2 = dx * dx + dy * dy + 400;
-        const push = far * c.m / dist2 / n.mass;
-        n.vx += dx * push;
-        n.vy += dy * push;
-      }
-    }
-    const dist = Math.hypot(n.x, n.y) || 0.01;
-    n.vx += (-n.x) * 0.028 * k / n.mass;
-    n.vy += (-n.y) * 0.028 * k / n.mass;
-    if (dist > targetR * 0.82) {
-      const t = (dist - targetR * 0.82) / Math.max(targetR * 0.18, 1);
-      const pull = Math.min(t * t, 5) * 0.16 * k;
-      n.vx -= (n.x / dist) * pull;
-      n.vy -= (n.y / dist) * pull;
-    }
-  }
-  packComponents(targetR, k);
-  for (const n of sim) {
-    if (n === dragging) continue;
-    n.vx *= friction; n.vy *= friction;
-    n.x += n.vx; n.y += n.vy;
-  }
-  roundBlob();
+  return radius;
 }
 
-function packComponents(targetR, k) {
-  const nCount = sim.length;
-  if (nCount < 3) return;
-  const parent = new Array(nCount);
-  for (let i = 0; i < nCount; i++) parent[i] = i;
-  function find(i) {
-    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
-    return i;
-  }
-  for (const s of springs) {
-    const i = simIndex[s.a.id], j = simIndex[s.b.id];
-    if (i == null || j == null) continue;
-    const a = find(i), b = find(j);
-    if (a !== b) parent[a] = b;
-  }
-  const groups = new Map();
-  for (let i = 0; i < nCount; i++) {
-    const r = find(i);
-    let g = groups.get(r);
-    if (!g) { g = { x: 0, y: 0, n: 0, nodes: [] }; groups.set(r, g); }
-    g.x += sim[i].x; g.y += sim[i].y; g.n++; g.nodes.push(sim[i]);
-  }
-  for (const g of groups.values()) {
-    g.x /= g.n; g.y /= g.n;
-    const d = Math.hypot(g.x, g.y);
-    const cap = targetR * (0.12 + 0.55 * Math.sqrt(g.n / nCount));
-    if (d <= cap || !d) continue;
-    const s = (d - cap) / d * 0.18 * k;
-    for (const n of g.nodes) {
-      if (n === dragging) continue;
-      n.vx -= g.x * s;
-      n.vy -= g.y * s;
-    }
-  }
-}
-
-function roundBlob() {
-  const N = sim.length;
-  if (dragging || N < 8) {
-    if (!dragging && N) {
-      let ax = 0, ay = 0;
-      for (const n of sim) { ax += n.x; ay += n.y; }
-      ax /= N; ay /= N;
-      for (const n of sim) { n.x -= ax; n.y -= ay; }
+function applyClusterLayout() {
+  const mode = clusterMode();
+  if (mode === "fandom") {
+    for (const n of sim) {
+      const src = nodesById[n.id];
+      if (!src) continue;
+      n.x = src.x || 0; n.y = src.y || 0; n.cluster = src.cluster || "";
     }
     return;
   }
-  let ax = 0, ay = 0;
-  for (const n of sim) { ax += n.x; ay += n.y; }
-  ax /= N; ay /= N;
-  let xx = 0, yy = 0, xy = 0;
-  for (const n of sim) {
-    const dx = n.x - ax, dy = n.y - ay;
-    xx += dx * dx; yy += dy * dy; xy += dx * dy;
+  const works = sim.filter(n => n.kind === "work");
+  const tags = sim.filter(n => n.kind !== "work");
+  const clusters = {};
+  for (const work of works) {
+    const key = jsClusterKey(work);
+    work.cluster = key;
+    (clusters[key] = clusters[key] || []).push(work);
   }
-  xx /= N; yy /= N; xy /= N;
-  const trace = xx + yy;
-  const gap = Math.sqrt(Math.max(0, trace * trace / 4 - (xx * yy - xy * xy)));
-  const l1 = trace / 2 + gap;
-  const l2 = trace / 2 - gap;
-  let ux = 1, uy = 0, shrink = 1;
-  if (l1 > 1 && l1 > l2 * 1.28) {
-    ux = l1 - yy; uy = xy;
-    if (Math.abs(ux) + Math.abs(uy) < 1e-9) { ux = xy; uy = l1 - xx; }
-    const vlen = Math.hypot(ux, uy) || 1;
-    ux /= vlen; uy /= vlen;
-    const elong = Math.sqrt(l1 / Math.max(l2, 1));
-    shrink = 1 - Math.min(0.06, (elong - 1.12) * 0.05);
-  }
-  for (const n of sim) {
-    let dx = n.x - ax, dy = n.y - ay;
-    if (shrink < 1) {
-      const along = dx * ux + dy * uy;
-      dx -= ux * along * (1 - shrink);
-      dy -= uy * along * (1 - shrink);
+  const tagClusters = {};
+  for (const tag of tags) {
+    const names = new Set();
+    for (const wid of (tagWorks[tag.id] || [])) {
+      const w = sim[simIndex[wid]];
+      if (w && w.cluster) names.add(w.cluster);
     }
-    n.x = dx;
-    n.y = dy;
+    tagClusters[tag.id] = names;
+  }
+  const localBy = {};
+  const globalTags = [];
+  const leftover = [];
+  for (const tag of tags) {
+    const names = tagClusters[tag.id] || new Set();
+    if (names.size >= 2) { tag.cluster = ""; globalTags.push(tag); }
+    else if (names.size === 1) {
+      const key = [...names][0];
+      tag.cluster = key;
+      (localBy[key] = localBy[key] || []).push(tag);
+    } else leftover.push(tag);
+  }
+  const keys = Object.keys(clusters).sort((a, b) => clusters[b].length - clusters[a].length || a.localeCompare(b));
+  const packed = keys.map(key => ({ key, r: packCluster(clusters[key], localBy[key] || []) }));
+  const gpts = sunflower(globalTags.length, 18);
+  let globalR = 0;
+  globalTags.forEach((tag, i) => {
+    tag.x = gpts[i][0]; tag.y = gpts[i][1];
+    globalR = Math.max(globalR, Math.hypot(tag.x, tag.y) + tag.r);
+  });
+  if (packed.length > 1) {
+    const maxR = Math.max.apply(null, packed.map(p => p.r));
+    const ring = globalR + maxR + 90;
+    const others = packed.filter(p => p.key !== "_crossover");
+    const around = packed.some(p => p.key === "_crossover") ? others : packed;
+    around.forEach((p, i) => {
+      const nAround = around.length;
+      const ang = nAround === 2
+        ? i * Math.PI
+        : (2 * Math.PI * i / nAround) - Math.PI / 2;
+      const cx = ring * Math.cos(ang), cy = ring * Math.sin(ang);
+      for (const n of (clusters[p.key] || []).concat(localBy[p.key] || [])) {
+        n.x += cx; n.y += cy;
+      }
+    });
+  }
+  for (const tag of leftover) {
+    const nbrs = (adj[tag.id] || []).map(id => sim[simIndex[id]]).filter(Boolean);
+    if (!nbrs.length) { tag.x = 0; tag.y = 0; continue; }
+    tag.x = nbrs.reduce((s, n) => s + n.x, 0) / nbrs.length;
+    tag.y = nbrs.reduce((s, n) => s + n.y, 0) / nbrs.length;
   }
 }
 
-function loop() {
-  const holding = !!dragging;
-  if ((alpha > 0.012 || holding) && physicsOn()) {
-    tick();
-    if (holding) alpha = Math.max(alpha, 0.75);
-    else {
-      const settle = slider("p-settle", 80) / 100;
-      alpha *= 0.988 - settle * 0.05;
+let settleToken = 0;
+function startSettle() {
+  if (!settleOn()) return;
+  const focus = selected;
+  if (!focus) return;
+  const token = ++settleToken;
+  let keep = neighborhood(focus.id);
+  let nodes = sim.filter(n => keep.has(n.id));
+  if (nodes.length > 360) {
+    nodes = nodes.filter(n =>
+      n.id === focus.id || n.kind === "work" || n.works >= 2 || n.category === "Fandom"
+    ).slice(0, 360);
+    keep = new Set(nodes.map(n => n.id));
+    keep.add(focus.id);
+  }
+  if (nodes.length < 2) return;
+  let step = 0;
+  function tick() {
+    if (token !== settleToken) return;
+    if (panning || step++ >= 24) {
+      if (token === settleToken) fit(nodes);
+      draw();
+      return;
     }
-    if (!viewLocked && !holding) fit();
+    settleStep(nodes, keep);
     draw();
-    requestAnimationFrame(loop);
-  } else {
-    looping = false;
-    alpha = 0;
-    if (!viewLocked) fit();
-    draw();
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function settleStep(nodes, keep) {
+  const force = {};
+  for (const n of nodes) force[n.id] = [0, 0];
+  for (const e of vis.edges) {
+    if (!keep.has(e.source) || !keep.has(e.target)) continue;
+    const a = sim[simIndex[e.source]], b = sim[simIndex[e.target]];
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.hypot(dx, dy) || 0.01;
+    const rest = a.r + b.r + 48;
+    const f = (dist - rest) * 0.06;
+    const ux = dx / dist, uy = dy / dist;
+    force[a.id][0] += ux * f; force[a.id][1] += uy * f;
+    force[b.id][0] -= ux * f; force[b.id][1] -= uy * f;
+  }
+  const nCount = nodes.length;
+  const limit = nCount > 120 ? Math.min(nCount, 80) : nCount;
+  for (let i = 0; i < limit; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < limit; j++) {
+      const b = nodes[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const dist = Math.hypot(dx, dy) || 0.01;
+      const min = a.r + b.r + 22;
+      if (dist > min * 2.2) continue;
+      const amt = dist < min ? (min - dist) * 0.22 : 0;
+      if (!amt) continue;
+      const ux = dx / dist, uy = dy / dist;
+      force[a.id][0] += ux * amt; force[a.id][1] += uy * amt;
+      force[b.id][0] -= ux * amt; force[b.id][1] -= uy * amt;
+    }
+  }
+  for (const n of nodes) {
+    const mass = n.kind === "work" ? 2.4 : 1;
+    let dx = force[n.id][0] / mass, dy = force[n.id][1] / mass;
+    const len = Math.hypot(dx, dy);
+    if (len > 4) { dx *= 4 / len; dy *= 4 / len; }
+    n.x += dx; n.y += dy;
   }
 }
 
@@ -1447,16 +2528,173 @@ function hit(sx, sy) {
   return best;
 }
 
-function neighborhood(id) {
-  const keep = new Set([id]);
-  const links = adj[id] || [];
-  for (let i = 0; i < links.length; i++) keep.add(links[i]);
+function pinMode() {
+  return !!(document.getElementById("pin-mode") || {}).checked;
+}
+function hopsValue() {
+  const v = parseInt((document.getElementById("label-hops") || {}).value, 10);
+  return Number.isFinite(v) ? Math.max(0, Math.min(6, v)) : 1;
+}
+function degreeValue() {
+  const v = parseInt((document.getElementById("label-degree") || {}).value, 10);
+  return Number.isFinite(v) ? Math.max(0, v) : 0;
+}
+function saveLabelSettings() {
+  try {
+    localStorage.setItem("ao3kit-graph-labels", JSON.stringify({
+      hops: hopsValue(), degree: degreeValue(), pin: pinMode(),
+      cluster: clusterMode(), settle: settleOn()
+    }));
+  } catch (err) {}
+}
+function loadLabelSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem("ao3kit-graph-labels") || "{}");
+    if (s.hops != null) document.getElementById("label-hops").value = s.hops;
+    if (s.degree != null) document.getElementById("label-degree").value = s.degree;
+    if (s.pin != null) document.getElementById("pin-mode").checked = !!s.pin;
+    if (s.cluster) document.getElementById("cluster-mode").value = s.cluster;
+    if (s.settle != null) document.getElementById("settle-on").checked = !!s.settle;
+  } catch (err) {}
+}
+
+function hopIds(id, hops) {
+  const keep = new Set();
+  if (id == null || simIndex[id] == null) return keep;
+  keep.add(id);
+  const q = [[id, 0]];
+  for (let i = 0; i < q.length; i++) {
+    const cur = q[i][0], dist = q[i][1];
+    if (dist >= hops) continue;
+    const links = adj[cur] || [];
+    for (let j = 0; j < links.length; j++) {
+      const nxt = links[j];
+      if (keep.has(nxt) || simIndex[nxt] == null) continue;
+      keep.add(nxt);
+      q.push([nxt, dist + 1]);
+    }
+  }
   return keep;
+}
+
+function clusterBridges(keep, focusId) {
+  const counts = {};
+  for (const id of keep) {
+    const n = sim[simIndex[id]];
+    if (!n || n.kind !== "work") continue;
+    const tags = workTags[id] || [];
+    for (let i = 0; i < tags.length; i++) {
+      const tid = tags[i];
+      counts[tid] = (counts[tid] || 0) + 1;
+    }
+  }
+  const focus = nodesById[focusId] || {};
+  const focusFam = focus.category === "Fandom" ? (fandomFamily[focusId] || focusId) : null;
+  const extra = Object.keys(counts).filter(tid => {
+    if (counts[tid] < 2 || simIndex[tid] == null) return false;
+    if (!focusFam) return true;
+    const node = nodesById[tid];
+    if (node && node.category === "Fandom") {
+      return (fandomFamily[tid] || tid) === focusFam;
+    }
+    return true;
+  });
+  extra.sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  return extra.slice(0, 24);
+}
+
+function neighborhood(id) {
+  const hops = hopsValue();
+  const keep = hopIds(id, hops);
+  if (hops >= 1) {
+    const extra = clusterBridges(keep, id);
+    for (let i = 0; i < extra.length; i++) keep.add(extra[i]);
+  }
+  return keep;
+}
+
+function labelFocus() {
+  return selected;
+}
+
+function areaLandmarks() {
+  const seen = new Set();
+  const out = [];
+  function addFromId(id) {
+    if (id == null || simIndex[id] == null) return;
+    const node = sim[simIndex[id]];
+    if (!node || seen.has(node.id)) return;
+    seen.add(node.id);
+    out.push(node);
+  }
+  const clusters = new Set();
+  for (const n of sim) {
+    if (n.kind === "work" && n.cluster && n.cluster !== "_other" && n.cluster !== "_all") {
+      clusters.add(n.cluster);
+    }
+  }
+  for (const key of clusters) addFromId(key);
+  return out;
+}
+
+function neighborScore(n, focus) {
+  if (focus && n.id === focus.id) return 10000;
+  if (n.category === "Fandom") return 800 + (n.works || 0) * 10;
+  if (n.category === "Relationship") return 600 + (n.works || 0) * 10;
+  if (n.category === "Character") return 550 + (n.works || 0) * 10;
+  if (hubIds.has(n.id) || n.works >= 2) return 500 + (n.works || 0) * 10;
+  if (n.kind === "work") return 180 + (n.degree || 0);
+  return 10 + (n.degree || 0);
+}
+
+function labelBudget() {
+  const area = Math.max(1, wrap.clientWidth * wrap.clientHeight);
+  return Math.max(10, Math.min(22, Math.floor(area / 32000)));
+}
+
+function labelNodes() {
+  const focus = labelFocus();
+  const minDeg = degreeValue();
+  const seen = new Set();
+  const out = [];
+  function add(node) {
+    if (!node || seen.has(node.id)) return;
+    seen.add(node.id);
+    out.push(node);
+  }
+  if (!pinMode() && hover) add(hover);
+  if (focus) {
+    add(focus);
+    const keep = neighborhood(focus.id);
+    const pool = [];
+    for (const n of sim) if (keep.has(n.id) && n.id !== focus.id) pool.push(n);
+    pool.sort((a, b) => neighborScore(b, focus) - neighborScore(a, focus));
+    const budget = labelBudget();
+    let works = 0;
+    const workCap = focus.kind === "work" ? 4 : 6;
+    for (const n of pool) {
+      if (out.length >= budget) break;
+      if (n.kind === "work") {
+        if (works >= workCap) continue;
+        works++;
+      }
+      add(n);
+    }
+  } else {
+    for (const n of areaLandmarks()) add(n);
+  }
+  if (minDeg > 0) {
+    for (const n of sim) {
+      if ((n.degree || 0) >= minDeg) add(n);
+    }
+  }
+  out.sort((a, b) => neighborScore(b, focus) - neighborScore(a, focus));
+  return out;
 }
 
 function onScreen(n, w, h) {
   const p = toScreen(n.x, n.y);
-  return p[0] > -40 && p[1] > -40 && p[0] < w + 40 && p[1] < h + 40;
+  return p[0] > -80 && p[1] > -80 && p[0] < w + 80 && p[1] < h + 80;
 }
 
 function draw() {
@@ -1468,26 +2706,27 @@ function draw() {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const focus = hover || selected;
+  const focus = labelFocus();
   const keep = focus ? neighborhood(focus.id) : null;
-  const namesMode = (document.getElementById("names-mode") || {}).value || "works";
   ctx.save();
   ctx.translate(view.x, view.y);
   ctx.scale(view.k, view.k);
   ctx.lineCap = "round";
+  const edgeCap = vis.edges.length > 4000;
   for (const e of vis.edges) {
     const a = sim[simIndex[e.source]], b = sim[simIndex[e.target]];
     if (!a || !b) continue;
-    const inKeep = !keep || keep.has(a.id) || keep.has(b.id);
-    if (keep && !inKeep) ctx.globalAlpha = e.kind === "work" ? 0.06 : 0.05;
-    else if (e.kind === "work") ctx.globalAlpha = keep ? 0.75 : 0.22;
-    else ctx.globalAlpha = e.kind === "synonym" ? 0.4 : 0.2;
+    const inKeep = !keep || (keep.has(a.id) && keep.has(b.id));
+    if (edgeCap && !inKeep && !onScreen(a, w, h) && !onScreen(b, w, h)) continue;
+    if (keep && !inKeep) ctx.globalAlpha = e.kind === "work" ? 0.04 : 0.05;
+    else if (e.kind === "work") ctx.globalAlpha = keep ? 0.7 : 0.16;
+    else ctx.globalAlpha = e.kind === "synonym" ? 0.4 : 0.22;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
     ctx.strokeStyle = e.kind === "work" ? "#a78bfa"
       : e.kind === "synonym" ? "#fbbf24" : "#888";
-    const w = e.weight || 1;
-    ctx.lineWidth = ((e.kind === "work" ? 0.7 : 0.9) + w * 1.1) / view.k;
+    const wt = e.weight || 1;
+    ctx.lineWidth = ((e.kind === "work" ? 0.6 : 0.9) + wt * 0.9) / view.k;
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -1498,42 +2737,98 @@ function draw() {
     ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
     ctx.fillStyle = n.color;
     ctx.fill();
-    if (focus && n.id === focus.id) {
+    if (selected && n.id === selected.id) {
+      ctx.strokeStyle = (!pinMode() && hover && hover.id !== selected.id) ? "#9ca3af" : "#fff";
+      ctx.lineWidth = 2 / view.k;
+      ctx.stroke();
+    } else if (!pinMode() && hover && n.id === hover.id) {
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2 / view.k;
       ctx.stroke();
     }
   }
   ctx.globalAlpha = 1;
-  ctx.fillStyle = "#eee";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.font = (11 / view.k) + "px ui-sans-serif, system-ui, sans-serif";
-  for (const n of sim) {
-    const hovered = keep && keep.has(n.id);
-    const named = namesMode === "all" ||
-      (namesMode === "works" && n.kind === "work") ||
-      hovered;
-    if (!named) continue;
-    if (namesMode === "all" && n.kind !== "work" && n.r * view.k < 2.2 && !hovered) continue;
-    const label = n.name.length > 42 ? n.name.slice(0, 40) + "…" : n.name;
-    ctx.globalAlpha = hovered || n.kind === "work" ? 0.95 : 0.75;
-    ctx.fillText(label, n.x + n.r + 4 / view.k, n.y);
-  }
+  drawLabels();
   ctx.restore();
 }
 
-function fit() {
-  if (!sim.length) return;
+function boxesOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function drawLabels() {
+  const fontPx = 12;
+  ctx.font = (fontPx / view.k) + "px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const focus = labelFocus();
+  const nodes = labelNodes();
+  const items = nodes.map(n => ({
+    n,
+    hovered: !!(hover && hover.id === n.id),
+    focused: !!(selected && selected.id === n.id),
+    pri: (hover && hover.id === n.id) || (selected && selected.id === n.id) ? 4
+      : hubIds.has(n.id) ? 3
+      : n.kind === "work" ? 2 : 1,
+    deg: n.works || n.degree || 0
+  }));
+  items.sort((a, b) => b.pri - a.pri || b.deg - a.deg);
+  const taken = [];
+  const padX = 5 / view.k, padY = 3 / view.k;
+  const gap = 6 / view.k;
+  for (const item of items) {
+    const n = item.n;
+    const label = n.name.length > 42 ? n.name.slice(0, 40) + "…" : n.name;
+    const tw = ctx.measureText(label).width;
+    const th = fontPx / view.k;
+    const slots = [
+      [n.x + n.r + gap, n.y],
+      [n.x - n.r - gap - tw, n.y],
+      [n.x + n.r + gap, n.y - th - gap],
+      [n.x + n.r + gap, n.y + th + gap],
+      [n.x - n.r - gap - tw, n.y - th - gap],
+      [n.x - n.r - gap - tw, n.y + th + gap]
+    ];
+    let box = null, lx = 0, ly = 0;
+    for (let s = 0; s < slots.length; s++) {
+      const x = slots[s][0], y = slots[s][1];
+      const cand = { x: x - padX, y: y - th / 2 - padY, w: tw + padX * 2, h: th + padY * 2 };
+      let overlaps = false;
+      for (let i = 0; i < taken.length; i++) {
+        if (boxesOverlap(cand, taken[i])) { overlaps = true; break; }
+      }
+      if (!overlaps) { box = cand; lx = x; ly = y; break; }
+    }
+    if (!box) {
+      if (!item.hovered && !item.focused) continue;
+      lx = slots[0][0]; ly = slots[0][1];
+      box = { x: lx - padX, y: ly - th / 2 - padY, w: tw + padX * 2, h: th + padY * 2 };
+    }
+    taken.push(box);
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle = "#141414";
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(box.x, box.y, box.w, box.h, 3 / view.k);
+    else ctx.rect(box.x, box.y, box.w, box.h);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#f2f2f2";
+    ctx.fillText(label, lx, ly);
+  }
+}
+
+function fit(nodes) {
+  const set = nodes || sim;
+  if (!set.length) return;
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-  for (const n of sim) {
+  for (const n of set) {
     minX = Math.min(minX, n.x - n.r); maxX = Math.max(maxX, n.x + n.r);
     minY = Math.min(minY, n.y - n.r); maxY = Math.max(maxY, n.y + n.r);
   }
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (w < 2 || h < 2) return;
   const gw = Math.max(maxX - minX, 40), gh = Math.max(maxY - minY, 40);
-  view.k = Math.min(w / gw, h / gh) * 0.9;
+  view.k = Math.min(w / gw, h / gh) * 0.88;
   view.k = Math.min(Math.max(view.k, MIN_ZOOM), MAX_ZOOM);
   view.x = w / 2 - (minX + gw / 2) * view.k;
   view.y = h / 2 - (minY + gh / 2) * view.k;
@@ -1544,10 +2839,312 @@ function localXY(ev) {
   return [ev.clientX - r.left, ev.clientY - r.top];
 }
 
+function similarChecked(root, key) {
+  return Array.from(root.querySelectorAll('input[data-facet="' + key + '"]:checked'))
+    .map(el => el.value);
+}
+
+function updateSimilarHint(root) {
+  const hint = root.querySelector(".similar-and");
+  if (!hint) return;
+  const parts = [];
+  ["fandoms", "authors", "relationships", "characters", "tags"].forEach(key => {
+    similarChecked(root, key).forEach(name => parts.push(name));
+  });
+  const extra = (root.querySelector("[name=extra_query]") || {}).value || "";
+  if (extra.trim()) parts.push(extra.trim());
+  if (!parts.length) {
+    hint.textContent = "Add a fandom, author, tag, or query.";
+    return;
+  }
+  if (parts.length === 1) {
+    hint.textContent = "Searching: " + parts[0];
+    return;
+  }
+  hint.textContent = "AO3 ANDs all " + parts.length + " terms: "
+    + parts.slice(0, 4).join(" · ")
+    + (parts.length > 4 ? "…" : "");
+}
+
+function facetBlock(title, key, items) {
+  const wrap = document.createElement("div");
+  if (!items || !items.length) return wrap;
+  const h = document.createElement("h3");
+  h.textContent = title;
+  wrap.appendChild(h);
+  if (key === "tags" || key === "exclude") {
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.placeholder = "Filter…";
+    filter.addEventListener("input", () => {
+      const q = filter.value.trim().toLowerCase();
+      wrap.querySelectorAll("label").forEach(lab => {
+        const name = (lab.querySelector(".n") || lab).textContent.toLowerCase();
+        lab.style.display = !q || name.indexOf(q) >= 0 ? "" : "none";
+      });
+    });
+    wrap.appendChild(filter);
+  }
+  const list = document.createElement("div");
+  list.className = "facet-list";
+  items.forEach(item => {
+    const lab = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.dataset.facet = key;
+    cb.value = item.name;
+    cb.checked = !!item.on;
+    const n = document.createElement("span");
+    n.className = "n";
+    n.textContent = item.name;
+    lab.appendChild(cb);
+    lab.appendChild(n);
+    if (item.count > 1) {
+      const k = document.createElement("span");
+      k.className = "k";
+      k.textContent = String(item.count);
+      lab.appendChild(k);
+    }
+    list.appendChild(lab);
+  });
+  wrap.appendChild(list);
+  return wrap;
+}
+
+function renderSimilarForm(seed, data, mount) {
+  mount.innerHTML = "";
+  const title = document.createElement("h3");
+  title.textContent = "Find similar";
+  mount.appendChild(title);
+  const hint = document.createElement("div");
+  hint.className = "meta";
+  hint.textContent = data.hint || "AO3 requires every tag you check.";
+  mount.appendChild(hint);
+  const shortcuts = document.createElement("div");
+  shortcuts.className = "similar-shortcuts";
+  const isTag = !!(data.seed && data.seed.kind === "tag");
+  const primary = document.createElement("button");
+  primary.type = "button";
+  primary.textContent = isTag ? "This tag only" : "Fandoms only";
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.textContent = "Clear";
+  shortcuts.appendChild(primary);
+  shortcuts.appendChild(clear);
+  mount.appendChild(shortcuts);
+  [
+    ["Fandoms", "fandoms", data.fandoms],
+    ["Authors", "authors", data.authors],
+    ["Relationships", "relationships", data.relationships],
+    ["Characters", "characters", data.characters],
+    ["Additional tags", "tags", data.tags],
+    ["Exclude tags", "exclude", data.exclude],
+  ].forEach(row => mount.appendChild(facetBlock(row[0], row[1], row[2])));
+  const andHint = document.createElement("div");
+  andHint.className = "similar-and";
+  mount.appendChild(andHint);
+  const extraLab = document.createElement("label");
+  extraLab.className = "row";
+  extraLab.textContent = "Extra query";
+  const extra = document.createElement("input");
+  extra.type = "text";
+  extra.name = "extra_query";
+  extra.placeholder = "optional AO3 query";
+  extraLab.appendChild(extra);
+  mount.appendChild(extraLab);
+  const sortLab = document.createElement("label");
+  sortLab.className = "row";
+  sortLab.textContent = "Sort by";
+  const sort = document.createElement("select");
+  sort.name = "sort_column";
+  (data.sort_options || []).forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    if (opt.value === (data.sort_column || "kudos_count")) o.selected = true;
+    sort.appendChild(o);
+  });
+  sortLab.appendChild(sort);
+  mount.appendChild(sortLab);
+  const completeLab = document.createElement("label");
+  completeLab.className = "row";
+  completeLab.textContent = "Complete works";
+  const complete = document.createElement("select");
+  complete.name = "complete";
+  (data.complete_options || []).forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    complete.appendChild(o);
+  });
+  completeLab.appendChild(complete);
+  mount.appendChild(completeLab);
+  const langLab = document.createElement("label");
+  langLab.className = "row";
+  langLab.textContent = "Language";
+  const lang = document.createElement("input");
+  lang.type = "text";
+  lang.name = "language_id";
+  lang.value = data.language_id || "en";
+  langLab.appendChild(lang);
+  mount.appendChild(langLab);
+  const maxLab = document.createElement("label");
+  maxLab.className = "row";
+  maxLab.textContent = "Max results";
+  const max = document.createElement("input");
+  max.type = "text";
+  max.name = "max_results";
+  max.value = data.max_results || "25";
+  maxLab.appendChild(max);
+  mount.appendChild(maxLab);
+  const more = document.createElement("details");
+  const sum = document.createElement("summary");
+  sum.textContent = "More filters";
+  more.appendChild(sum);
+  function filterField(name, label, placeholder) {
+    const lab = document.createElement("label");
+    lab.className = "row";
+    lab.textContent = label;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.name = name;
+    input.placeholder = placeholder || "";
+    lab.appendChild(input);
+    more.appendChild(lab);
+    return input;
+  }
+  const minScore = filterField("min_score", "Min quality score", "none");
+  const minKudos = filterField("min_kudos", "Min kudos", "");
+  const minWords = filterField("min_words", "Min words", "");
+  const completeOnlyLab = document.createElement("label");
+  completeOnlyLab.style.display = "flex";
+  completeOnlyLab.style.gap = "6px";
+  completeOnlyLab.style.marginTop = "8px";
+  const completeOnly = document.createElement("input");
+  completeOnly.type = "checkbox";
+  completeOnly.name = "complete_only";
+  completeOnlyLab.appendChild(completeOnly);
+  completeOnlyLab.appendChild(document.createTextNode(
+    "Only works with all planned chapters posted"
+  ));
+  more.appendChild(completeOnlyLab);
+  mount.appendChild(more);
+  const note = document.createElement("div");
+  note.className = "meta";
+  const btn = document.createElement("button");
+  btn.className = "tool";
+  btn.type = "button";
+  btn.textContent = "Search and import";
+  function setFacets(kind) {
+    const seedName = (data.seed && data.seed.name) || "";
+    const seedBucket = (data.seed && data.seed.bucket) || "";
+    mount.querySelectorAll("input[data-facet]").forEach(cb => {
+      if (kind === "clear") cb.checked = false;
+      else if (kind === "tag") {
+        cb.checked = cb.dataset.facet === seedBucket && cb.value === seedName;
+      } else {
+        cb.checked = cb.dataset.facet === "fandoms";
+      }
+    });
+    updateSimilarHint(mount);
+  }
+  primary.onclick = () => setFacets(isTag ? "tag" : "fandoms");
+  clear.onclick = () => setFacets("clear");
+  mount.addEventListener("change", () => updateSimilarHint(mount));
+  extra.addEventListener("input", () => updateSimilarHint(mount));
+  btn.onclick = () => {
+    if (!seed || (seed.kind === "work" && !seed.id) || (seed.kind === "tag" && !seed.name)) return;
+    btn.disabled = true;
+    btn.textContent = "Queuing…";
+    note.textContent = "";
+    const payload = {
+      select: {
+        fandoms: similarChecked(mount, "fandoms"),
+        authors: similarChecked(mount, "authors"),
+        relationships: similarChecked(mount, "relationships"),
+        characters: similarChecked(mount, "characters"),
+        tags: similarChecked(mount, "tags"),
+        excluded_tags: similarChecked(mount, "exclude"),
+        extra_query: extra.value.trim(),
+      },
+      sort_column: sort.value,
+      complete: complete.value,
+      language_id: lang.value.trim(),
+      max_results: max.value.trim() || "25",
+      min_score: minScore.value.trim(),
+      min_kudos: minKudos.value.trim(),
+      min_words: minWords.value.trim(),
+      complete_only: completeOnly.checked,
+    };
+    if (seed.kind === "tag") {
+      payload.tag = seed.name;
+      if (seed.category) payload.category = seed.category;
+    } else {
+      payload.work_ids = [seed.id];
+    }
+    fetch("/similar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      if (!ok) {
+        btn.disabled = false;
+        btn.textContent = "Search and import";
+        note.textContent = d.error || "Could not queue search";
+        return;
+      }
+      btn.textContent = "Queued";
+      note.textContent = d.message || "Searching AO3";
+    }).catch(() => {
+      btn.disabled = false;
+      btn.textContent = "Search and import";
+      note.textContent = "Graph server did not accept the request.";
+    });
+  };
+  mount.appendChild(btn);
+  mount.appendChild(note);
+  updateSimilarHint(mount);
+}
+
+function similarQuery(seed) {
+  if (seed.kind === "tag") {
+    let q = "/similar?tag=" + encodeURIComponent(seed.name);
+    if (seed.category) q += "&category=" + encodeURIComponent(seed.category);
+    return q;
+  }
+  return "/similar?work_id=" + encodeURIComponent(seed.id);
+}
+
+function loadSimilarForm(seed, mount) {
+  mount.textContent = "Loading search options…";
+  fetch(similarQuery(seed))
+    .then(r => r.json().then(d => ({ ok: r.ok, d })))
+    .then(({ ok, d }) => {
+      if (!ok) {
+        mount.textContent = d.error || "Could not load search options.";
+        return;
+      }
+      renderSimilarForm(seed, d, mount);
+    })
+    .catch(() => {
+      mount.textContent = "Graph server did not return search options.";
+    });
+}
+
+function clearSelection() {
+  selected = null;
+  hover = null;
+  lastHoverId = null;
+  settleToken++;
+  showDetail(null);
+  fit();
+  draw();
+}
+
 function showDetail(id) {
   const n = nodesById[id];
   const box = document.getElementById("detail");
-  if (!n) { box.textContent = "Click a work or tag."; return; }
+  if (!n) { box.textContent = "Click a work, tag, bridge, or cluster."; return; }
   const neigh = DATA.edges.filter(e => e.source === id || e.target === id);
   const tags = neigh.filter(e => e.kind === "work").map(e => e.source === id ? e.target : e.source);
   const works = neigh.filter(e => e.kind === "work" && n.kind !== "work")
@@ -1560,7 +3157,9 @@ function showDetail(id) {
   const metaEl = document.createElement("div"); metaEl.className = "meta";
   const bits = [n.kind === "work" ? "work" : n.status];
   if (n.category && n.kind !== "work") bits.push(n.category);
+  if (n.cluster) bits.push(n.cluster);
   if (n.kind === "work") bits.push(tags.length + " tags");
+  else if (works.length) bits.push(works.length + " works");
   metaEl.textContent = bits.join(" · ");
   box.appendChild(nameEl); box.appendChild(metaEl);
   const href = n.kind === "work"
@@ -1573,12 +3172,37 @@ function showDetail(id) {
     a.textContent = n.kind === "work" ? "Open work on AO3" : "Open tag on AO3";
     box.appendChild(a);
   }
+  if (DATA_URL) {
+    let seed = null;
+    if (n.kind === "work") {
+      const workId = String(id).indexOf("work:") === 0 ? id.slice(5) : "";
+      if (workId) seed = { kind: "work", id: workId };
+    } else {
+      const tagName = String(n.canonical || n.name || "").trim();
+      if (tagName) seed = { kind: "tag", name: tagName, category: n.category || "" };
+    }
+    const key = seed
+      ? (seed.kind === "work" ? "work:" + seed.id : "tag:" + seed.name)
+      : null;
+    if (key && similarState.key === key && similarState.el) {
+      box.appendChild(similarState.el);
+    } else if (seed) {
+      similarState = { key: key, el: document.createElement("div") };
+      similarState.el.className = "similar-panel";
+      box.appendChild(similarState.el);
+      loadSimilarForm(seed, similarState.el);
+    } else {
+      similarState = { key: null, el: null };
+    }
+  } else {
+    similarState = { key: null, el: null };
+  }
   function list(title, items) {
     if (!items.length) return;
     const h = document.createElement("div");
     h.style.marginTop = "8px"; h.style.color = "var(--muted)"; h.textContent = title;
     box.appendChild(h);
-    items.forEach(itemId => {
+    items.slice(0, 40).forEach(itemId => {
       const node = nodesById[itemId] || { name: itemId, id: itemId };
       const b = document.createElement("button");
       b.className = "comp"; b.textContent = node.name;
@@ -1586,42 +3210,107 @@ function showDetail(id) {
       box.appendChild(b);
     });
   }
-  list("Tags on this work", tags);
-  list("Works with this tag", works);
+  if (n.kind === "work") list("Tags on this work", tags);
+  else list("Works with this tag", works);
   list("Canonical / synonyms", syn);
   list("Metatags", meta);
   list("Under this metatag", kids);
 }
 
 function focusNode(id) {
+  hover = null;
+  lastHoverId = null;
   selected = sim[simIndex[id]] || null;
   showDetail(id);
   const n = sim[simIndex[id]];
   if (n) {
-    viewLocked = true;
-    view.k = Math.max(view.k, 1.1);
+    view.k = Math.max(view.k, 1.05);
     view.x = wrap.clientWidth / 2 - n.x * view.k;
     view.y = wrap.clientHeight / 2 - n.y * view.k;
   }
   draw();
+  startSettle();
+}
+
+function focusCluster(key) {
+  const members = sim.filter(n => n.cluster === key || n.id === key);
+  if (!members.length) return;
+  hover = null;
+  lastHoverId = null;
+  selected = sim[simIndex[key]] || members.find(n => n.kind === "work") || members[0];
+  showDetail(selected.id);
+  fit(members);
+  draw();
+  startSettle();
+}
+
+function fillHubs() {
+  const box = document.getElementById("hubs");
+  box.textContent = "";
+  const hubs = DATA.hubs || [];
+  if (!hubs.length) {
+    const empty = document.createElement("div");
+    empty.style.color = "var(--muted)";
+    empty.textContent = "No shared tags yet.";
+    box.appendChild(empty);
+    return;
+  }
+  for (const h of hubs) {
+    const b = document.createElement("button");
+    b.className = "comp";
+    const name = document.createElement("div"); name.textContent = h.name;
+    const k = document.createElement("div"); k.className = "k";
+    k.textContent = h.works + " works" + (h.category ? " · " + h.category : "");
+    b.appendChild(name); b.appendChild(k);
+    b.onclick = () => focusNode(h.id);
+    box.appendChild(b);
+  }
+}
+
+function fillClusters() {
+  const box = document.getElementById("clusters");
+  box.textContent = "";
+  const groups = {};
+  for (const n of sim.filter(n => n.kind === "work")) {
+    const key = n.cluster || "_other";
+    (groups[key] = groups[key] || []).push(n);
+  }
+  const keys = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length || a.localeCompare(b));
+  if (!keys.length) {
+    const empty = document.createElement("div");
+    empty.style.color = "var(--muted)";
+    empty.textContent = "No fandom clusters.";
+    box.appendChild(empty);
+    return;
+  }
+  for (const key of keys) {
+    const b = document.createElement("button");
+    b.className = "comp";
+    const name = document.createElement("div");
+    name.textContent = clusterTitle(key);
+    const k = document.createElement("div"); k.className = "k";
+    k.textContent = groups[key].length + " works";
+    b.appendChild(name); b.appendChild(k);
+    b.onclick = () => focusCluster(key);
+    box.appendChild(b);
+  }
 }
 
 function fillList() {
   const q = (document.getElementById("cf").value || "").trim().toLowerCase();
   const box = document.getElementById("comps");
   box.textContent = "";
-  const title = document.getElementById("list-title");
-  title.textContent = "Works (" + allWorks.length + ")";
+  document.getElementById("list-title").textContent = "Works (" + allWorks.length + ")";
   const frag = document.createDocumentFragment();
   for (const n of allWorks) {
     if (q && n.name.toLowerCase().indexOf(q) < 0) continue;
     const b = document.createElement("button");
     b.className = "comp";
-    const name = document.createElement("div");
-    name.textContent = n.name;
-    const k = document.createElement("div");
-    k.className = "k";
-    k.textContent = (n.degree || 0) + " tags";
+    const name = document.createElement("div"); name.textContent = n.name;
+    const k = document.createElement("div"); k.className = "k";
+    const live = simIndex[n.id] != null ? sim[simIndex[n.id]] : n;
+    const cluster = live.cluster || n.cluster || "";
+    k.textContent = (n.degree || 0) + " tags" + (cluster && cluster !== "_other" ? " · " + clusterTitle(cluster) : "");
     b.appendChild(name); b.appendChild(k);
     b.onclick = () => focusNode(n.id);
     frag.appendChild(b);
@@ -1663,108 +3352,162 @@ function suggest() {
 function relayout() {
   rebuildVis();
   layoutNodes();
-  viewLocked = false;
-  fit();
+  applyClusterLayout();
+  fillClusters();
+  fillList();
+  if (selected && settleOn()) startSettle();
+  else fit();
   draw();
-  kick(1);
 }
 
-["show-works", "show-syn", "show-meta", "cat"].forEach(id => {
+["show-works", "show-syn", "show-meta", "cat", "bridges-only"].forEach(id => {
   document.getElementById(id).onchange = relayout;
 });
-document.getElementById("show-physics").onchange = () => {
-  saveSettings();
-  if (physicsOn()) kick(1);
-  else { alpha = 0; looping = false; draw(); }
-};
-document.getElementById("names-mode").onchange = () => { saveSettings(); draw(); };
-["p-bounce", "p-stiff", "p-charge", "p-spread", "p-settle"].forEach(id => {
+["label-hops", "label-degree"].forEach(id => {
   document.getElementById(id).addEventListener("input", () => {
-    saveSettings();
-    if (physicsOn()) kick(0.4);
+    saveLabelSettings();
+    draw();
+    if (id === "label-hops") startSettle();
   });
 });
-document.getElementById("p-jiggle").onclick = () => {
-  for (const n of sim) {
-    n.vx += (Math.random() - 0.5) * 8;
-    n.vy += (Math.random() - 0.5) * 8;
-  }
-  kick(1);
+document.getElementById("cluster-mode").onchange = () => {
+  saveLabelSettings();
+  relayout();
+};
+document.getElementById("settle-on").onchange = () => {
+  saveLabelSettings();
+  if (settleOn()) startSettle();
+};
+document.getElementById("pin-mode").onchange = () => {
+  hover = null;
+  lastHoverId = null;
+  saveLabelSettings();
+  draw();
 };
 document.getElementById("q").addEventListener("input", suggest);
 document.getElementById("cf").addEventListener("input", fillList);
-document.getElementById("z-in").onclick = () => {
-  viewLocked = true;
-  view.k = Math.min(MAX_ZOOM, view.k * 1.2);
-  draw();
-};
-document.getElementById("z-out").onclick = () => {
-  viewLocked = true;
-  view.k = Math.max(MIN_ZOOM, view.k / 1.2);
-  draw();
-};
-document.getElementById("z-fit").onclick = () => { viewLocked = false; fit(); draw(); };
+document.getElementById("z-in").onclick = () => { view.k = Math.min(MAX_ZOOM, view.k * 1.2); draw(); };
+document.getElementById("z-out").onclick = () => { view.k = Math.max(MIN_ZOOM, view.k / 1.2); draw(); };
+document.getElementById("z-fit").onclick = () => { fit(); draw(); };
 
+let down = null;
 wrap.addEventListener("pointerdown", ev => {
   const xy = localXY(ev);
   const n = hit(xy[0], xy[1]);
+  down = { x: xy[0], y: xy[1], n, moved: false };
   lastPtr = { x: xy[0], y: xy[1] };
   if (n) {
-    dragging = n;
-    n.vx = 0; n.vy = 0;
     selected = n;
     showDetail(n.id);
-    kick(1);
+    draw();
+    startSettle();
   } else panning = true;
   wrap.classList.add("drag");
   wrap.setPointerCapture(ev.pointerId);
 });
 wrap.addEventListener("pointermove", ev => {
   const xy = localXY(ev);
-  if (dragging && lastPtr) {
-    const wxy = toWorld(xy[0], xy[1]);
-    dragging.vx = wxy[0] - dragging.x;
-    dragging.vy = wxy[1] - dragging.y;
-    dragging.x = wxy[0];
-    dragging.y = wxy[1];
-    kick(1);
-  } else if (panning && lastPtr) {
-    viewLocked = true;
+  if (down && Math.hypot(xy[0] - down.x, xy[1] - down.y) > 5) down.moved = true;
+  if (panning && lastPtr) {
     view.x += xy[0] - lastPtr.x; view.y += xy[1] - lastPtr.y;
     draw();
-  } else {
+  } else if (!pinMode()) {
     hover = hit(xy[0], xy[1]);
     wrap.style.cursor = hover ? "pointer" : "grab";
     const hid = hover ? hover.id : null;
     if (hid !== lastHoverId) { lastHoverId = hid; draw(); }
+  } else {
+    wrap.style.cursor = hit(xy[0], xy[1]) ? "pointer" : "grab";
   }
   lastPtr = { x: xy[0], y: xy[1] };
 });
 wrap.addEventListener("pointerup", () => {
-  if (dragging) kick(1);
-  dragging = null; panning = false; lastPtr = null;
+  if (down && !down.moved && !down.n) clearSelection();
+  panning = false; lastPtr = null; down = null;
   wrap.classList.remove("drag");
+});
+wrap.addEventListener("pointerleave", () => {
+  if (panning) return;
+  hover = null;
+  lastHoverId = null;
+  draw();
 });
 wrap.addEventListener("wheel", ev => {
   ev.preventDefault();
   const xy = localXY(ev);
   const factor = ev.deltaY < 0 ? 1.12 : 0.89;
   const nk = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.k * factor));
-  viewLocked = true;
   view.x = xy[0] - (xy[0] - view.x) * (nk / view.k);
   view.y = xy[1] - (xy[1] - view.y) * (nk / view.k);
   view.k = nk;
   draw();
 }, { passive: false });
-window.addEventListener("resize", () => { if (!viewLocked) fit(); draw(); });
+window.addEventListener("resize", () => { fit(); draw(); });
 document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") {
+    if (document.activeElement && document.activeElement.tagName === "INPUT") {
+      document.activeElement.blur();
+      return;
+    }
+    ev.preventDefault();
+    clearSelection();
+    return;
+  }
   if (ev.key === "/" && document.activeElement.tagName !== "INPUT") {
     ev.preventDefault(); document.getElementById("q").focus();
   }
 });
+fillHubs();
+fillClusters();
 fillList();
-loadSettings();
+loadLabelSettings();
 relayout();
+const reloadBtn = document.getElementById("reload-data");
+if (DATA_URL && reloadBtn) {
+  reloadBtn.hidden = false;
+  reloadBtn.onclick = () => {
+    reloadBtn.disabled = true;
+    reloadBtn.textContent = "Reloading…";
+    fetch("/rebuild", { method: "POST" })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(() => location.reload())
+      .catch(() => location.reload());
+  };
+  if (!window.__graphPoll) {
+    window.__graphPoll = true;
+    let seenWorks = DATA.work_count;
+    let reloadTimer = 0;
+    setInterval(() => {
+      fetch("/status").then(r => r.json()).then(s => {
+        if (typeof s.works !== "number") return;
+        if (seenWorks == null) { seenWorks = s.works; return; }
+        if (s.works === seenWorks) return;
+        seenWorks = s.works;
+        const stats = document.getElementById("stats");
+        if (stats) stats.textContent = s.works + " works — updating…";
+        clearTimeout(reloadTimer);
+        reloadTimer = setTimeout(() => location.reload(), 1600);
+      }).catch(() => {});
+    }, 2000);
+  }
+}
+}
+
+if (EMBEDDED && EMBEDDED.nodes) startGraph(EMBEDDED);
+else {
+  const url = DATA_URL || "graph.json";
+  const stats = document.getElementById("stats");
+  if (stats) stats.textContent = "Loading graph…";
+  fetch(url).then(r => {
+    if (!r.ok) throw new Error(r.status + " " + r.statusText);
+    return r.json();
+  }).then(startGraph).catch(err => {
+    if (stats) {
+      stats.textContent = "No graph data yet. In Calibre run Tag graph… then Reload data.";
+    }
+    console.error(err);
+  });
+}
 </script>
 </body>
 </html>

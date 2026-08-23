@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,169 @@ RULES = TagRulesConfig(
 
 DEFAULT_REQUEST_DELAY = 1.5
 
+COVER_COLOR_SEEDS = ("fandom", "relationship", "author", "title", "work_id")
+COVER_COLOR_MODES = ("hash", "palette", "solid")
+COVER_IMAGE_FORMATS = ("png", "jpeg")
+COVER_FIELDS = (
+    "title",
+    "author",
+    "fandom",
+    "relationship",
+    "series",
+    "rating",
+    "wordcount",
+    "score",
+    "complete",
+)
+DEFAULT_COVER_FIELDS = ("title", "author", "wordcount", "score")
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if value is None or value is False:
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def parse_color_map(value: Any) -> dict[str, str]:
+    """Parse ``fandom_colors`` from a dict, JSON object, or ``Name=#hex`` lines."""
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return {
+            str(key).strip(): str(color).strip()
+            for key, color in value.items()
+            if str(key).strip() and str(color).strip()
+        }
+    text = str(value).strip()
+    if not text:
+        return {}
+    if text.startswith("{"):
+        try:
+            import json
+
+            parsed = json.loads(text)
+        except (ImportError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return parse_color_map(parsed)
+    mapping: dict[str, str] = {}
+    for raw in text.replace(";", "\n").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            name, color = line.split("=", 1)
+        elif ":" in line:
+            name, color = line.split(":", 1)
+        else:
+            continue
+        name = name.strip().strip('"').strip("'")
+        color = color.strip().strip(",").strip('"').strip("'")
+        if name and color:
+            mapping[name] = color
+    return mapping
+
+
+def format_color_map(mapping: dict[str, str] | None) -> str:
+    if not mapping:
+        return ""
+    return "\n".join(f"{name} = {color}" for name, color in mapping.items())
+
+
+@dataclass
+class CoverSettings:
+    """How generated EPUB / Calibre covers look and when they are applied.
+
+    Style defaults follow alexwlchan's AO3 cover tool: 600×900, Georgia,
+    title + author, fandom-seeded gradient. Word count and quality score
+    are on by default; other fields and palettes are opt-in. Nested under
+    ``cover:`` in ``config.yaml``.
+    """
+
+    enabled: bool = True
+    replace_existing: bool = True
+    set_calibre_cover: bool = True
+    width: int = 600
+    height: int = 900
+    font: str = "Georgia"
+    font_path: str = ""
+    title_size: int = 88
+    author_size: int = 62
+    header_size: int = 28
+    footer_size: int = 24
+    title_max_lines: int = 5
+    author_max_lines: int = 2
+    header_max_lines: int = 2
+    title_color: str = "#ffffff"
+    author_color: str = "#ffffffcc"
+    header_color: str = "#ffffffcc"
+    footer_color: str = "#ffffffcc"
+    fields: list[str] = field(default_factory=lambda: list(DEFAULT_COVER_FIELDS))
+    color_seed: str = "fandom"
+    color_mode: str = "hash"
+    gradient: bool = True
+    solid_color: str = "#2c3e6b"
+    palette: list[str] = field(default_factory=list)
+    fandom_colors: dict[str, str] = field(default_factory=dict)
+    saturation_min: float = 0.7
+    saturation_max: float = 1.0
+    lightness_top: float = 0.35
+    lightness_bottom: float = 0.2
+    seed_words: int = 2
+    image_format: str = "png"
+    jpeg_quality: int = 90
+    padding: float = 0.125
+    title_y: float = 0.18
+    author_y: float = 0.82
+    header_y: float = 0.07
+    footer_y: float = 0.93
+    uppercase_title: bool = False
+    text_shadow: bool = False
+    border_px: int = 0
+    border_color: str = "#ffffff40"
+    cover_href: str = "media/cover.png"
+    cover_page: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> CoverSettings:
+        data = data or {}
+        known = {item.name for item in fields(cls)}
+        kwargs: dict[str, Any] = {}
+        for key, value in data.items():
+            if key not in known:
+                continue
+            if key in {"fields", "palette"}:
+                value = _as_str_list(value)
+            elif key == "fandom_colors":
+                value = parse_color_map(value)
+            kwargs[key] = value
+        settings = cls(**kwargs)
+        settings.fields = [
+            name.lower()
+            for name in settings.fields
+            if name.lower() in COVER_FIELDS
+        ] or list(DEFAULT_COVER_FIELDS)
+        seed = str(settings.color_seed or "fandom").strip().lower()
+        settings.color_seed = seed if seed in COVER_COLOR_SEEDS else "fandom"
+        mode = str(settings.color_mode or "hash").strip().lower()
+        settings.color_mode = mode if mode in COVER_COLOR_MODES else "hash"
+        fmt = str(settings.image_format or "png").strip().lower()
+        if fmt in {"jpg", "jpeg"}:
+            settings.image_format = "jpeg"
+        elif fmt != "png":
+            settings.image_format = "png"
+        return settings
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def shows(self, name: str) -> bool:
+        return name.lower() in {item.lower() for item in self.fields}
+
 
 @dataclass
 class UserSettings:
@@ -115,12 +278,21 @@ class UserSettings:
     # Optional UI / scrape defaults
     default_language_id: str = "en"
     notes: str = ""
+    cover: CoverSettings = field(default_factory=CoverSettings)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> UserSettings:
         data = data or {}
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        kwargs = {k: v for k, v in data.items() if k in known}
+        cover = kwargs.get("cover")
+        if isinstance(cover, CoverSettings):
+            kwargs["cover"] = cover
+        else:
+            kwargs["cover"] = CoverSettings.from_dict(
+                cover if isinstance(cover, dict) else None
+            )
+        return cls(**kwargs)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -187,7 +359,10 @@ class UserConfig:
 
     def update_settings(self, **changes: Any) -> UserSettings:
         data = self.settings.to_dict()
-        data.update(changes)
+        for key, value in changes.items():
+            if is_dataclass(value) and not isinstance(value, type):
+                value = asdict(value)
+            data[key] = value
         self.settings = UserSettings.from_dict(data)
         self.save()
         return self.settings
@@ -325,6 +500,27 @@ def resolve_request_delay(requested: float | None) -> float:
     if requested is not None:
         return float(requested)
     return default_request_delay()
+
+
+def load_cover_settings(home: Path | None = None) -> CoverSettings:
+    """Cover style from ``config.yaml`` (defaults if unset)."""
+    return load_user_config(home=home).settings.cover
+
+
+def merge_cover_settings(
+    base: CoverSettings | None = None,
+    *,
+    home: Path | None = None,
+    **changes: Any,
+) -> CoverSettings:
+    """Return ``base`` (or disk settings) with non-``None`` overrides applied."""
+    current = base or load_cover_settings(home=home)
+    data = current.to_dict()
+    for key, value in changes.items():
+        if value is None:
+            continue
+        data[key] = value
+    return CoverSettings.from_dict(data)
 
 
 def load_user_config(

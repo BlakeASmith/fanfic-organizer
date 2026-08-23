@@ -324,6 +324,27 @@ def build_download_argv(
     return argv
 
 
+def build_cover_argv(
+    jsonl: str,
+    dest_dir: str,
+    png_dir: str,
+    options: dict[str, Any] | None = None,
+) -> list[str]:
+    argv = [
+        'cover',
+        '--jsonl',
+        jsonl,
+        '--dir',
+        dest_dir,
+        '--png-dir',
+        png_dir,
+        '--verbose',
+        '--replace',
+    ]
+    # Cover generation is local; the cover CLI does not accept login flags.
+    return argv
+
+
 def build_enrich_argv(
     jsonl_in: str,
     jsonl_out: str,
@@ -412,6 +433,45 @@ def build_job_stop_argv(job_id: str, jobs_dir: str | None = None) -> list[str]:
     return argv
 
 
+def build_job_retry_argv(job_id: str, jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'retry']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    argv.append(job_id)
+    return argv
+
+
+def build_job_delete_argv(job_ids: list[str], jobs_dir: str | None = None) -> list[str]:
+    argv = ['job', 'delete']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    argv.extend(job_ids)
+    return argv
+
+
+def build_job_clear_argv(
+    *,
+    finished: bool = False,
+    failed: bool = False,
+    stopped: bool = False,
+    inactive: bool = False,
+    jobs_dir: str | None = None,
+) -> list[str]:
+    argv = ['job', 'clear']
+    if jobs_dir:
+        argv.extend(['--jobs-dir', jobs_dir])
+    if inactive:
+        argv.append('--inactive')
+        return argv
+    if finished:
+        argv.append('--finished')
+    if failed:
+        argv.append('--failed')
+    if stopped:
+        argv.append('--stopped')
+    return argv
+
+
 def build_job_list_argv(jobs_dir: str | None = None) -> list[str]:
     argv = ['job', 'list']
     if jobs_dir:
@@ -449,6 +509,17 @@ def build_tag_graph_argv(
         argv.extend(['--jsonl', jsonl])
     if open_browser:
         argv.append('--open')
+    return argv
+
+
+def live_graph_reload_argv() -> list[str]:
+    return ['tags', 'graph', 'reload']
+
+
+def build_graph_serve_argv(*, port: int | None = None) -> list[str]:
+    argv = ['tags', 'graph', 'serve', '--no-open']
+    if port:
+        argv.extend(['--port', str(port)])
     return argv
 
 

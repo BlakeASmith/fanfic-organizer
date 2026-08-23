@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from ao3kit.htmlsoup import parse_html
+
 from ao3kit.http import (
     AO3_BASE,
     DEFAULT_HEADERS,
@@ -233,7 +235,7 @@ def build_series_url(series_id: str, page: int = 1) -> str:
 
 def parse_pagination_max(html: str) -> int | None:
     """Largest page number linked in AO3 ``ol.pagination``, if any."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     nums: list[int] = []
     for anchor in soup.select("ol.pagination a"):
         href = str(anchor.get("href") or "")
@@ -680,7 +682,7 @@ def parse_work_blurb(blurb: BeautifulSoup) -> WorkRecord | None:
 
 
 def parse_search_page(html: str) -> SearchPage:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     page_start, page_end, total_results = parse_result_count(soup)
     works = [
         record
@@ -820,6 +822,7 @@ def download_scraped_works(
     zip_path: str | Path | None = None,
     simplify_tags: bool = False,
     verbose: bool = False,
+    cover: bool | None = None,
 ):
     """Download native EPUBs for scrape matches using the same session."""
     from ao3kit.epubs import (
@@ -854,11 +857,13 @@ def download_scraped_works(
         dest,
         session,
         request_delay=request_delay,
+        skip_existing=True,
         make_zip=make_zip,
         zip_path=resolved_zip,
         on_outcome=on_outcome,
         simplify_tags=simplify_tags,
         on_status=on_status,
+        cover=cover,
     )
     if verbose:
         print(format_download_report_line(report, dest), file=sys.stderr)
@@ -1056,6 +1061,15 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="With --download, run tag enrich (default: no). Pass --simplify to enable.",
     )
+    parser.add_argument(
+        "--cover",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "With --download, stamp generated covers into EPUBs "
+            "(default: config cover.enabled)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.parse_only and args.parse_similar:
@@ -1111,6 +1125,9 @@ def main(argv: list[str] | None = None) -> int:
         on_status=(lambda msg: print(msg, file=sys.stderr)) if args.verbose else None,
     )
     score_config = QualityScoreConfig(min_kudos_to_score=args.min_kudos_for_score)
+    from ao3kit.epubs import JsonlWriter, load_jsonl_records
+
+    writer = JsonlWriter(args.output)
 
     def on_page(search_page: SearchPage, url: str) -> None:
         if args.verbose:
@@ -1131,6 +1148,7 @@ def main(argv: list[str] | None = None) -> int:
     def on_work(work: WorkRecord) -> None:
         nonlocal matched_count
         matched_count += 1
+        writer.add_work(work, score_config=score_config)
         if not args.verbose:
             return
         if args.max_results:
@@ -1159,7 +1177,6 @@ def main(argv: list[str] | None = None) -> int:
     works: list[WorkRecord] = []
 
     if args.fill_series_from:
-        from ao3kit.epubs import load_jsonl_records
         from ao3kit.series import fill_record_dicts
 
         try:
@@ -1173,6 +1190,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Looking up series for {len(seed_records)} work(s).",
                 file=sys.stderr,
             )
+        writer.replace_all(seed_records)
         records = fill_record_dicts(
             seed_records,
             session=session,
@@ -1180,10 +1198,9 @@ def main(argv: list[str] | None = None) -> int:
             on_status=on_status,
             score_config=score_config,
         )
-        write_jsonl_dicts(records, args.output)
+        writer.replace_all(records)
         works = [work for work in (WorkRecord.from_dict(row) for row in records) if work]
     elif args.series_from:
-        from ao3kit.epubs import load_jsonl_records
         from ao3kit.series import expand_record_dicts
 
         try:
@@ -1197,6 +1214,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Expanding {len(seed_records)} seed work(s) into full series.",
                 file=sys.stderr,
             )
+        writer.replace_all(seed_records)
         records = expand_record_dicts(
             seed_records,
             session=session,
@@ -1207,7 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
             on_page=on_page,
             score_config=score_config,
         )
-        write_jsonl_dicts(records, args.output)
+        writer.replace_all(records)
         works = [work for work in (WorkRecord.from_dict(row) for row in records) if work]
     elif series_id:
         from ao3kit.series import scrape_series
@@ -1224,7 +1242,9 @@ def main(argv: list[str] | None = None) -> int:
             on_page=on_page,
             on_work=on_work,
         )
-        write_jsonl(works, args.output, score_config=score_config)
+        writer.replace_all(
+            [work.to_dict(score_config=score_config) for work in works]
+        )
     else:
         if args.similar_from:
             try:
@@ -1293,7 +1313,9 @@ def main(argv: list[str] | None = None) -> int:
                 on_work=on_work,
                 on_page=on_page,
             )
-        write_jsonl(works, args.output, score_config=score_config)
+        writer.replace_all(
+            [work.to_dict(score_config=score_config) for work in works]
+        )
 
     if args.verbose:
         noun = "work" if len(works) == 1 else "works"
@@ -1318,6 +1340,7 @@ def main(argv: list[str] | None = None) -> int:
         zip_path=args.zip if make_zip else None,
         simplify_tags=bool(args.simplify),
         verbose=args.verbose,
+        cover=args.cover,
     )
     return 1 if report.failed and not report.downloaded and not report.skipped else 0
 

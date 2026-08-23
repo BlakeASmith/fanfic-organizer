@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from calibre_plugins.ao3_scraper.cleaned import (
@@ -522,4 +523,176 @@ def apply_series_records(
     outcomes: list[dict[str, Any]] = []
     for item in items:
         outcomes.append(apply_series_record(db, item['book_id'], item['record']))
+    return outcomes
+
+
+REASON_NO_COVER_META = 'no title on this book'
+
+
+def load_selected_for_covers(
+    db,
+    book_ids: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(ready, skipped)`` for generating covers.
+
+    Work id is optional. Books without an EPUB still get a Calibre cover
+    from library metadata.
+    """
+    ready: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for book_id in book_ids:
+        title = '?'
+        try:
+            mi = db.get_metadata(book_id, index_is_id=True)
+            title = mi.title or title
+        except Exception:
+            mi = None
+        record = record_from_calibre_book(db, book_id, require_work_id=False)
+        if record is None:
+            record = {'title': title}
+            if mi is not None:
+                authors = list(mi.authors or [])
+                if authors:
+                    record['author'] = authors[0] if len(authors) == 1 else ', '.join(
+                        str(item) for item in authors if str(item).strip()
+                    )
+        if not str(record.get('title') or '').strip():
+            skipped.append(
+                {
+                    'book_id': book_id,
+                    'title': title,
+                    'reason': REASON_NO_COVER_META,
+                }
+            )
+            continue
+        ready.append(
+            {
+                'book_id': book_id,
+                'record': record,
+                'title': title,
+                'has_epub': book_has_epub(db, book_id),
+            }
+        )
+    return ready, skipped
+
+
+def copy_book_epub(db, book_id: int, dest: Path) -> bool:
+    """Copy a book's EPUB format to ``dest``. Returns False on failure."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    copier = getattr(db, 'copy_format_to', None)
+    if callable(copier):
+        for kwargs in (
+            {'index_is_id': True},
+            {},
+        ):
+            try:
+                copier(book_id, 'EPUB', str(dest), **kwargs)
+                if dest.is_file() and dest.stat().st_size > 0:
+                    return True
+            except TypeError:
+                continue
+            except Exception:
+                break
+    getter = getattr(db, 'format', None)
+    if callable(getter):
+        data = None
+        try:
+            data = getter(book_id, 'EPUB', as_path=False, index_is_id=True)
+        except TypeError:
+            try:
+                data = getter(book_id, 'EPUB', index_is_id=True)
+            except Exception:
+                data = None
+        except Exception:
+            data = None
+        if isinstance(data, (bytes, bytearray)) and data:
+            dest.write_bytes(data)
+            return True
+        if data and Path(str(data)).is_file():
+            import shutil
+
+            shutil.copy2(str(data), dest)
+            return dest.is_file()
+    return dest.is_file() and dest.stat().st_size > 0
+
+
+def export_selected_epubs_for_cover(
+    db,
+    ready: list[dict[str, Any]],
+    dest_dir: Path,
+) -> list[dict[str, Any]]:
+    """Copy EPUBs into ``dest_dir`` and set ``record['epub_file']``."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    exported: list[dict[str, Any]] = []
+    for item in ready:
+        updated = dict(item)
+        record = dict(item.get('record') or {})
+        book_id = item['book_id']
+        record['calibre_book_id'] = book_id
+        if item.get('has_epub'):
+            work_id = str(record.get('work_id') or '').strip() or f'book-{book_id}'
+            dest = dest_dir / f'{work_id}.epub'
+            if copy_book_epub(db, book_id, dest):
+                record['epub_file'] = f'epubs/{work_id}.epub'
+        updated['record'] = record
+        exported.append(updated)
+    return exported
+
+
+def apply_cover_records(
+    db,
+    items: list[dict[str, Any]],
+    *,
+    bundle_root: str | Path | None,
+    png_dir: str | Path | None,
+    set_calibre_cover: bool = True,
+) -> list[dict[str, Any]]:
+    """Replace EPUBs and/or Calibre covers after ``ao3kit cover``."""
+    from pathlib import Path as _Path
+
+    from calibre_plugins.ao3_scraper.importer import add_epub_format, set_book_cover
+    from calibre_plugins.ao3_scraper.jsonl_loader import resolve_epub_path
+
+    png_root = _Path(png_dir) if png_dir else None
+    outcomes: list[dict[str, Any]] = []
+    for item in items:
+        book_id = item['book_id']
+        record = item.get('record') or {}
+        title = record.get('title') or item.get('title')
+        cover_set = False
+        epub_replaced = False
+        if set_calibre_cover and png_root is not None:
+            work_id = str(record.get('work_id') or '').strip()
+            candidates = []
+            if work_id:
+                candidates.append(png_root / f'{work_id}.png')
+            candidates.append(png_root / f'book-{book_id}.png')
+            epub_file = str(record.get('epub_file') or '')
+            if epub_file:
+                candidates.append(png_root / (_Path(epub_file).stem + '.png'))
+            for png in candidates:
+                if png.is_file():
+                    if set_book_cover(db, int(book_id), png.read_bytes()):
+                        cover_set = True
+                        break
+        if bundle_root is not None:
+            epub_path = resolve_epub_path(record, bundle_root)
+            if epub_path is not None:
+                epub_replaced = add_epub_format(
+                    db,
+                    book_id,
+                    epub_path,
+                    replace=True,
+                    apply_cover=bool(set_calibre_cover and not cover_set),
+                )
+        action = 'updated' if cover_set or epub_replaced else 'unchanged'
+        outcomes.append(
+            {
+                'book_id': book_id,
+                'title': title,
+                'action': action,
+                'cover': cover_set,
+                'epub': epub_replaced,
+            }
+        )
     return outcomes

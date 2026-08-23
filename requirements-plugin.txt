@@ -1,0 +1,7 @@
+# Pure-Python deps shipped inside AO3Scraper.zip.
+# Calibre already has lxml (and usually bs4). Native wheels are stripped
+# after install so the zip works on every OS with Calibre's Python.
+beautifulsoup4>=4.12
+requests>=2.31
+PyYAML>=6.0
+python-dotenv>=1.0

@@ -11,6 +11,7 @@ try:
     from calibre_plugins.ao3_scraper.jobs import write_json
     from calibre_plugins.ao3_scraper.scrape_run import (
         build_collections_argv,
+        build_cover_argv,
         build_enrich_argv,
         describe_scrape,
         prepare_download_command,
@@ -23,6 +24,7 @@ except ImportError:  # pytest loads this file without the Calibre package
     from jobs import write_json
     from scrape_run import (
         build_collections_argv,
+        build_cover_argv,
         build_enrich_argv,
         describe_scrape,
         prepare_download_command,
@@ -31,6 +33,43 @@ except ImportError:  # pytest loads this file without the Calibre package
         prepare_series_from_command,
         write_records_jsonl,
     )
+
+
+def _jsonl_result(
+    path: str | Path, *, label: str = 'work', field: str = ''
+) -> dict[str, str]:
+    spec = {'source': 'jsonl_count', 'path': str(path), 'label': label}
+    if field:
+        spec['field'] = field
+    return spec
+
+
+def _import_plugin(
+    *,
+    jsonl: str | Path,
+    bundle_root: str | Path | None,
+    update_existing: bool,
+    skip_existing_epub: bool = True,
+    results_jsonl: str | Path | None = None,
+    cleanup_dir: str | None = None,
+    skipped: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    plugin: dict[str, Any] = {
+        'action': 'import_records',
+        'update_existing': bool(update_existing),
+        'skip_existing_epub': bool(skip_existing_epub),
+        'jsonl': str(jsonl),
+        'incremental_import': True,
+    }
+    if bundle_root:
+        plugin['bundle_root'] = str(bundle_root)
+    if results_jsonl:
+        plugin['results_jsonl'] = str(results_jsonl)
+    if cleanup_dir:
+        plugin['cleanup_dir'] = cleanup_dir
+    if skipped:
+        plugin['skipped'] = skipped
+    return plugin
 
 
 def _write_spec(job_dir: Path, spec: dict[str, Any]) -> dict[str, Any]:
@@ -58,13 +97,13 @@ def plan_scrape(options: dict[str, Any], job_dir: Path) -> dict[str, Any]:
             'title': describe_scrape(options).split('\n', 1)[0][:80],
             'kind': 'scrape',
             'steps': steps,
-            'plugin': {
-                'action': 'import_records',
-                'update_existing': bool(options.get('update_existing', True)),
-                'jsonl': str(out),
-                'results_jsonl': str(results),
-                'bundle_root': str(bundle),
-            },
+            'plugin': _import_plugin(
+                jsonl=out,
+                bundle_root=bundle,
+                update_existing=bool(options.get('update_existing', True)),
+                results_jsonl=results,
+            ),
+            'result': _jsonl_result(out),
         },
     )
 
@@ -83,28 +122,29 @@ def plan_import(
     write_records_jsonl(current, records)
     steps: list[list[str]] = []
     dest = Path(bundle_root)
+    results = current
     if options.get('include_series'):
         argv, jsonl, dest = prepare_series_from_command(records, work, options)
         steps.append(argv)
         current = jsonl
+        results = jsonl
     if options.get('simplify_tags'):
         cleaned = work / 'cleaned.jsonl'
         steps.append(build_enrich_argv(str(current), str(cleaned), options))
         current = cleaned
-    plugin = {
-        'action': 'import_records',
-        'update_existing': bool(options.get('update_existing', True)),
-        'jsonl': str(current),
-        'bundle_root': str(dest),
-    }
-    if cleanup_dir:
-        plugin['cleanup_dir'] = cleanup_dir
+    plugin = _import_plugin(
+        jsonl=current,
+        bundle_root=dest,
+        update_existing=bool(options.get('update_existing', True)),
+        results_jsonl=results,
+        cleanup_dir=cleanup_dir,
+    )
     title = 'Import JSONL'
     if options.get('include_series'):
         title = 'Import JSONL (with series)'
     return _write_spec(
         job_dir,
-        {'title': title, 'kind': 'import', 'steps': steps, 'plugin': plugin},
+        {'title': title, 'kind': 'import', 'steps': steps, 'plugin': plugin, 'result': _jsonl_result(current)},
     )
 
 
@@ -140,6 +180,7 @@ def plan_download_selected(
                 'items_json': str(items_path),
                 'incremental_epubs': True,
             },
+            'result': _jsonl_result(jsonl, label='EPUB', field='epub_file'),
         },
     )
 
@@ -181,6 +222,7 @@ def plan_simplify_selected(
                 'jsonl': str(out),
                 'items_json': str(items_path),
             },
+            'result': _jsonl_result(out, label='book'),
         },
     )
 
@@ -207,16 +249,35 @@ def plan_import_series(
             'title': f'Import series for {n} {noun}',
             'kind': 'series',
             'steps': steps,
-            'plugin': {
-                'action': 'import_records',
-                'update_existing': bool(options.get('update_existing', True)),
-                'skip_existing_epub': True,
-                'jsonl': str(out),
-                'bundle_root': str(dest) if options.get('download_epubs') else '',
-                'skipped': skipped,
-            },
+            'plugin': _import_plugin(
+                jsonl=out,
+                bundle_root=dest if options.get('download_epubs') else None,
+                update_existing=bool(options.get('update_existing', True)),
+                results_jsonl=jsonl,
+                skipped=skipped,
+            ),
+            'result': _jsonl_result(out),
         },
     )
+
+
+def plan_complete_selected(
+    records: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    job_dir: Path,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """Series fill + rest of series + missing EPUBs + tag simplify for a selection."""
+    forced = dict(options)
+    forced['download_epubs'] = True
+    forced['simplify_tags'] = True
+    forced['update_existing'] = True
+    spec = plan_import_series(records, skipped, job_dir, forced)
+    n = len(records)
+    noun = 'book' if n == 1 else 'books'
+    spec['title'] = f'Complete selected ({n} {noun})'
+    spec['kind'] = 'complete'
+    return _write_spec(job_dir, spec)
 
 
 def plan_fill_series(
@@ -243,6 +304,69 @@ def plan_fill_series(
                 'jsonl': str(jsonl),
                 'items_json': str(items_path),
             },
+            'result': _jsonl_result(jsonl, label='book'),
+        },
+    )
+
+
+def plan_cover_selected(
+    ready: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    job_dir: Path,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    work = job_dir / 'work'
+    dest = work / 'bundle'
+    epubs = dest / 'epubs'
+    png_dir = dest / 'covers'
+    dest.mkdir(parents=True, exist_ok=True)
+    epubs.mkdir(parents=True, exist_ok=True)
+    png_dir.mkdir(parents=True, exist_ok=True)
+    records = [item['record'] for item in ready]
+    jsonl = dest / 'results.jsonl'
+    write_records_jsonl(jsonl, records)
+    argv = build_cover_argv(str(jsonl), str(dest), str(png_dir), options)
+    items_path = work / 'items.json'
+    write_json(items_path, {'ready': ready, 'skipped': skipped})
+    n = len(ready)
+    noun = 'book' if n == 1 else 'books'
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Generate covers for {n} {noun}',
+            'kind': 'cover',
+            'steps': [argv],
+            'plugin': {
+                'action': 'apply_covers',
+                'jsonl': str(jsonl),
+                'bundle_root': str(dest),
+                'png_dir': str(png_dir),
+                'items_json': str(items_path),
+                'set_calibre_cover': bool(options.get('set_calibre_cover', True)),
+            },
+            'result': _jsonl_result(jsonl, label='cover'),
+        },
+    )
+
+
+def plan_graph_serve(job_dir: Path, *, port: int | None = None) -> dict[str, Any]:
+    """Singleton live viewer (``jobs/graph``). Does not write Calibre."""
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        from calibre_plugins.ao3_scraper.scrape_run import build_graph_serve_argv
+    except ImportError:
+        from scrape_run import build_graph_serve_argv
+
+    argv = build_graph_serve_argv(port=port)
+    return _write_spec(
+        job_dir,
+        {
+            'title': 'Tag graph viewer',
+            'kind': 'graph',
+            'steps': [argv],
+            'plugin': {'action': 'none'},
+            'result': {'source': 'last_log'},
         },
     )
 

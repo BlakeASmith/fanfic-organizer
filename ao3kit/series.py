@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import requests
-from bs4 import BeautifulSoup
+from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, create_session, is_login_wall
 from ao3kit.rate import apply_request_delay
@@ -43,7 +43,7 @@ def series_requires_login(html: str) -> bool:
 
 
 def parse_series_from_html(html: str) -> list[SeriesMembership]:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     meta = soup.select_one("dl.work.meta") or soup.select_one("#main") or soup
     return parse_series_memberships(meta)
 

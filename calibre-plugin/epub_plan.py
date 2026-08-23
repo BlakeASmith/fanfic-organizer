@@ -96,6 +96,33 @@ def pending_epub_attachments(
     return pending
 
 
+def pending_incremental_imports(
+    records: list[dict[str, Any]],
+    imported: dict[str, dict[str, Any]],
+    *,
+    work_id_of,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split JSONL rows into new works vs works whose EPUB is now ready.
+
+    ``imported`` maps work id → ``{book_id, has_epub}`` for rows already
+    written to Calibre this job. New rows may already list ``epub_file``;
+    the caller attaches that file on the first import.
+    """
+    new_records: list[dict[str, Any]] = []
+    epub_records: list[dict[str, Any]] = []
+    for record in records:
+        work_id = str(work_id_of(record) or '').strip()
+        if not work_id:
+            continue
+        state = imported.get(work_id)
+        if state is None:
+            new_records.append(record)
+            continue
+        if str(record.get('epub_file') or '').strip() and not state.get('has_epub'):
+            epub_records.append(record)
+    return new_records, epub_records
+
+
 def summarize_epub_download(
     outcomes: list[dict[str, Any]],
     skipped: list[dict[str, Any]],

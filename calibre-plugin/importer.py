@@ -94,8 +94,71 @@ def find_book_by_work_id(db, work_id: str) -> int | None:
     return find_existing_book(db, {'work_id': work_id})
 
 
-def add_epub_format(db, book_id: int, epub_path: Path) -> bool:
+def set_cover_from_epub(db, book_id: int, epub_path: Path) -> bool:
+    """Copy the EPUB's marked cover image onto the Calibre book."""
+    data = None
+    try:
+        from calibre.ebooks.metadata.meta import get_metadata
+
+        with Path(epub_path).open('rb') as handle:
+            mi = get_metadata(handle, stream_type='epub')
+        cover = getattr(mi, 'cover_data', None)
+        if cover and len(cover) >= 2 and cover[1]:
+            data = cover[1]
+    except Exception:
+        data = None
+    if not data:
+        return False
+    return set_book_cover(db, book_id, data)
+
+
+def set_book_cover(db, book_id: int, data: bytes) -> bool:
+    """Write the Calibre library cover (cover.jpg) from image bytes."""
+    if not data:
+        return False
+    bid = int(book_id)
+    try:
+        api = getattr(db, 'new_api', None)
+        setter = getattr(api, 'set_cover', None) if api is not None else None
+        if callable(setter):
+            setter({bid: data})
+        else:
+            db.set_cover(bid, data)
+        return True
+    except Exception:
+        try:
+            db.set_cover(bid, data)
+            return True
+        except Exception:
+            return False
+
+
+def add_epub_format(
+    db,
+    book_id: int,
+    epub_path: Path,
+    *,
+    replace: bool = False,
+    apply_cover: bool | None = None,
+) -> bool:
+    """Attach an EPUB. Returns False when the book already has that format."""
+    if not replace:
+        try:
+            if db.has_format(book_id, 'EPUB', index_is_id=True):
+                return False
+        except Exception:
+            pass
     db.add_format(book_id, 'EPUB', str(epub_path), index_is_id=True)
+    should_cover = apply_cover
+    if should_cover is None:
+        try:
+            from calibre_plugins.ao3_scraper.prefs import prefs as plugin_prefs
+
+            should_cover = bool(plugin_prefs.get('set_calibre_cover', True))
+        except Exception:
+            should_cover = True
+    if should_cover:
+        set_cover_from_epub(db, book_id, epub_path)
     return True
 
 
@@ -134,13 +197,13 @@ def attach_downloaded_epubs(
                 }
             )
             continue
-        add_epub_format(db, book_id, epub_path)
+        attached = add_epub_format(db, book_id, epub_path)
         outcomes.append(
             {
                 'book_id': book_id,
                 'title': title,
-                'action': 'added',
-                'epub': True,
+                'action': 'added' if attached else 'skipped',
+                'epub': attached,
             }
         )
     return outcomes
@@ -227,11 +290,23 @@ def write_collections_field(db, book_id: int, names: list[str]) -> bool:
 
 
 def refresh_library_ui(gui, book_ids: list[int] | None = None) -> None:
-    """Refresh the book list and tag browser after Tags field changes."""
+    """Refresh the book list, tag browser, and book details after library writes."""
     model = gui.library_view.model()
+    current_row = -1
+    try:
+        index = gui.library_view.currentIndex()
+        if index.isValid():
+            current_row = index.row()
+    except Exception:
+        current_row = -1
     if book_ids and hasattr(model, 'refresh_ids'):
         try:
-            model.refresh_ids(list(book_ids))
+            model.refresh_ids(list(book_ids), current_row=current_row)
+        except TypeError:
+            try:
+                model.refresh_ids(list(book_ids))
+            except Exception:
+                model.refresh()
         except Exception:
             model.refresh()
     else:

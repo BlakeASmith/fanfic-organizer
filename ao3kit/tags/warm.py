@@ -31,6 +31,7 @@ from typing import Any, Callable, Protocol
 
 from ao3kit.proc import (
     DEFAULT_LOG_LINES,
+    ao3kit_argv,
     clear_pid,
     follow_log,
     interruptible_sleep,
@@ -641,25 +642,23 @@ def _make_resolver(job: WarmJob, args: argparse.Namespace, on_status: StatusCall
 
 
 def _run_argv(paths: dict[str, Path], args: argparse.Namespace) -> list[str]:
-    argv = [
-        sys.executable,
-        "-u",
-        "-m",
-        "ao3kit",
-        "tags",
-        "warm",
-        "run",
-        "--job-file",
-        str(paths["job"]),
-        "--pid-file",
-        str(paths["pid"]),
-        "--status-file",
-        str(paths["status"]),
-        "--log-file",
-        str(paths["log"]),
-        "--cache",
-        str(paths["cache"]),
-    ]
+    argv = ao3kit_argv(
+        [
+            "tags",
+            "warm",
+            "run",
+            "--job-file",
+            str(paths["job"]),
+            "--pid-file",
+            str(paths["pid"]),
+            "--status-file",
+            str(paths["status"]),
+            "--log-file",
+            str(paths["log"]),
+            "--cache",
+            str(paths["cache"]),
+        ]
+    )
     username = getattr(args, "username", None)
     password = getattr(args, "password", None)
     if username and password:

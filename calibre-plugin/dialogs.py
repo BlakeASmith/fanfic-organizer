@@ -90,10 +90,11 @@ class ImportJsonlDialog(QDialog):
         )
         self.simplify_tags.setChecked(bool(prefs.get('simplify_tags', False)))
         self.simplify_tags.setToolTip(
-            'Runs `python -m ao3kit tags enrich` using AO3KIT_HOME / ao3kit_project. '
+            'Runs tag simplification using the bundled toolkit. '
             'Collapses AO3 synonyms on Tags, Fandom, and Relationships. '
-            'Requires the ao3kit checkout and network access for uncached tags. '
-            'Collection and tag rules: actions menu → Collections & tag rules.'
+            'Needs network access for uncached tags. '
+            'Collection and tag rules: Tags and collections → '
+            'Collections & tag rules.'
         )
         layout.addWidget(self.simplify_tags)
 
@@ -159,8 +160,8 @@ class ScrapeSearchDialog(QDialog):
 
         intro = QLabel(
             'Search AO3 like the CLI, then import matches into the '
-            '<b>currently open</b> Calibre library. Uses your ao3kit checkout '
-            '(plugin settings) so host-wide rate limiting still applies.\n\n'
+            '<b>currently open</b> Calibre library. Uses the toolkit bundled '
+            'in this plugin so host-wide rate limiting still applies.\n\n'
             'AO3 login is in Plugin settings. Paste a search '
             'URL, or fill the form. Click Fill from URL to preview and edit '
             'criteria. A series URL imports every work in that series. '
@@ -269,7 +270,7 @@ class ScrapeSearchDialog(QDialog):
             'Runs `python -m ao3kit tags enrich` after the search. Default is '
             'set in plugin settings. Collapses AO3 synonyms on Tags, Fandom, '
             'and Relationships. Collection and tag rules: '
-            'actions menu → Collections & tag rules.'
+            'Tags and collections → Collections & tag rules.'
         )
         import_layout.addWidget(self.download_epubs)
         import_layout.addWidget(self.update_existing)
@@ -2028,7 +2029,7 @@ class WarmLogDialog(QDialog):
         text = read_log_tail(self._log_path)
         if not text:
             text = (
-                'No log yet. Start Warm tag cache in background… first.\n'
+                'No log yet. Start Tags and collections → Warm tag cache first.\n'
                 f'Expected file: {self._log_path}'
             )
         bar = self.log.verticalScrollBar()

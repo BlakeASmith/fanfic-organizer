@@ -9,8 +9,8 @@ from typing import Any, Callable, Mapping, MutableMapping
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+
+from ao3kit.htmlsoup import parse_html
 
 from ao3kit.rate import (
     TAG_DEFAULT_RETRY_AFTER,
@@ -32,6 +32,12 @@ from ao3kit.session_cache import (
 
 # Load project-local `.env` once (gitignored secrets such as AO3 login).
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover — vendored in the plugin zip
+    def load_dotenv(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
 load_dotenv(_PROJECT_ROOT / ".env")
 
 AO3_BASE = "https://archiveofourown.org"
@@ -402,7 +408,7 @@ def _response_html(response: requests.Response) -> str | None:
 
 
 def _body_classes(html: str) -> list[str]:
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     body = soup.find("body")
     if body is None:
         return []
@@ -438,7 +444,7 @@ def _should_refresh_login(
 
 def is_login_wall(html: str) -> bool:
     """True when AO3 served the registered-users login interstitial."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = parse_html(html)
     main = soup.find("div", id="main")
     classes = main.get("class", []) if main else []
     if "sessions-new" in classes:
@@ -513,7 +519,7 @@ def login_to_ao3(
     response = get(
         session, AO3_LOGIN_URL, on_status=on_status, timeout=LOGIN_REQUEST_TIMEOUT
     )
-    soup = BeautifulSoup(response.text, "lxml")
+    soup = parse_html(response.text)
     form = soup.find("form", id="new_user")
     if not form:
         if is_cloudflare_response(response):
@@ -539,7 +545,7 @@ def login_to_ao3(
         on_status=on_status,
         timeout=LOGIN_REQUEST_TIMEOUT,
     )
-    soup = BeautifulSoup(response.text, "lxml")
+    soup = parse_html(response.text)
     if soup.find("body", class_="logged-in") is None:
         raise LoginError("AO3 login failed: invalid username or password")
 

@@ -52,9 +52,10 @@ class ConfigWidget(QWidget):
             'Use this plugin on a <b>new</b> Calibre library. Search AO3, '
             'Import, Download EPUB, Simplify, and Tag Purge write to whichever '
             'library is currently open.\n\n'
-            'Search uses the ao3kit checkout and Python below (same scrape / '
-            'download / enrich commands as the CLI, including the '
-            'host-wide AO3 rate limiter).\n\n'
+            'Search, download, and tag cleanup run from the toolkit bundled in '
+            'this plugin (same scrape / download / enrich commands as the CLI, '
+            'including the host-wide AO3 rate limiter). A git checkout is '
+            'optional.\n\n'
             'Fanfic columns (same labels as FanFicFare): #fandom, '
             '#relationships, #collections, #wordcount, plus #originaltags '
             'for the pre-clean AO3 tags. Cleaned tags go in Calibre\'s Tags '
@@ -98,7 +99,7 @@ class ConfigWidget(QWidget):
         self.test_login_btn = QPushButton('Test login')
         self.test_login_btn.setToolTip(
             'Log in to AO3 with the username and password above (does not '
-            'save settings). Uses the ao3kit checkout configured below.'
+            'save settings). Uses the bundled toolkit (or the checkout below).'
         )
         self.test_login_btn.clicked.connect(self.test_login)
         pwd_layout.addWidget(self.test_login_btn)
@@ -142,12 +143,13 @@ class ConfigWidget(QWidget):
         )
         self.simplify_tags.setChecked(bool(prefs.get('simplify_tags', False)))
         self.simplify_tags.setToolTip(
-            'Default for Search AO3 and JSONL/zip import. Requires the ao3kit '
-            'checkout and network access for uncached tags. Collapses AO3 '
+            'Default for Search AO3 and JSONL/zip import. Needs network '
+            'access for uncached tags. Collapses AO3 '
             'synonyms on Tags, Fandom, and Relationships, and appends fandom '
             'metatags to the Fandom column (e.g. Marvel for Spider-Man). Extra '
-            'collection rules are under Collections & tag rules in '
-            'the plugin menu (.ao3kit/collections.yaml). Tag keep / rename / '
+            'collection rules are under Tags and collections → '
+            'Collections & tag rules in the plugin menu '
+            '(.ao3kit/collections.yaml). Tag keep / rename / '
             'drop lives in mappings.yaml.'
         )
         defaults_form.addRow(self.simplify_tags)
@@ -183,21 +185,66 @@ class ConfigWidget(QWidget):
         defaults_form.addRow(self.remember_collection_adds)
         layout.addWidget(defaults)
 
-        runtime = QGroupBox('ao3kit')
+        covers = QGroupBox('EPUB covers')
+        covers_form = QFormLayout(covers)
+        cover = self._load_cover_settings()
+        self.generate_covers = QCheckBox(
+            'Generate covers when downloading native EPUBs'
+        )
+        self.generate_covers.setChecked(bool(cover.get('enabled', True)))
+        self.generate_covers.setToolTip(
+            'Stamps a title/author cover into each downloaded EPUB (same idea '
+            'as the AO3 cover tool). Style is stored in .ao3kit/config.yaml. '
+            'Selected books → Generate covers restamps library files.'
+        )
+        self.replace_covers = QCheckBox('Replace a cover already in the EPUB')
+        self.replace_covers.setChecked(bool(cover.get('replace_existing', True)))
+        self.set_calibre_cover = QCheckBox(
+            'Set the Calibre book cover from the generated image'
+        )
+        self.set_calibre_cover.setChecked(bool(cover.get('set_calibre_cover', True)))
+        self._cover_style = dict(cover)
+        style_btn = QPushButton('Cover style…')
+        style_btn.setToolTip(
+            'Fields, colours, font, and size. Fandom-seeded colours stay the '
+            'same for every fic in that fandom.'
+        )
+        style_btn.clicked.connect(self.edit_cover_style)
+        covers_form.addRow(self.generate_covers)
+        covers_form.addRow(self.replace_covers)
+        covers_form.addRow(self.set_calibre_cover)
+        covers_form.addRow(style_btn)
+        covers_form.addRow(
+            _hint(
+                'Default look is title + author on a dark fandom-coloured '
+                'gradient (600×900, Georgia). Click Cover style to show '
+                'fandom/relationship lines, pick a palette, or pin colours '
+                'per fandom.'
+            )
+        )
+        layout.addWidget(covers)
+
+        runtime = QGroupBox('Advanced (optional)')
         runtime_form = QFormLayout(runtime)
         self.ao3kit_project = QLineEdit()
         self.ao3kit_project.setText(prefs.get('ao3kit_project') or '')
-        self.ao3kit_project.setPlaceholderText('/Users/you/emily/ao3')
+        self.ao3kit_project.setPlaceholderText('leave blank to use the bundled toolkit')
         runtime_form.addRow('Project path', self.ao3kit_project)
         runtime_form.addRow(
-            _hint('Folder containing the ao3kit package (the git checkout).')
+            _hint(
+                'Leave blank unless you are developing from a git checkout. '
+                'The GitHub plugin zip already includes ao3kit.'
+            )
         )
         self.ao3kit_python = QLineEdit()
         self.ao3kit_python.setText(prefs.get('ao3kit_python') or '')
-        self.ao3kit_python.setPlaceholderText('/path/to/python3')
+        self.ao3kit_python.setPlaceholderText('leave blank to use Calibre\'s Python')
         runtime_form.addRow('Python', self.ao3kit_python)
         runtime_form.addRow(
-            _hint('Optional. Default is python3 on PATH, then the project venv.')
+            _hint(
+                'Optional. Default is Calibre\'s calibre-debug (bundled zip) '
+                'or python3 on PATH / the project venv (checkout).'
+            )
         )
         layout.addWidget(runtime)
 
@@ -257,7 +304,7 @@ class ConfigWidget(QWidget):
         )
 
     def sizeHint(self):
-        return QSize(560, 860)
+        return QSize(560, 980)
 
     def refresh_status(self):
         db = self.plugin_action.gui.current_db
@@ -283,6 +330,7 @@ class ConfigWidget(QWidget):
         prefs['update_existing'] = self.update_existing.isChecked()
         prefs['import_full_series'] = self.import_full_series.isChecked()
         self._save_ao3kit_remember_adds(self.remember_collection_adds.isChecked())
+        self._save_cover_settings()
         self.create_layout.setChecked(False)
         self.refresh_status()
 
@@ -342,3 +390,43 @@ class ConfigWidget(QWidget):
             )
             return False
         return True
+
+    def edit_cover_style(self) -> None:
+        from calibre_plugins.ao3_scraper.cover_ui import CoverStyleDialog
+
+        dialog = CoverStyleDialog(self, self._cover_style)
+        if not dialog.exec_():
+            return
+        self._cover_style.update(dialog.values())
+
+    def _load_cover_settings(self) -> dict:
+        from calibre_plugins.ao3_scraper.cover_ui import load_cover_dict
+
+        return load_cover_dict()
+
+    def _save_cover_settings(self) -> None:
+        from calibre_plugins.ao3_scraper.cover_ui import save_cover_dict
+
+        cover = dict(self._cover_style)
+        cover['enabled'] = self.generate_covers.isChecked()
+        cover['replace_existing'] = self.replace_covers.isChecked()
+        cover['set_calibre_cover'] = self.set_calibre_cover.isChecked()
+        try:
+            code, stdout, stderr = save_cover_dict(cover)
+        except Exception as exc:
+            error_dialog(
+                self,
+                'AO3 Scraper',
+                'Could not save cover settings in ao3kit.',
+                det_msg=str(exc),
+                show=True,
+            )
+            return
+        if code != 0:
+            error_dialog(
+                self,
+                'AO3 Scraper',
+                'Could not save cover settings in ao3kit.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )

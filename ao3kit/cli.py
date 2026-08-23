@@ -4,6 +4,7 @@ Usage:
   python -m ao3kit scrape ...
   python -m ao3kit tags ...
   python -m ao3kit download ...
+  python -m ao3kit cover ...
   python -m ao3kit job ...
   python -m ao3kit config ...
   python -m ao3kit login    # test AO3 username/password
@@ -38,7 +39,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Tag profiles, search, resolve, tag sets, graph, background cache",
     )
     sub.add_parser("download", help="Download EPUBs from JSONL results")
-    sub.add_parser("job", help="Background jobs: start, list, status, log, attach, stop")
+    sub.add_parser(
+        "cover",
+        help="Generate AO3-style covers and stamp them into EPUBs",
+    )
+    sub.add_parser(
+        "job",
+        help="Background jobs: start, list, status, log, attach, stop, retry, delete, clear",
+    )
     sub.add_parser("config", help="User settings and rule files (.ao3kit/)")
     sub.add_parser("login", help="Test AO3 username and password")
     sub.add_parser(
@@ -79,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.epubs import main as epubs_main
 
         return epubs_main(rest)
+
+    if command == "cover":
+        from ao3kit.covers import main as cover_main
+
+        return cover_main(rest)
 
     if command == "job":
         from ao3kit.jobs import main as job_main
