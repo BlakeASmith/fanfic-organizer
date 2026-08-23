@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ex_p = rules_sub.add_parser(
         "install-example",
-        help="Copy bundled example_tag_rules.py into rules/",
+        help="Write the bundled rules template into rules/",
     )
     ex_p.add_argument("--name", default="example")
 

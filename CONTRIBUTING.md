@@ -41,8 +41,6 @@ Restart Calibre yourself unless you are iterating on plugin UI and need the GUI 
 | Calibre columns / import | `calibre-plugin/importer.py`, `columns.py`, `cleaned.py` |
 | Plugin menu / settings | `ao3_plugin.py`, `config.py`, `dialogs.py` |
 
-Root `scrape_ao3.py`, `ao3_http.py`, and similar files are compatibility shims. Import from `ao3kit`.
-
 Known copies (do not invent a third): `calibre-plugin/similar.py` mirrors `ao3kit/similar.py`; `SORT_OPTIONS` lives in `ao3kit/scrape.py` and `calibre-plugin/scrape_run.py` (tests check they match).
 
 ## Version, changelog, and releases

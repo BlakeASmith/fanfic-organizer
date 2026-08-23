@@ -21,6 +21,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 ### Documentation
 
 - Add a features list and attribution section to the README.
+- Drop leftover root shims (`scrape_ao3.py`, …) and example files that are not part of the plugin.
 
 ## [0.26.1] - 2026-08-23
 
