@@ -1,4 +1,4 @@
-# Wranglekit: zip, Calibre install, GitHub release
+# Fanfic Organizer: zip, Calibre install, GitHub release
 # https://github.com/casey/just
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
@@ -9,7 +9,7 @@ python := env_var_or_default("PYTHON", "python")
 default:
     @just --list
 
-# Build wranglekit.zip (GitHub Release artifact)
+# Build fanfic-organizer.zip (GitHub Release artifact)
 build:
     {{ python }} makeplugin.py zip
 

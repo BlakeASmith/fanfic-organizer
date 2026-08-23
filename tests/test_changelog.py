@@ -1,4 +1,4 @@
-"""Keep a Changelog cut + version bump for wranglekit releases."""
+"""Keep a Changelog cut + version bump for fanfic-organizer releases."""
 
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ def test_repo_changelog_has_unreleased_and_first_release():
     text = CHANGELOG_PATH.read_text(encoding="utf-8")
     _preamble, sections = parse_changelog(text)
     assert sections[0].title == "Unreleased"
-    assert "wranglekit.zip" in notes_for_version(text, "0.26.0")
+    assert "fanfic-organizer.zip" in notes_for_version(text, "0.26.0")
 
 
 def test_makeplugin_changelog_stdout(capsys):

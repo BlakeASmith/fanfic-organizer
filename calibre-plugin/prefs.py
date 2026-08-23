@@ -2,7 +2,7 @@
 
 from calibre.utils.config import JSONConfig
 
-PREFS_NAMESPACE = 'plugins/wranglekit'
+PREFS_NAMESPACE = 'plugins/fanfic-organizer'
 LEGACY_PREFS_NAMESPACE = 'plugins/ao3_scraper'
 
 prefs = JSONConfig(PREFS_NAMESPACE)

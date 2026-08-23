@@ -1,6 +1,6 @@
 # Changelog
 
-User-facing changes to wranglekit (Calibre plugin) and `ao3kit` (library).
+User-facing changes to fanfic-organizer (Calibre plugin) and `ao3kit` (library).
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Headings follow [Conventional Commits](https://www.conventionalcommits.org/):
@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Rename the Calibre plugin and GitHub project to **Fanfic Organizer**. The release zip is `fanfic-organizer.zip`. Remove a leftover **Wranglekit** (or **AO3 Scraper**) plugin before loading the new zip.
+
 ### Documentation
 
 - Add a features list and attribution section to the README.
@@ -22,13 +26,13 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Breaking Changes
 
-- Store settings, cache, jobs, and the AO3 session outside the Calibre library, following the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`). Checkout `.ao3kit` / `.cache` trees are no longer read. Override with `AO3KIT_HOME` / `AO3KIT_CONFIG_DIR` / `AO3KIT_CACHE_DIR` / `AO3KIT_STATE_DIR`.
+- Store settings, cache, jobs, and the AO3 session outside the Calibre library, following the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). Checkout `.ao3kit` / `.cache` trees are no longer read. Override with `AO3KIT_HOME` / `AO3KIT_CONFIG_DIR` / `AO3KIT_CACHE_DIR` / `AO3KIT_STATE_DIR`.
 - Remove the deprecated web UI, REST API, templates, and `python -m ao3kit serve`. Use the Calibre plugin.
 
 ### Bug Fixes
 
 - Fix checkout installs not finding ao3kit after Calibre loads the plugin from its zip (`dev_project.json` is read from inside that zip).
-- Dev install registers the plugin as **Wranglekit** and removes a leftover **AO3 Scraper** plugin or toolbar button.
+- Dev install registers the plugin as **Fanfic Organizer** and removes a leftover **AO3 Scraper** plugin or toolbar button.
 
 ### Build
 
@@ -39,13 +43,13 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 - Treat the Calibre plugin as the primary interface; keep CLI docs to a short optional note.
 - Add `just load-dev`, `just build`, and `just release` wrappers around plugin install, zip, and GitHub release.
-- Document checkout `install` vs the fat `wranglekit.zip` GitHub artifact, and how CI attaches that zip to a tag.
+- Document checkout `install` vs the fat `fanfic-organizer.zip` GitHub artifact, and how CI attaches that zip to a tag.
 - Adopt Keep a Changelog + Conventional Commits, with `python makeplugin.py release` to cut [Unreleased] into the GitHub release body.
 - State that 0.x releases are not rigorously tested (part-time open source); prefer **Stable** marks added after the fact, or accept bugs and try another release if one will not run.
 
 ## [0.26.0] - 2026-08-23
 
-First GitHub Release of **Wranglekit**. Install `wranglekit.zip` from the release page
+First GitHub Release of **Fanfic Organizer**. Install `fanfic-organizer.zip` from the release page
 (Preferences → Plugins → Load plugin from file). The zip is self-contained: plugin UI,
 ao3kit, and vendored Python libraries. No git checkout or `pip install` required.
 
@@ -53,7 +57,7 @@ If you loaded an older **AO3 Scraper** zip, remove that plugin first.
 
 ### Features
 
-- Self-contained Calibre plugin zip (`wranglekit.zip`) bundling the Qt UI, ao3kit, and pure-Python deps.
+- Self-contained Calibre plugin zip (`fanfic-organizer.zip`) bundling the Qt UI, ao3kit, and pure-Python deps.
 - Search AO3, search similar, and import JSONL or zip into a Calibre library.
 - Selected books: complete selected, download native EPUBs, generate covers, import the rest of a series, fill Series, simplify tags, edit collections.
 - Detachable background jobs (attach logs, stop, retry).

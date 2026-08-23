@@ -1,4 +1,4 @@
-"""XDG Base Directory locations for wranglekit user files."""
+"""XDG Base Directory locations for fanfic-organizer user files."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ def test_xdg_homes_win_when_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv("AO3KIT_CACHE_DIR", raising=False)
     monkeypatch.delenv("AO3KIT_STATE_DIR", raising=False)
 
-    assert paths.config_dir() == tmp_path / "cfg" / "wranglekit"
-    assert paths.cache_dir() == tmp_path / "cch" / "wranglekit"
-    assert paths.state_dir() == tmp_path / "st" / "wranglekit"
-    assert paths.jobs_dir() == tmp_path / "st" / "wranglekit" / "jobs"
+    assert paths.config_dir() == tmp_path / "cfg" / "fanfic-organizer"
+    assert paths.cache_dir() == tmp_path / "cch" / "fanfic-organizer"
+    assert paths.state_dir() == tmp_path / "st" / "fanfic-organizer"
+    assert paths.jobs_dir() == tmp_path / "st" / "fanfic-organizer" / "jobs"
     assert paths.tag_cache_file().name == "ao3_tag_cache.sqlite"
     assert paths.rate_db_file().parent == paths.state_dir()
     assert paths.session_file().parent == paths.state_dir()
@@ -63,10 +63,10 @@ def test_checkout_ao3kit_is_ignored_when_xdg_unset(
     ):
         monkeypatch.delenv(name, raising=False)
 
-    assert paths.config_dir() == fake_home / ".config" / "wranglekit"
+    assert paths.config_dir() == fake_home / ".config" / "fanfic-organizer"
     assert leftover not in paths.config_dir().parents
     assert paths.session_file() == (
-        fake_home / ".local" / "state" / "wranglekit" / "ao3_session.json"
+        fake_home / ".local" / "state" / "fanfic-organizer" / "ao3_session.json"
     )
 
 
@@ -75,7 +75,7 @@ def test_python_stamp_is_under_state(tmp_path: Path, monkeypatch: pytest.MonkeyP
     project = tmp_path / "proj"
     project.mkdir()
     stamp = paths.python_stamp_file(project)
-    assert stamp.parent == tmp_path / "st" / "wranglekit" / "python-stamps"
+    assert stamp.parent == tmp_path / "st" / "fanfic-organizer" / "python-stamps"
     assert stamp.name != "python"
 
 
@@ -83,4 +83,4 @@ def test_calibre_lock_uses_runtime_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
-    assert paths.calibre_lock_file().parent == tmp_path / "run" / "wranglekit"
+    assert paths.calibre_lock_file().parent == tmp_path / "run" / "fanfic-organizer"

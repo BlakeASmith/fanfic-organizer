@@ -26,8 +26,8 @@ from calibre_dev.lock import (
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "calibre-plugin"
 DEV_PROJECT_STAMP = "dev_project.json"
-PLUGIN_NAME = "Wranglekit"
-LEGACY_PLUGIN_NAMES = ("AO3 Scraper",)
+PLUGIN_NAME = "Fanfic Organizer"
+LEGACY_PLUGIN_NAMES = ("AO3 Scraper", "Wranglekit")
 MAC_CALIBRE_BIN = Path("/Applications/calibre.app/Contents/MacOS")
 SHUTDOWN_WAIT = 20.0
 TERM_WAIT = 5.0
@@ -189,13 +189,13 @@ def _rename_legacy_plugin_value(
     return value
 
 
-def apply_wranglekit_gui_names(
+def apply_fanfic_organizer_gui_names(
     config_dir: Path | None = None,
     *,
     name: str = PLUGIN_NAME,
     legacy_names: tuple[str, ...] = LEGACY_PLUGIN_NAMES,
 ) -> bool:
-    """Point leftover AO3 Scraper toolbar/menu entries at Wranglekit."""
+    """Point leftover AO3 Scraper / Wranglekit toolbar entries at Fanfic Organizer."""
     path = (config_dir or calibre_config_dir()) / "gui.json"
     if not path.is_file():
         return False
@@ -235,7 +235,7 @@ def install_plugin_zip(plugin_dir: Path | None = None) -> None:
     write_dev_project_stamp(target)
     remove_legacy_calibre_plugins(customize)
     _run_checked([customize, "-b", str(target)], timeout=120)
-    apply_wranglekit_gui_names()
+    apply_fanfic_organizer_gui_names()
 
 
 def shutdown_calibre_gui(calibre_bin: str | None = None) -> None:
@@ -344,7 +344,7 @@ class CalibreCtl:
         customize = self._find_customize()
         remove_legacy_calibre_plugins(customize)
         _run_checked([customize, "-b", str(self.plugin_dir)], timeout=120)
-        apply_wranglekit_gui_names()
+        apply_fanfic_organizer_gui_names()
 
     def _shutdown(self) -> None:
         shutdown_calibre_gui(self._find_calibre())
@@ -547,7 +547,7 @@ class CalibreCtl:
 
 __all__ = [
     "PLUGIN_NAME",
-    "apply_wranglekit_gui_names",
+    "apply_fanfic_organizer_gui_names",
     "write_dev_project_stamp",
     "CalibreCtl",
     "RestartLocked",

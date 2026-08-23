@@ -21,9 +21,9 @@ ao3kit/                 # Application package
   config.py             # User settings + rule file storage (XDG config)
   tags/                 # Tag profiles, resolver, SQLite cache, code-first rules
   cli.py                # Unified CLI (python -m ao3kit …)
-~/.config/wranglekit/   # User config (XDG; AO3KIT_HOME override)
-~/.cache/wranglekit/    # Tag cache, graph dumps
-~/.local/state/wranglekit/  # jobs/, rate DB, AO3 session
+~/.config/fanfic-organizer/   # User config (XDG; AO3KIT_HOME override)
+~/.cache/fanfic-organizer/    # Tag cache, graph dumps
+~/.local/state/fanfic-organizer/  # jobs/, rate DB, AO3 session
 calibre-plugin/         # Calibre plugin (search/scrape via ao3kit + JSONL/zip import)
 calibre_dev/            # Dev: lock-aware Calibre restart + FastMCP server + changelog/release helpers
 makeplugin.py           # zip / install / changelog / release; optional --restart
@@ -51,12 +51,12 @@ The plugin and optional CLI share one core. Prefer implementing behavior in `ao3
 - Put new logic in `scrape` / `tags` / `epubs` / `config` / `http` / `rate` / `jobs`, not only in one UI.
 - When adding a user-facing feature, update the plugin; keep a CLI flag in relative parity. Do not add README command catalogs.
 - Work record JSON, `cleaned` enrich shape, and `ao3-import.zip` layout are shared contracts — do not diverge them per surface.
-- AO3 traffic must use `ao3kit.http` so host-wide rate limiting (`$XDG_STATE_HOME/wranglekit/ao3_rate.sqlite`) applies across every interface.
+- AO3 traffic must use `ao3kit.http` so host-wide rate limiting (`$XDG_STATE_HOME/fanfic-organizer/ao3_rate.sqlite`) applies across every interface.
 - OK: CLI stdout vs Qt dialogs. Not OK: a scrape filter or tag resolve path that exists on only one of plugin / CLI.
 
 ## Calibre plugin (new library)
 
-End users install **wranglekit.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). The plugin shows up in Calibre as **Wranglekit**. That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config, cache, jobs, and the AO3 session follow the XDG Base Directory spec (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`), not the Calibre library.
+End users install **fanfic-organizer.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). The plugin shows up in Calibre as **Fanfic Organizer**. That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config, cache, jobs, and the AO3 session follow the XDG Base Directory spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not the Calibre library.
 
 A git checkout wins when plugin settings **Project path** is set, `AO3KIT_PROJECT` is set, or `python makeplugin.py install` wrote `calibre-plugin/dev_project.json` (copied into the installed plugin). Otherwise the bundled zip runtime is used. `python makeplugin.py install` stays `calibre-customize -b` (plugin UI only, shells out to the checkout). `python makeplugin.py zip` is the fat release artifact.
 
@@ -68,15 +68,15 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 
 | Command | What it does |
 |---|---|
-| `python makeplugin.py zip` / `just build` | Self-contained `wranglekit.zip` (plugin + ao3kit + vendor from `requirements.txt`, skipping `lxml` and Pillow) for GitHub Releases. Native wheels are stripped. |
-| `python makeplugin.py install` / `just load-dev` | Remove leftover **AO3 Scraper**, `calibre-customize -b` as **Wranglekit** (checkout jobs via `dev_project.json`). Then tell the user to restart. |
+| `python makeplugin.py zip` / `just build` | Self-contained `fanfic-organizer.zip` (plugin + ao3kit + vendor from `requirements.txt`, skipping `lxml` and Pillow) for GitHub Releases. Native wheels are stripped. |
+| `python makeplugin.py install` / `just load-dev` | Remove leftover **AO3 Scraper**, `calibre-customize -b` as **Fanfic Organizer** (checkout jobs via `dev_project.json`). Then tell the user to restart. |
 | `python makeplugin.py install --restart` | Install, then quit and start Calibre. |
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |
 | `python makeplugin.py status` | GUI running? Restart lock held? |
 | `python makeplugin.py changelog` | Print `[Unreleased]` (or `changelog 0.26.0` for a shipped section). |
 | `python makeplugin.py release` / `just release` | Cut `[Unreleased]` into the next 0.x minor (or `--patch` / `just release patch`). Add `--publish` / `just release publish` to commit, push, zip, and `gh release create`. 1.0+ is not supported. |
 
-Checkout **install** is for developers. End users only ever load **wranglekit.zip** from GitHub Releases. Tag `vX.Y.Z` runs `.github/workflows/release.yml`, which zips the plugin and attaches it using the matching CHANGELOG section as the release body.
+Checkout **install** is for developers. End users only ever load **fanfic-organizer.zip** from GitHub Releases. Tag `vX.Y.Z` runs `.github/workflows/release.yml`, which zips the plugin and attaches it using the matching CHANGELOG section as the release body.
 
 ### Changelog and GitHub Releases
 
@@ -87,7 +87,7 @@ Keep [CHANGELOG.md](CHANGELOG.md) current. Standards are in [CONTRIBUTING.md](CO
 - `just release publish` is the usual release path; pushing the tag alone is enough for CI to attach the zip if the changelog was already cut.
 - Every **0.x** GitHub release body includes the pre-1.0 testing disclaimer (not fully tested; prefer **Stable** after the fact; try another tag if one will not run). Do not strip it. Mark **Stable** only after soak with no reported problems — see CONTRIBUTING.
 
-`--restart` / `restart` take a **host-wide lock** (`$XDG_RUNTIME_DIR/wranglekit/calibre_restart.lock`, override `AO3KIT_CALIBRE_LOCK`). Only one agent can force-restart at a time. Pass `--agent-id <short-name>` so the holder is visible. CLI waits up to `--lock-timeout` seconds (default 15); if still busy, it exits without killing Calibre.
+`--restart` / `restart` take a **host-wide lock** (`$XDG_RUNTIME_DIR/fanfic-organizer/calibre_restart.lock`, override `AO3KIT_CALIBRE_LOCK`). Only one agent can force-restart at a time. Pass `--agent-id <short-name>` so the holder is visible. CLI waits up to `--lock-timeout` seconds (default 15); if still busy, it exits without killing Calibre.
 
 **Prefer the `calibre-dev` FastMCP tools** over `killall` / `osascript` / `open -a calibre`. Project config is `.cursor/mcp.json` (`python3 -m calibre_dev`). Tools:
 
@@ -171,7 +171,7 @@ AO3 login lives in plugin settings, or `AO3_USERNAME` / `AO3_PASSWORD` in a giti
 
 Long-running CLI and plugin work is a **detached process plus a log**. Attach is only a tail; detaching does not stop the work.
 
-Layout (under `$XDG_STATE_HOME/wranglekit/jobs/<id>/`, override with `AO3KIT_JOBS_DIR`):
+Layout (under `$XDG_STATE_HOME/fanfic-organizer/jobs/<id>/`, override with `AO3KIT_JOBS_DIR`):
 
 | File | Role |
 |---|---|
@@ -185,7 +185,7 @@ Separate steps with `--and`. JSON is on stdout; a one-line summary is on stderr.
 
 ### EPUB covers
 
-Native AO3 EPUBs have no cover image. `ao3kit.covers` generates one (title, author, word count, and quality score on a dark fandom-coloured gradient, same idea as [add-cover-to-ao3-files](https://github.com/alexwlchan/add-cover-to-ao3-files)) and stamps it into the EPUB OPF. Same-fandom works get the same colour so a grid view groups them. Style lives in `~/.config/wranglekit/config.yaml` under `cover:` (fields, font, size, palette, per-fandom colour map). Download/scrape use `cover.enabled` (default on). Cover style is in plugin settings; **Selected books → Generate covers** stamps covers onto existing EPUBs.
+Native AO3 EPUBs have no cover image. `ao3kit.covers` generates one (title, author, word count, and quality score on a dark fandom-coloured gradient, same idea as [add-cover-to-ao3-files](https://github.com/alexwlchan/add-cover-to-ao3-files)) and stamps it into the EPUB OPF. Same-fandom works get the same colour so a grid view groups them. Style lives in `~/.config/fanfic-organizer/config.yaml` under `cover:` (fields, font, size, palette, per-fandom colour map). Download/scrape use `cover.enabled` (default on). Cover style is in plugin settings; **Selected books → Generate covers** stamps covers onto existing EPUBs.
 
 ### Series
 
@@ -212,7 +212,7 @@ Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolve
 1. Raw tag miss → fetch that tag’s profile.
 2. If it’s a synonym, follow the merger link and fetch the **canonical** page once.
 3. Index every synonym listed on the canonical page as one *tree* (shared `root` + `fetched_at`) → later raw forms resolve with **zero** fetches.
-4. Persist to `$XDG_CACHE_HOME/wranglekit/ao3_tag_cache.sqlite` (old `.json` is imported once on open).
+4. Persist to `$XDG_CACHE_HOME/fanfic-organizer/ao3_tag_cache.sqlite` (old `.json` is imported once on open).
 5. Trees older than `tag_cache_ttl_days` (default **90**; `0` = never) are purged automatically so wrangling stays fresh.
 6. **Background warming** (`tags warm start`) detaches a slow daemon that re-scans JSONL / names files for uncached tags and fetches them through `TagResolver` (host-wide limiter plus `tag_warm_interval`, default 10s extra between fetches). It does not raise the shared scrape/download interval. Idle-exits after a few empty polls. Calibre **Warm tag cache…** dumps library tags to a names file and runs the same command.
 7. **Tag graph** (`tags graph`) reads the cache (no AO3 fetch) and writes an HTML / JSON / DOT view of works plus synonym and metatag links. `--jsonl` places each work as a work node linked to its tags. Positions are precomputed (fandom clusters, bridge tags in the middle); the viewer can regroup by largest fandom, mixed-franchise crossovers, ships, or one group, and optionally settle the focused neighborhood. Calibre **Tag graph…** dumps JSONL, starts a `tags graph serve` job (id `graph`), and opens the live viewer. **Find similar** on a work or a tag lets you pick fandoms, ships, characters, tags, excludes, extra query, and filters, then queues a scrape/import; the dump updates as Calibre indexes matches. Clicking a tag starts the search with that tag. `python -m ao3kit tags graph serve` is the same server for UI iteration; **Reload data** rebuilds from the JSONL dump.
@@ -220,7 +220,7 @@ Resolve a work’s tags (or ad-hoc names) onto the canonical set via `TagResolve
 
 ### User config & rules storage
 
-User settings and rule modules live in **`$XDG_CONFIG_HOME/wranglekit/`** (usually `~/.config/wranglekit`; override with
+User settings and rule modules live in **`$XDG_CONFIG_HOME/fanfic-organizer/`** (usually `~/.config/fanfic-organizer`; override with
 `AO3KIT_HOME`).
 
 ```
@@ -299,7 +299,7 @@ Built-ins (`KeepSeparateRule`, `MapToRule`, `CollectRule`, `DropRule`) cover com
 Scrape, tag resolve, and EPUB download share one request path. Rate limiting is
 **host-wide** (not just process-wide): CLI and the Calibre plugin’s `ao3kit`
 subprocess coordinate through ``ao3kit.rate`` /
-``ao3kit.rate_store`` (SQLite at ``$XDG_STATE_HOME/wranglekit/ao3_rate.sqlite``, override with
+``ao3kit.rate_store`` (SQLite at ``$XDG_STATE_HOME/fanfic-organizer/ao3_rate.sqlite``, override with
 ``AO3KIT_RATE_DB``). Concurrent processes on the same host wait their turn.
 
 - **Login** — form POST with authenticity token (same flow as ao3downloader). Scrape and EPUB download log in immediately when credentials are set, then cookies are saved to XDG state ``ao3_session.json`` (password is not stored). Later CLI/plugin processes reuse that session and skip the login GET+POST until cookies expire or AO3 returns a logged-out page. ``python -m ao3kit login`` / Test login always hit AO3, then refresh the cache. Disable with ``AO3KIT_SESSION_CACHE=0``. Login uses its own ~1s interval and a 20s request timeout so a hung login page retries instead of sitting on “Logging in to AO3…” for 60s. Tag lookups stay anonymous (and skip the network entirely on cache hits) until AO3 returns a login wall, unless a saved session for the same username is restored.

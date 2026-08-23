@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--home",
         type=Path,
-        help="Config directory (default: AO3KIT_HOME or XDG config home / wranglekit)",
+        help="Config directory (default: AO3KIT_HOME or XDG config home / fanfic-organizer)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

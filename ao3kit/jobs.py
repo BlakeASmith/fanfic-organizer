@@ -4,7 +4,7 @@ Every long-running command can run as a child process with a log file.
 Attach (``job log --follow`` / the plugin log window) is just a tail;
 detaching does not stop the work.
 
-Layout (under ``$XDG_STATE_HOME/wranglekit/jobs/<id>/``, override with ``AO3KIT_JOBS_DIR``)::
+Layout (under ``$XDG_STATE_HOME/fanfic-organizer/jobs/<id>/``, override with ``AO3KIT_JOBS_DIR``)::
 
     spec.json      argv steps, title, result spec, plugin ingest hints
     status.json    pid, running, last log line, exit code, result
@@ -15,7 +15,7 @@ Layout (under ``$XDG_STATE_HOME/wranglekit/jobs/<id>/``, override with ``AO3KIT_
 CLI::
 
     python -m ao3kit job start --title "Search" --kind scrape -- scrape -o out.jsonl --verbose
-    python -m ao3kit job start --dir $XDG_STATE_HOME/wranglekit/jobs/<id>
+    python -m ao3kit job start --dir $XDG_STATE_HOME/fanfic-organizer/jobs/<id>
     python -m ao3kit job list
     python -m ao3kit job status [id]
     python -m ao3kit job log <id> [--follow]

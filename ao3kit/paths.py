@@ -1,4 +1,4 @@
-"""XDG Base Directory locations for wranglekit / ao3kit user files.
+"""XDG Base Directory locations for fanfic-organizer / ao3kit user files.
 
 See https://specifications.freedesktop.org/basedir/latest/
 
@@ -7,13 +7,13 @@ cache, jobs, the host-wide rate limiter, and the AO3 session cookie jar.
 
 Layout (Unix defaults)::
 
-    $XDG_CONFIG_HOME/wranglekit/     # ~/.config/wranglekit
+    $XDG_CONFIG_HOME/fanfic-organizer/     # ~/.config/fanfic-organizer
         config.yaml, mappings.yaml, collections.yaml, rules/
-    $XDG_CACHE_HOME/wranglekit/      # ~/.cache/wranglekit
+    $XDG_CACHE_HOME/fanfic-organizer/      # ~/.cache/fanfic-organizer
         ao3_tag_cache.sqlite, tag-graph outputs, plugin-vendor/
-    $XDG_STATE_HOME/wranglekit/      # ~/.local/state/wranglekit
+    $XDG_STATE_HOME/fanfic-organizer/      # ~/.local/state/fanfic-organizer
         jobs/, ao3_rate.sqlite, ao3_session.json, python stamps
-    $XDG_RUNTIME_DIR/wranglekit/     # Calibre restart lock (fallback: state/runtime)
+    $XDG_RUNTIME_DIR/fanfic-organizer/     # Calibre restart lock (fallback: state/runtime)
 
 Environment overrides (all optional)::
 
@@ -33,7 +33,7 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "wranglekit"
+APP_NAME = "fanfic-organizer"
 
 CONFIG_FILENAME = "config.yaml"
 MAPPINGS_FILENAME = "mappings.yaml"

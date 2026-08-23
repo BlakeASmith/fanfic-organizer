@@ -29,11 +29,11 @@ GRAPH_RECORD_KEYS = (
 
 def _user_dirs():
     try:
-        from calibre_plugins.wranglekit.runtime import load_user_dirs
+        from calibre_plugins.fanfic_organizer.runtime import load_user_dirs
         return load_user_dirs()
     except ImportError:
         pass
-    name = '_wranglekit_plugin_runtime'
+    name = '_fanfic_organizer_plugin_runtime'
     cached = sys.modules.get(name)
     if cached is None:
         path = Path(__file__).resolve().parent / 'runtime.py'

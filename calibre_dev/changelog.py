@@ -1,4 +1,4 @@
-"""Keep a Changelog + Conventional Commits helpers for wranglekit releases."""
+"""Keep a Changelog + Conventional Commits helpers for fanfic-organizer releases."""
 
 from __future__ import annotations
 

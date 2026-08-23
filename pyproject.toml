@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ao3kit"
 dynamic = ["version"]
-description = "Scrape AO3, wrangle tags, download EPUBs, and import into Calibre (Wranglekit plugin)."
+description = "Scrape AO3, wrangle tags, download EPUBs, and import into Calibre (Fanfic Organizer plugin)."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "Wranglekit contributors" }]
+authors = [{ name = "Fanfic Organizer contributors" }]
 dependencies = [
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
@@ -26,8 +26,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/BlakeASmith/wranglekit"
-Issues = "https://github.com/BlakeASmith/wranglekit/issues"
+Homepage = "https://github.com/BlakeASmith/fanfic-organizer"
+Issues = "https://github.com/BlakeASmith/fanfic-organizer/issues"
 
 [project.scripts]
 ao3kit = "ao3kit.cli:main"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build, install, or release the Calibre plugin.
 
-``zip`` writes a self-contained ``wranglekit.zip`` for GitHub Releases
+``zip`` writes a self-contained ``fanfic-organizer.zip`` for GitHub Releases
 (plugin UI + ao3kit + vendored pure-Python deps). ``install`` still uses
 ``calibre-customize -b`` from ``calibre-plugin/`` for fast UI iteration.
 ``release`` cuts ``CHANGELOG.md`` [Unreleased] into a versioned section,
@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
-OUTPUT = ROOT / "wranglekit.zip"
+OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
 SKIP_VENDOR_PACKAGES = frozenset({"lxml", "pillow", "pil"})
@@ -145,7 +145,7 @@ def iter_zip_entries(
 ) -> list[tuple[Path, str]]:
     """``(filesystem path, zip arcname)`` for a release plugin zip."""
     entries: list[tuple[Path, str]] = []
-    import_name = plugin_dir / "plugin-import-name-wranglekit.txt"
+    import_name = plugin_dir / "plugin-import-name-fanfic_organizer.txt"
     if not import_name.exists():
         raise SystemExit(f"Missing required file: {import_name}")
     for path in sorted(plugin_dir.glob("*.py")):
@@ -350,11 +350,11 @@ def _cmd_release(
     )
     if publish:
         _publish_release(version, notes)
-        print(f"Published GitHub release v{version} with wranglekit.zip.", file=sys.stderr)
+        print(f"Published GitHub release v{version} with fanfic-organizer.zip.", file=sys.stderr)
     else:
         print(
             f"Commit those files and tag v{version} "
-            "(push the tag; CI attaches wranglekit.zip). "
+            "(push the tag; CI attaches fanfic-organizer.zip). "
             "To cut and publish in one step: python makeplugin.py release --publish",
             file=sys.stderr,
         )
@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="makeplugin.py",
         description=(
-            "Build a self-contained wranglekit.zip for GitHub Releases, "
+            "Build a self-contained fanfic-organizer.zip for GitHub Releases, "
             "install the Calibre plugin from calibre-plugin/, or cut a "
             "changelog release. Restart is opt-in and lock-aware."
         ),

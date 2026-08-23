@@ -1,4 +1,4 @@
-"""AO3 toolkit used by the Wranglekit Calibre plugin (optional CLI: python -m ao3kit)."""
+"""AO3 toolkit used by the Fanfic Organizer Calibre plugin (optional CLI: python -m ao3kit)."""
 
 from __future__ import annotations
 

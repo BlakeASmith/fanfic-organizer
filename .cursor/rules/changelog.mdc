@@ -27,6 +27,6 @@ python makeplugin.py release                   # same as just release
 python makeplugin.py release --patch --publish
 ```
 
-`--publish` uses [Unreleased] (now the versioned section) as the GitHub release body and attaches `wranglekit.zip`. Do not invent a second notes file. Fail the release if Unreleased has no bullets.
+`--publish` uses [Unreleased] (now the versioned section) as the GitHub release body and attaches `fanfic-organizer.zip`. Do not invent a second notes file. Fail the release if Unreleased has no bullets.
 
 Every **0.x** release body must keep the pre-1.0 disclaimer (`calibre_dev.changelog.PRE_1_0_DISCLAIMER`): not rigorously tested, part-time OSS, prefer **Stable** (marked after the fact), try another release if one will not run. Do not strip it. Do not mark Stable at publish time.

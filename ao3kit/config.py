@@ -1,7 +1,7 @@
 """Persistent user configuration and rule files for ao3kit.
 
 Default location follows the XDG Base Directory spec
-(``$XDG_CONFIG_HOME/wranglekit``, usually ``~/.config/wranglekit``).
+(``$XDG_CONFIG_HOME/fanfic-organizer``, usually ``~/.config/fanfic-organizer``).
 Override with ``AO3KIT_HOME`` or ``AO3KIT_CONFIG_DIR``.
 
 Layout::

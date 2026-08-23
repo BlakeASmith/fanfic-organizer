@@ -1337,7 +1337,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-o",
         "--output",
-        help="Output path (default: XDG cache dir / wranglekit / tag-graph.html, or stdout for json/dot)",
+        help="Output path (default: XDG cache dir / fanfic-organizer / tag-graph.html, or stdout for json/dot)",
     )
     parser.add_argument(
         "--format",
@@ -1367,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
         "--cache",
         type=Path,
         default=None,
-        help="Tag cache SQLite path (default: XDG cache dir / wranglekit)",
+        help="Tag cache SQLite path (default: XDG cache dir / fanfic-organizer)",
     )
     parser.add_argument(
         "--cache-ttl-days",
@@ -1720,7 +1720,7 @@ def serve_main(argv: list[str] | None = None) -> int:
         "--jsonl",
         action="append",
         default=[],
-        help="Work JSONL (default: XDG cache dir / wranglekit / tag_graph_works.jsonl)",
+        help="Work JSONL (default: XDG cache dir / fanfic-organizer / tag_graph_works.jsonl)",
     )
     parser.add_argument("--names-file", action="append", default=[])
     parser.add_argument(

@@ -1,4 +1,4 @@
-# wranglekit
+# fanfic-organizer
 
 A **Calibre plugin** for scraping AO3 search results, wrangling tags, downloading native EPUBs, and cleaning metadata. **`ao3kit`** is the Python library the plugin runs.
 
@@ -41,7 +41,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 - Long work runs as detachable background jobs: attach the log, hide the window without stopping, stop, retry, delete
 - **Running jobs…** lists search, download, simplify, series, collections, tag cache, and the graph viewer
 - Optional AO3 login (session cookie saved; password is not stored)
-- Host-wide request pacing shared by every wranglekit process on the machine (honours 429 / Retry-After)
+- Host-wide request pacing shared by every fanfic-organizer process on the machine (honours 429 / Retry-After)
 
 **Library layout**
 
@@ -49,13 +49,13 @@ On first import into an empty library (or via plugin settings), creates and fill
 
 ## Install
 
-Download **wranglekit.zip** from [Releases](https://github.com/BlakeASmith/wranglekit/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
+Download **fanfic-organizer.zip** from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
 
-1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `wranglekit.zip`.
+1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `fanfic-organizer.zip`.
 2. Restart Calibre.
 3. Open a **new** fanfic library (or one you are happy to write). Plugin settings → optional AO3 login.
 
-Search, import, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`), not in that library.
+Search, import, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not in that library.
 
 Checkout development (install from this repo, cut a release) is in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
@@ -65,15 +65,15 @@ There is a scripting CLI over the same library: `python -m ao3kit --help`. The p
 
 ## Attribution
 
-Wranglekit is original code. These projects were **reference** for behaviour, layout, and ideas — not forks, and none of them endorse this plugin.
+Fanfic Organizer is original code. These projects were **reference** for behaviour, layout, and ideas — not forks, and none of them endorse this plugin.
 
 - [Calibre](https://calibre-ebook.com/) — the ebook library this plugin runs in ([Kovid Goyal](https://github.com/kovidgoyal/calibre) and contributors).
-- [FanFicFare](https://github.com/jimmxinu/fanficfare) — Calibre fanfic columns (`#fandom`, `#relationships`, `#wordcount`, …) and the library layout wranglekit aims to match, so a new library can sit beside an existing FanFicFare one.
+- [FanFicFare](https://github.com/jimmxinu/fanficfare) — Calibre fanfic columns (`#fandom`, `#relationships`, `#wordcount`, …) and the library layout fanfic-organizer aims to match, so a new library can sit beside an existing FanFicFare one.
 - [ao3downloader](https://github.com/nianeyna/ao3downloader) — AO3 login (authenticity-token form POST), Cloudflare challenge HTML markers, and bulk download / session patterns.
 - [add-cover-to-ao3-files](https://github.com/alexwlchan/add-cover-to-ao3-files) — generated EPUB covers: title and author on a dark, fandom-seeded gradient so same-fandom works group in grid view.
 - [Archive of Our Own](https://archiveofourown.org/) — public search, work, series, and tag-wrangling pages. Not affiliated with the [Organization for Transformative Works](https://www.transformativeworks.org/).
 
-Runtime libraries (Beautiful Soup, lxml, requests, PyYAML, Pillow, and others) are listed in [`requirements.txt`](requirements.txt) and vendored into `wranglekit.zip`.
+Runtime libraries (Beautiful Soup, lxml, requests, PyYAML, Pillow, and others) are listed in [`requirements.txt`](requirements.txt) and vendored into `fanfic-organizer.zip`.
 
 ## Docs
 

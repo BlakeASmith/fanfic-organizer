@@ -12,7 +12,7 @@ import pytest
 
 from calibre_dev.calibre import (
     CalibreCtl,
-    apply_wranglekit_gui_names,
+    apply_fanfic_organizer_gui_names,
     is_calibre_gui_command,
     list_calibre_gui_pids,
     parse_ps_line,
@@ -38,7 +38,7 @@ def test_install_writes_dev_project_stamp(tmp_path: Path, monkeypatch: pytest.Mo
     ctl = CalibreCtl(lock_path=tmp_path / "lock", plugin_dir=plugin_dir)
     monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
     monkeypatch.setattr("calibre_dev.calibre._run_checked", lambda *a, **k: None)
-    monkeypatch.setattr("calibre_dev.calibre.apply_wranglekit_gui_names", lambda: False)
+    monkeypatch.setattr("calibre_dev.calibre.apply_fanfic_organizer_gui_names", lambda: False)
     ctl._install()
     data = json.loads((plugin_dir / "dev_project.json").read_text(encoding="utf-8"))
     assert Path(data["project"]) == ROOT
@@ -57,13 +57,14 @@ def test_install_removes_legacy_plugin_then_builds(
 
     monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
     monkeypatch.setattr("calibre_dev.calibre._run_checked", fake_run)
-    monkeypatch.setattr("calibre_dev.calibre.apply_wranglekit_gui_names", lambda: True)
+    monkeypatch.setattr("calibre_dev.calibre.apply_fanfic_organizer_gui_names", lambda: True)
     ctl._install()
     assert calls[0] == ["/fake/calibre-customize", "-r", "AO3 Scraper"]
-    assert calls[1] == ["/fake/calibre-customize", "-b", str(plugin_dir)]
+    assert calls[1] == ["/fake/calibre-customize", "-r", "Wranglekit"]
+    assert calls[2] == ["/fake/calibre-customize", "-b", str(plugin_dir)]
 
 
-def test_apply_wranglekit_gui_names_replaces_ao3_scraper(tmp_path: Path):
+def test_apply_fanfic_organizer_gui_names_replaces_ao3_scraper(tmp_path: Path):
     gui = tmp_path / "gui.json"
     gui.write_text(
         json.dumps(
@@ -71,7 +72,7 @@ def test_apply_wranglekit_gui_names_replaces_ao3_scraper(tmp_path: Path):
                 "action-layout-toolbar": [
                     "FanFicFare",
                     "AO3 Scraper",
-                    "Wranglekit",
+                    "Fanfic Organizer",
                 ],
                 "action-layout-toolbar-device": ["AO3 Scraper", "Save To Disk"],
                 "geometry-of-plugin config dialog:User interface action:AO3 Scraper": {
@@ -82,12 +83,12 @@ def test_apply_wranglekit_gui_names_replaces_ao3_scraper(tmp_path: Path):
         + "\n",
         encoding="utf-8",
     )
-    assert apply_wranglekit_gui_names(tmp_path) is True
+    assert apply_fanfic_organizer_gui_names(tmp_path) is True
     data = json.loads(gui.read_text(encoding="utf-8"))
-    assert data["action-layout-toolbar"] == ["FanFicFare", "Wranglekit"]
-    assert data["action-layout-toolbar-device"] == ["Wranglekit", "Save To Disk"]
-    assert "geometry-of-plugin config dialog:User interface action:Wranglekit" in data
-    assert apply_wranglekit_gui_names(tmp_path) is False
+    assert data["action-layout-toolbar"] == ["FanFicFare", "Fanfic Organizer"]
+    assert data["action-layout-toolbar-device"] == ["Fanfic Organizer", "Save To Disk"]
+    assert "geometry-of-plugin config dialog:User interface action:Fanfic Organizer" in data
+    assert apply_fanfic_organizer_gui_names(tmp_path) is False
 
 
 def test_is_calibre_gui_command_matches_app_binary_only():

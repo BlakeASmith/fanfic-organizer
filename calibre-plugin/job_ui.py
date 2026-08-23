@@ -22,7 +22,7 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
-from calibre_plugins.wranglekit.jobs import (
+from calibre_plugins.fanfic_organizer.jobs import (
     first_line,
     format_job_header,
     job_clear_bucket,
@@ -33,7 +33,7 @@ from calibre_plugins.wranglekit.jobs import (
     read_json,
     read_log_tail,
 )
-from calibre_plugins.wranglekit.progress import _apply_progress_bar, _user_status_line
+from calibre_plugins.fanfic_organizer.progress import _apply_progress_bar, _user_status_line
 
 _RETRY_TIP = (
     'Run this job again from the start. Already-downloaded EPUBs and '
@@ -42,8 +42,8 @@ _RETRY_TIP = (
 
 
 _PHASE_WINDOW = {
-    'starting': 'Wranglekit',
-    'running': 'Wranglekit',
+    'starting': 'Fanfic Organizer',
+    'running': 'Fanfic Organizer',
     'saving': 'Saving to your library',
     'done': 'Done',
     'failed': "Couldn't finish",
@@ -82,7 +82,7 @@ class JobLogDialog(QDialog):
         self._closing = False
         self._finished = False
         self._last_summary = ''
-        self.setWindowTitle(f'Wranglekit — {self._title}')
+        self.setWindowTitle(f'Fanfic Organizer — {self._title}')
         self.setMinimumSize(640, 420)
         self.resize(760, 520)
         self.setWindowModality(Qt.NonModal)
@@ -186,7 +186,7 @@ class JobLogDialog(QDialog):
 
     def _apply_phase_chrome(self, phase: str, status: dict) -> None:
         self.setWindowTitle(
-            f'{_PHASE_WINDOW.get(phase, "Wranglekit")} — {self._title}'
+            f'{_PHASE_WINDOW.get(phase, "Fanfic Organizer")} — {self._title}'
         )
         self.banner.setText(_PHASE_BANNER.get(phase, 'Working…'))
         self.headline.setText(format_job_header(status, self._log_path))
@@ -249,7 +249,7 @@ class JobLogDialog(QDialog):
         self.bar.setFormat('Working…')
         self.banner.setText('Working…')
         self.headline.setText('Trying again…')
-        self.setWindowTitle(f'Wranglekit — {self._title}')
+        self.setWindowTitle(f'Fanfic Organizer — {self._title}')
         self._append('Trying again from the start (existing EPUBs and cached tags are skipped)…')
         self._timer.start()
         self.reload()
@@ -309,7 +309,7 @@ class JobsListDialog(QDialog):
         super().__init__(gui)
         self.gui = gui
         self._supervisor = supervisor
-        self.setWindowTitle('Wranglekit — Running jobs')
+        self.setWindowTitle('Fanfic Organizer — Running jobs')
         self.setMinimumSize(720, 360)
         self.setWindowModality(Qt.NonModal)
 
@@ -466,7 +466,7 @@ class JobsListDialog(QDialog):
     def _attach_selected(self) -> None:
         job_id = self._selected_id()
         if not job_id:
-            error_dialog(self.gui, 'Wranglekit', 'Select a job first.', show=True)
+            error_dialog(self.gui, 'Fanfic Organizer', 'Select a job first.', show=True)
             return
         self._supervisor.attach(job_id)
 
@@ -477,11 +477,11 @@ class JobsListDialog(QDialog):
             if job.get('running') and job.get('id')
         ]
         if not running:
-            error_dialog(self.gui, 'Wranglekit', 'Select a running job first.', show=True)
+            error_dialog(self.gui, 'Fanfic Organizer', 'Select a running job first.', show=True)
             return
         n = len(running)
         noun = 'job' if n == 1 else 'jobs'
-        if not question_dialog(self.gui, 'Wranglekit', f'Stop {n} {noun}?'):
+        if not question_dialog(self.gui, 'Fanfic Organizer', f'Stop {n} {noun}?'):
             return
         for job in running:
             self._supervisor.cancel(str(job.get('id')))
@@ -490,12 +490,12 @@ class JobsListDialog(QDialog):
     def _retry_selected(self) -> None:
         job_id = self._selected_id()
         if not job_id:
-            error_dialog(self.gui, 'Wranglekit', 'Select a job first.', show=True)
+            error_dialog(self.gui, 'Fanfic Organizer', 'Select a job first.', show=True)
             return
         if not job_is_retryable(self._selected_job()):
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'That job is not waiting to be retried. Retry is for failed or '
                 'stopped jobs after they finish writing into Calibre.',
                 show=True,
@@ -512,7 +512,7 @@ class JobsListDialog(QDialog):
         if not deletable:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more finished jobs to delete. '
                 'Running jobs and jobs still writing into Calibre cannot be deleted.',
                 show=True,
@@ -526,7 +526,7 @@ class JobsListDialog(QDialog):
             extra = f' {skipped} still running or writing will be left.'
         if not question_dialog(
             self.gui,
-            'Wranglekit',
+            'Fanfic Organizer',
             f'Remove {n} {noun} from the list? Books already in Calibre stay.{extra}',
         ):
             return
@@ -556,12 +556,12 @@ class JobsListDialog(QDialog):
             if job_clear_bucket(job) in buckets and job.get('id')
         ]
         if not ids:
-            info_dialog(self.gui, 'Wranglekit', 'Nothing to clear.', show=True)
+            info_dialog(self.gui, 'Fanfic Organizer', 'Nothing to clear.', show=True)
             return
         noun = 'job' if len(ids) == 1 else 'jobs'
         if not question_dialog(
             self.gui,
-            'Wranglekit',
+            'Fanfic Organizer',
             f'{prompt}\n\n{len(ids)} {noun}.',
         ):
             return

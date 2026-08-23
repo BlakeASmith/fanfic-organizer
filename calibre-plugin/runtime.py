@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bundled ao3kit runtime for a Calibre plugin zip (Calibre-free).
 
-GitHub releases ship ``wranglekit.zip`` with ``ao3kit/``, pure-Python
+GitHub releases ship ``fanfic-organizer.zip`` with ``ao3kit/``, pure-Python
 ``vendor/``, and ``run_ao3kit.py``. Calibre's frozen Python ignores
 ``PYTHONPATH`` and cannot ``python -m``, so jobs run:
 
@@ -18,8 +18,8 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
-PLUGIN_NAME = 'Wranglekit'
-RUNTIME_DIRNAME = 'wranglekit_runtime'
+PLUGIN_NAME = 'Fanfic Organizer'
+RUNTIME_DIRNAME = 'fanfic_organizer_runtime'
 BUNDLED_ZIP_PREFIXES = ('ao3kit/', 'vendor/')
 BUNDLED_ZIP_FILES = ('run_ao3kit.py',)
 NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
@@ -28,10 +28,10 @@ NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
 def plugin_version_string(version: tuple[int, ...] | None = None) -> str:
     if version is None:
         try:
-            from calibre_plugins.wranglekit import __version__ as installed
+            from calibre_plugins.fanfic_organizer import __version__ as installed
         except ImportError:
             try:
-                from calibre_plugins.wranglekit.__init__ import __version__ as installed
+                from calibre_plugins.fanfic_organizer.__init__ import __version__ as installed
             except ImportError:
                 installed = (0, 0, 0)
         version = tuple(installed)
@@ -127,7 +127,7 @@ def installed_plugin_zip() -> Path | None:
         plugins = Path(config_dir) / 'plugins'
         for name in (
             f'{PLUGIN_NAME}.zip',
-            'wranglekit.zip',
+            'fanfic-organizer.zip',
         ):
             candidate = plugins / name
             if candidate.is_file():
@@ -232,12 +232,12 @@ def load_user_dirs():
     Calibre imports the plugin from a zip, so ``Path(__file__).parent / 'user_dirs.py'``
     is not a real filesystem path. Pytest loads these modules from disk.
     """
-    name = 'wranglekit_user_dirs'
+    name = 'fanfic_organizer_user_dirs'
     cached = sys.modules.get(name)
     if cached is not None:
         return cached
     try:
-        from calibre_plugins.wranglekit import user_dirs as module
+        from calibre_plugins.fanfic_organizer import user_dirs as module
     except ImportError:
         path = Path(__file__).resolve().parent / 'user_dirs.py'
         spec = importlib.util.spec_from_file_location(name, path)

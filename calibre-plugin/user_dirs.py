@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = 'wranglekit'
+APP_NAME = 'fanfic-organizer'
 
 
 def _absolute_env(name: str) -> Path | None:

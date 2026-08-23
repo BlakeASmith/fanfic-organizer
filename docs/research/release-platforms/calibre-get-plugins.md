@@ -32,7 +32,7 @@ Users never hit GitHub. They hit `https://code.calibre-ebook.com/plugins/` (Cali
 | Version / author / min Calibre / platforms / description | AST parse of `__init__.py` inside that zip — **not** the index blurb |
 | In-app list | `https://code.calibre-ebook.com/plugins/plugins.json.bz2` |
 
-GitHub Releases, `just release publish`, and `wranglekit.zip` on the repo **do not** update Get plugins.
+GitHub Releases, `just release publish`, and `fanfic-organizer.zip` on the repo **do not** update Get plugins.
 
 ## Index entry (what mods paste)
 
@@ -42,7 +42,7 @@ From each `<li>` it takes:
 
 | Field | How |
 |---|---|
-| `index_name` | **Visible text of the thread link** — must equal `Plugin.name` in `__init__.py` (`Wranglekit`) |
+| `index_name` | **Visible text of the thread link** — must equal `Plugin.name` in `__init__.py` (`Fanfic Organizer`) |
 | `thread_url` | `https://www.mobileread.com/forums/showthread.php?t=…` (or `?p=`) |
 | `category` | Nearest heading (`GUI`, `Metadata Source`, `Editor`, …) |
 | `donate` | Optional `Donate: <a href="…">` |
@@ -64,7 +64,7 @@ Optional: PM **Kovid Goyal** to mention the plugin in the next Calibre changelog
 2. **Test builds** go on a **reserved post 2**, not post 1.
 3. Filename must end in `.zip` (not `.ZIP.PHP`, not a GitHub URL).
 4. Replacing the attachment updates `Last-Modified`; the mirror HEADs and re-downloads if newer.
-5. MobileRead zip attachments are on the order of **20 MB**. FanFicFare’s catalog zip is ~1.8 MB; our fat `wranglekit.zip` should be fine if we keep skipping `lxml` / Pillow.
+5. MobileRead zip attachments are on the order of **20 MB**. FanFicFare’s catalog zip is ~1.8 MB; our fat `fanfic-organizer.zip` should be fine if we keep skipping `lxml` / Pillow.
 
 Calibre then installs `https://code.calibre-ebook.com/plugins/{thread_id}.zip` (mirror rename). Example: FanFicFare thread `t=259221` → `file: "259221.zip"`.
 
@@ -91,12 +91,12 @@ Local check (after `python makeplugin.py zip`):
 
 ```bash
 git clone --depth 1 https://github.com/kovidgoyal/calibre.git /tmp/calibre
-python /tmp/calibre/setup/plugins_mirror.py wranglekit.zip
+python /tmp/calibre/setup/plugins_mirror.py fanfic-organizer.zip
 ```
 
 Must print `name`, `author`, `version`, `description`, `supported_platforms`, `minimum_calibre_version`. If it throws, Get plugins will never list the zip.
 
-Wranglekit’s `calibre-plugin/__init__.py` already matches this shape (`version = __version__`, adjacent-string `description`, `InterfaceActionBase` from `calibre.customize`).
+Fanfic Organizer’s `calibre-plugin/__init__.py` already matches this shape (`version = __version__`, adjacent-string `description`, `InterfaceActionBase` from `calibre.customize`).
 
 ## Live `plugins.json.bz2` record (2026-08-23)
 
@@ -127,9 +127,9 @@ Wranglekit’s `calibre-plugin/__init__.py` already matches this shape (`version
 
 `description` in Calibre is the **zip** string, not the index sentence. `index_name` (link text) should equal `name` (zip) or the list label and the installed plugin disagree.
 
-Categories in that snapshot: GUI 149, Metadata Source 53, Deprecated 19, Editor 11, plus File Type / Store / Device / Conversion / Library Closed. **Wranglekit → GUI.**
+Categories in that snapshot: GUI 149, Metadata Source 53, Deprecated 19, Editor 11, plus File Type / Store / Device / Conversion / Library Closed. **Fanfic Organizer → GUI.**
 
-No catalog entry contains `Wranglekit` or `AO3` in the name.
+No catalog entry contains `Fanfic Organizer` or `AO3` in the name.
 
 ## Updates (after you are listed)
 
@@ -137,7 +137,7 @@ No catalog entry contains `Wranglekit` or `AO3` in the name.
 2. Edit **post 1**: remove the old zip, attach the new one (still a single zip).
 3. Update the human **Version History** spoiler on post 1 (for the thread, not the JSON).
 4. Wait for the mirror. `Last-Modified` on `https://plugins.calibre-ebook.com/plugins.json.bz2` is a useful check (this research: updated ~hourly on 2026-08-23). Community reports **hours to about a day**. If the index lists you and you still miss Get plugins after a week, the zip parse is the usual cause ([example](https://www.mobileread.com/forums/showthread.php?t=374096)).
-5. Users who already sideloaded a zip whose `name` is `Wranglekit` will see **Update available**. Other names will not, unless the index has `Uninstall: That Name`.
+5. Users who already sideloaded a zip whose `name` is `Fanfic Organizer` will see **Update available**. Other names will not, unless the index has `Uninstall: That Name`.
 
 Calibre’s dialog installs from the mirror URL, shows the forum thread / donate links, and may uninstall `uninstall` names first. Changelog is **not** scraped into a pane anymore; `history` is a leftover flag. Users open **Plugin forum thread**.
 
@@ -148,7 +148,7 @@ Calibre’s dialog installs from the mirror URL, shows the forum thread / donate
 - Adult/mature AO3: FanFicFare does this; no extra catalog gate. Be clear in the thread.
 - No formal code review. Gate = “looks like a real plugin, zip on post 1, a mod adds the `<li>`.”
 - Forum registration has had outages; attachments in Plugins are normally allowed for registered users. Zip cap ~20 MB.
-- Calibre is GPLv3. Plugins that `import calibre.*` are often GPL; MobileRead does **not** check. Wranglekit is MIT today — listing still happens; relicensing the plugin layer is a separate legal call, not a catalog requirement.
+- Calibre is GPLv3. Plugins that `import calibre.*` are often GPL; MobileRead does **not** check. Fanfic Organizer is MIT today — listing still happens; relicensing the plugin layer is a separate legal call, not a catalog requirement.
 
 ## Keep GitHub anyway
 

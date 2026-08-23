@@ -7,15 +7,15 @@ from PyQt5.Qt import QIcon, QMenu, QPixmap, QToolButton
 from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
 
-from calibre_plugins.wranglekit.dialogs import (
+from calibre_plugins.fanfic_organizer.dialogs import (
     ImportJsonlDialog,
     ScrapeSearchDialog,
     SimilarSearchDialog,
     TagMappingsDialog,
     TagPurgeDialog,
 )
-from calibre_plugins.wranglekit.prefs import plugin_runtime_settings, prefs
-from calibre_plugins.wranglekit.scrape_run import merge_plugin_settings
+from calibre_plugins.fanfic_organizer.prefs import plugin_runtime_settings, prefs
+from calibre_plugins.fanfic_organizer.scrape_run import merge_plugin_settings
 
 try:
     load_translations()
@@ -39,10 +39,10 @@ def load_plugin_icon(action) -> QIcon:
     return QIcon(pixmap)
 
 
-class WranglekitPlugin(InterfaceAction):
-    name = 'Wranglekit'
+class FanficOrganizerPlugin(InterfaceAction):
+    name = 'Fanfic Organizer'
     action_spec = (
-        'Wranglekit',
+        'Fanfic Organizer',
         None,
         'Search AO3, manage selected books, tags, and jobs',
         None,
@@ -60,7 +60,7 @@ class WranglekitPlugin(InterfaceAction):
 
     def jobs(self):
         if self._jobs is None:
-            from calibre_plugins.wranglekit.job_supervise import JobSupervisor
+            from calibre_plugins.fanfic_organizer.job_supervise import JobSupervisor
 
             self._jobs = JobSupervisor(self)
         return self._jobs
@@ -199,22 +199,22 @@ class WranglekitPlugin(InterfaceAction):
 
         values = dialog.values()
         if not values['path']:
-            error_dialog(self.gui, 'Wranglekit', 'Choose a JSONL or import zip file.', show=True)
+            error_dialog(self.gui, 'Fanfic Organizer', 'Choose a JSONL or import zip file.', show=True)
             return
 
         prefs['last_jsonl_path'] = values['path']
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.wranglekit.job_plans import plan_import
-        from calibre_plugins.wranglekit.jsonl_loader import load_import_source
+        from calibre_plugins.fanfic_organizer.job_plans import plan_import
+        from calibre_plugins.fanfic_organizer.jsonl_loader import load_import_source
 
         try:
             records, bundle_root, cleanup = load_import_source(values['path'])
         except Exception as exc:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Could not read that import file.',
                 det_msg=str(exc),
                 show=True,
@@ -222,7 +222,7 @@ class WranglekitPlugin(InterfaceAction):
             return
         if not records:
             error_dialog(
-                self.gui, 'Wranglekit', 'The import file contains no records.', show=True
+                self.gui, 'Fanfic Organizer', 'The import file contains no records.', show=True
             )
             return
         job_dir = self.jobs().prepare_job_dir('import')
@@ -256,7 +256,7 @@ class WranglekitPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.wranglekit.job_plans import plan_scrape
+        from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
 
         job_dir = self.jobs().prepare_job_dir('scrape')
         if job_dir is None:
@@ -272,14 +272,14 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.selected import load_selected_similar_records
-        from calibre_plugins.wranglekit.similar import facets_from_records
+        from calibre_plugins.fanfic_organizer.selected import load_selected_similar_records
+        from calibre_plugins.fanfic_organizer.similar import facets_from_records
 
         ready, skipped = load_selected_similar_records(self.gui.current_db, book_ids)
         if not ready:
@@ -290,7 +290,7 @@ class WranglekitPlugin(InterfaceAction):
                 )
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have fandoms, tags, characters, '
                 'or an author to search from.' + extra,
                 show=True,
@@ -312,7 +312,7 @@ class WranglekitPlugin(InterfaceAction):
         prefs['simplify_tags'] = values['simplify_tags']
         prefs['update_existing'] = values['update_existing']
 
-        from calibre_plugins.wranglekit.job_plans import plan_scrape
+        from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
 
         job_dir = self.jobs().prepare_job_dir('scrape')
         if job_dir is None:
@@ -328,14 +328,14 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.epub_plan import REASON_HAS_EPUB, REASON_NO_AO3
-        from calibre_plugins.wranglekit.selected import load_selected_for_epub_download
+        from calibre_plugins.fanfic_organizer.epub_plan import REASON_HAS_EPUB, REASON_NO_AO3
+        from calibre_plugins.fanfic_organizer.selected import load_selected_for_epub_download
 
         ready, skipped = load_selected_for_epub_download(
             self.gui.current_db, book_ids
@@ -346,20 +346,20 @@ class WranglekitPlugin(InterfaceAction):
             if already and not no_id:
                 info_dialog(
                     self.gui,
-                    'Wranglekit',
+                    'Fanfic Organizer',
                     'Selected books already have an EPUB. Nothing to download.',
                     show=True,
                 )
                 return
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 URL or work id to download.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.job_plans import plan_download_selected
+        from calibre_plugins.fanfic_organizer.job_plans import plan_download_selected
 
         job_dir = self.jobs().prepare_job_dir('download')
         if job_dir is None:
@@ -377,7 +377,7 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -385,9 +385,9 @@ class WranglekitPlugin(InterfaceAction):
 
         from pathlib import Path
 
-        from calibre_plugins.wranglekit.cover_ui import load_cover_dict
-        from calibre_plugins.wranglekit.job_plans import plan_cover_selected
-        from calibre_plugins.wranglekit.selected import (
+        from calibre_plugins.fanfic_organizer.cover_ui import load_cover_dict
+        from calibre_plugins.fanfic_organizer.job_plans import plan_cover_selected
+        from calibre_plugins.fanfic_organizer.selected import (
             export_selected_epubs_for_cover,
             load_selected_for_covers,
         )
@@ -396,7 +396,7 @@ class WranglekitPlugin(InterfaceAction):
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have a title to put on a cover.',
                 show=True,
             )
@@ -426,7 +426,7 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -434,8 +434,8 @@ class WranglekitPlugin(InterfaceAction):
 
         from pathlib import Path
 
-        from calibre_plugins.wranglekit.job_plans import plan_complete_selected
-        from calibre_plugins.wranglekit.selected import (
+        from calibre_plugins.fanfic_organizer.job_plans import plan_complete_selected
+        from calibre_plugins.fanfic_organizer.selected import (
             copy_book_epub,
             load_selected_records,
         )
@@ -444,7 +444,7 @@ class WranglekitPlugin(InterfaceAction):
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -472,20 +472,20 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.job_plans import plan_import_series
-        from calibre_plugins.wranglekit.selected import load_selected_records
+        from calibre_plugins.fanfic_organizer.job_plans import plan_import_series
+        from calibre_plugins.fanfic_organizer.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -513,20 +513,20 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.job_plans import plan_fill_series
-        from calibre_plugins.wranglekit.selected import load_selected_records
+        from calibre_plugins.fanfic_organizer.job_plans import plan_fill_series
+        from calibre_plugins.fanfic_organizer.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -547,20 +547,20 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
-        from calibre_plugins.wranglekit.selected import load_selected_records
+        from calibre_plugins.fanfic_organizer.job_plans import plan_simplify_selected
+        from calibre_plugins.fanfic_organizer.selected import load_selected_records
 
         ready, skipped = load_selected_records(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 URL or work id.',
                 show=True,
             )
@@ -581,20 +581,20 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
-        from calibre_plugins.wranglekit.selected import load_selected_for_collections
+        from calibre_plugins.fanfic_organizer.job_plans import plan_simplify_selected
+        from calibre_plugins.fanfic_organizer.selected import load_selected_for_collections
 
         ready, skipped = load_selected_for_collections(self.gui.current_db, book_ids)
         if not ready:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books could be loaded.',
                 show=True,
             )
@@ -616,13 +616,13 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.collection_edit import (
+        from calibre_plugins.fanfic_organizer.collection_edit import (
             EditSelectedCollectionsDialog,
         )
 
@@ -637,7 +637,7 @@ class WranglekitPlugin(InterfaceAction):
         if not book_ids:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Select one or more books in the library first.',
                 show=True,
             )
@@ -645,7 +645,7 @@ class WranglekitPlugin(InterfaceAction):
 
         name = str(collection_name or '').strip()
         if not name:
-            from calibre_plugins.wranglekit.collection_edit import (
+            from calibre_plugins.fanfic_organizer.collection_edit import (
                 load_known_collection_names,
                 prompt_collection_name,
             )
@@ -663,17 +663,17 @@ class WranglekitPlugin(InterfaceAction):
         if not name:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Type a collection name first.',
                 show=True,
             )
             return
 
-        from calibre_plugins.wranglekit.collection_rules import (
+        from calibre_plugins.fanfic_organizer.collection_rules import (
             build_collections_pin_argv,
         )
-        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.wranglekit.selected import pin_targets_from_selected
+        from calibre_plugins.fanfic_organizer.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.fanfic_organizer.selected import pin_targets_from_selected
 
         targets, skipped = pin_targets_from_selected(self.gui.current_db, book_ids)
         if not targets:
@@ -685,7 +685,7 @@ class WranglekitPlugin(InterfaceAction):
                 )
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'None of the selected books have an AO3 work id or Calibre UUID.'
                 + extra,
                 show=True,
@@ -710,7 +710,7 @@ class WranglekitPlugin(InterfaceAction):
                 if code != 0:
                     error_dialog(
                         self.gui,
-                        'Wranglekit',
+                        'Fanfic Organizer',
                         f'Could not pin “{item.get("title") or item["book_id"]}” '
                         f'to {name}.',
                         det_msg=(stderr or stdout or f'exit {code}').strip(),
@@ -726,22 +726,22 @@ class WranglekitPlugin(InterfaceAction):
 
     def warm_tag_cache(self):
         db = self.gui.current_db
-        from calibre_plugins.wranglekit.tag_purge import scope_book_ids
+        from calibre_plugins.fanfic_organizer.tag_purge import scope_book_ids
 
         book_ids = scope_book_ids(db, '')
         from PyQt5.Qt import QApplication, Qt
 
-        from calibre_plugins.wranglekit.enrich import (
+        from calibre_plugins.fanfic_organizer.enrich import (
             EnrichCancelled,
             resolve_ao3kit_runtime,
             run_ao3kit,
         )
-        from calibre_plugins.wranglekit.scrape_run import (
+        from calibre_plugins.fanfic_organizer.scrape_run import (
             build_warm_start_argv,
             merge_plugin_settings,
         )
-        from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
-        from calibre_plugins.wranglekit.tag_warm import (
+        from calibre_plugins.fanfic_organizer.selected import load_records_for_tag_warm
+        from calibre_plugins.fanfic_organizer.tag_warm import (
             parse_warm_status_json,
             unique_tag_names_from_records,
             write_names_file,
@@ -754,8 +754,8 @@ class WranglekitPlugin(InterfaceAction):
             if error or project is None:
                 error_dialog(
                     self.gui,
-                    'Wranglekit',
-                    'Could not find ao3kit. Install wranglekit.zip from GitHub '
+                    'Fanfic Organizer',
+                    'Could not find ao3kit. Install fanfic-organizer.zip from GitHub '
                     'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
@@ -767,7 +767,7 @@ class WranglekitPlugin(InterfaceAction):
             if not names:
                 error_dialog(
                     self.gui,
-                    'Wranglekit',
+                    'Fanfic Organizer',
                     'No tags or fandoms found on books in this library.',
                     show=True,
                 )
@@ -790,7 +790,7 @@ class WranglekitPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Could not start the background tag cache.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -801,9 +801,9 @@ class WranglekitPlugin(InterfaceAction):
             self.jobs().attach('warm')
 
     def stop_tag_cache_warm(self):
-        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
-        from calibre_plugins.wranglekit.scrape_run import build_warm_stop_argv
-        from calibre_plugins.wranglekit.tag_warm import (
+        from calibre_plugins.fanfic_organizer.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.fanfic_organizer.scrape_run import build_warm_stop_argv
+        from calibre_plugins.fanfic_organizer.tag_warm import (
             format_warm_stopped_dialog,
             parse_warm_status_json,
         )
@@ -823,7 +823,7 @@ class WranglekitPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Could not stop the background tag cache.',
                 det_msg=details or summary,
                 show=True,
@@ -831,17 +831,17 @@ class WranglekitPlugin(InterfaceAction):
             return
         if details:
             info_dialog(
-                self.gui, 'Wranglekit', summary, det_msg=details, show=True
+                self.gui, 'Fanfic Organizer', summary, det_msg=details, show=True
             )
         else:
-            info_dialog(self.gui, 'Wranglekit', summary, show=True)
+            info_dialog(self.gui, 'Fanfic Organizer', summary, show=True)
 
     def show_tag_cache_log(self):
         self.jobs().attach('warm')
 
     def show_tag_graph(self):
         db = self.gui.current_db
-        from calibre_plugins.wranglekit.tag_purge import (
+        from calibre_plugins.fanfic_organizer.tag_purge import (
             graph_scope_ids,
             scope_book_ids,
             selected_ids_from_gui,
@@ -865,21 +865,21 @@ class WranglekitPlugin(InterfaceAction):
             empty_error = 'No tags or fandoms found on books in this library.'
         from PyQt5.Qt import QApplication, Qt
 
-        from calibre_plugins.wranglekit.enrich import (
+        from calibre_plugins.fanfic_organizer.enrich import (
             EnrichCancelled,
             resolve_ao3kit_runtime,
             run_ao3kit,
         )
-        from calibre_plugins.wranglekit.scrape_run import (
+        from calibre_plugins.fanfic_organizer.scrape_run import (
             build_tag_graph_argv,
             live_graph_reload_argv,
         )
-        from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
-        from calibre_plugins.wranglekit.graph_live import (
+        from calibre_plugins.fanfic_organizer.selected import load_records_for_tag_warm
+        from calibre_plugins.fanfic_organizer.graph_live import (
             graph_html_path,
             graph_jsonl_path,
         )
-        from calibre_plugins.wranglekit.tag_warm import write_graph_jsonl
+        from calibre_plugins.fanfic_organizer.tag_warm import write_graph_jsonl
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -887,8 +887,8 @@ class WranglekitPlugin(InterfaceAction):
             if error or project is None:
                 error_dialog(
                     self.gui,
-                    'Wranglekit',
-                    'Could not find ao3kit. Install wranglekit.zip from GitHub '
+                    'Fanfic Organizer',
+                    'Could not find ao3kit. Install fanfic-organizer.zip from GitHub '
                     'Releases, or set Project path in plugin settings.',
                     det_msg=error or '',
                     show=True,
@@ -899,7 +899,7 @@ class WranglekitPlugin(InterfaceAction):
             if not records:
                 error_dialog(
                     self.gui,
-                    'Wranglekit',
+                    'Fanfic Organizer',
                     empty_error,
                     show=True,
                 )
@@ -942,7 +942,7 @@ class WranglekitPlugin(InterfaceAction):
         if code != 0:
             error_dialog(
                 self.gui,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Could not build the tag graph.',
                 det_msg=summary or f'exit {code}',
                 show=True,
@@ -969,7 +969,7 @@ class WranglekitPlugin(InterfaceAction):
     def show_tag_purge_dialog(self, *args):
         book_ids = []
         try:
-            from calibre_plugins.wranglekit.tag_purge import selected_ids_from_gui
+            from calibre_plugins.fanfic_organizer.tag_purge import selected_ids_from_gui
 
             book_ids = selected_ids_from_gui(self.gui)
         except Exception:

@@ -65,7 +65,7 @@ def test_read_dev_project_stamp_from_plugin_zip(tmp_path: Path):
     import zipfile
 
     enrich = load_enrich()
-    zip_path = tmp_path / "Wranglekit.zip"
+    zip_path = tmp_path / "Fanfic Organizer.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr(
             enrich.DEV_PROJECT_STAMP,

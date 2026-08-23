@@ -59,8 +59,8 @@ class EnrichHandle:
 
 def _runtime_options() -> dict[str, Any]:
     try:
-        from calibre_plugins.wranglekit.prefs import plugin_runtime_settings
-        from calibre_plugins.wranglekit.scrape_run import merge_plugin_settings
+        from calibre_plugins.fanfic_organizer.prefs import plugin_runtime_settings
+        from calibre_plugins.fanfic_organizer.scrape_run import merge_plugin_settings
 
         return merge_plugin_settings({}, plugin_runtime_settings())
     except Exception:
@@ -68,14 +68,14 @@ def _runtime_options() -> dict[str, Any]:
 
 
 def _is_calibre_gui(path: str) -> bool:
-    from calibre_plugins.wranglekit.runtime import looks_like_calibre_gui
+    from calibre_plugins.fanfic_organizer.runtime import looks_like_calibre_gui
 
     return looks_like_calibre_gui(path)
 
 
 def _prefs_get(key: str) -> str:
     try:
-        from calibre_plugins.wranglekit.prefs import prefs
+        from calibre_plugins.fanfic_organizer.prefs import prefs
 
         return (prefs.get(key) or '').strip()
     except Exception:
@@ -84,7 +84,7 @@ def _prefs_get(key: str) -> str:
 
 def _prefs_set(key: str, value: str) -> None:
     try:
-        from calibre_plugins.wranglekit.prefs import prefs
+        from calibre_plugins.fanfic_organizer.prefs import prefs
 
         prefs[key] = value
     except Exception:
@@ -93,11 +93,11 @@ def _prefs_set(key: str, value: str) -> None:
 
 def _user_dirs():
     try:
-        from calibre_plugins.wranglekit.runtime import load_user_dirs
+        from calibre_plugins.fanfic_organizer.runtime import load_user_dirs
         return load_user_dirs()
     except ImportError:
         pass
-    name = '_wranglekit_plugin_runtime'
+    name = '_fanfic_organizer_plugin_runtime'
     cached = sys.modules.get(name)
     if cached is None:
         path = Path(__file__).resolve().parent / 'runtime.py'
@@ -197,7 +197,7 @@ def _candidate_pythons(project: Path) -> list[str]:
     add(os.environ.get('AO3KIT_PYTHON', ''))
     add(_stamp_python(project), must_exist=True)
 
-    from calibre_plugins.wranglekit.runtime import (
+    from calibre_plugins.fanfic_organizer.runtime import (
         find_calibre_debug,
         is_bundled_project,
     )
@@ -273,7 +273,7 @@ def read_dev_project_stamp(plugin_dir: Path | None = None) -> str:
     """Checkout path written by ``python makeplugin.py install``.
 
     Calibre loads a ``calibre-customize -b`` plugin from the zip, so
-    ``__file__`` is ``…/Wranglekit.zip/enrich.py`` and the stamp is *inside*
+    ``__file__`` is ``…/Fanfic Organizer.zip/enrich.py`` and the stamp is *inside*
     that zip, not a sibling on disk.
     """
     locations: list[Path] = []
@@ -282,7 +282,7 @@ def read_dev_project_stamp(plugin_dir: Path | None = None) -> str:
     else:
         locations.append(_plugin_dir())
         try:
-            from calibre_plugins.wranglekit.runtime import installed_plugin_zip
+            from calibre_plugins.fanfic_organizer.runtime import installed_plugin_zip
 
             zip_path = installed_plugin_zip()
             if zip_path is not None:
@@ -346,7 +346,7 @@ def _is_ao3kit_project(path: Path) -> Path | None:
 def find_ao3kit_project() -> Path | None:
     bundled = None
     try:
-        from calibre_plugins.wranglekit.runtime import ensure_bundled_runtime
+        from calibre_plugins.fanfic_organizer.runtime import ensure_bundled_runtime
 
         bundled = ensure_bundled_runtime()
     except Exception:
@@ -405,7 +405,7 @@ def _import_probe_code(project: Path) -> str:
 
 
 def _python_can_import_ao3kit(python: str, project: Path) -> tuple[bool, str]:
-    from calibre_plugins.wranglekit.runtime import looks_like_calibre_debug
+    from calibre_plugins.fanfic_organizer.runtime import looks_like_calibre_debug
 
     probe = [python, '-c', _import_probe_code(project)]
     timeout = 12.0 if looks_like_calibre_debug(python) else 4.0
@@ -461,7 +461,7 @@ def resolve_ao3kit_runtime(
     project = find_ao3kit_project()
     if project is None:
         return None, None, (
-            'Could not find ao3kit. Install wranglekit.zip from GitHub Releases '
+            'Could not find ao3kit. Install fanfic-organizer.zip from GitHub Releases '
             '(Calibre → Preferences → Plugins → Load plugin from file), run '
             'python makeplugin.py install from a git checkout, or set Project '
             'path in plugin settings / AO3KIT_PROJECT.'
@@ -497,7 +497,7 @@ def resolve_ao3kit_runtime(
         errors.append(f'{python}: {detail.splitlines()[-1] if detail else "failed"}')
 
     hint = (
-        'Could not run ao3kit. Re-install wranglekit.zip from GitHub Releases, '
+        'Could not run ao3kit. Re-install fanfic-organizer.zip from GitHub Releases, '
         'or set Python in plugin settings to a python3 with deps installed. '
         'Tried:\n- '
         + '\n- '.join(errors[:8])
@@ -518,7 +518,7 @@ def run_ao3kit_command(
     log_setup: bool = False,
 ) -> tuple[int, str, str]:
     """Run ``python -m ao3kit <args>`` (or calibre-debug -e for the bundle)."""
-    from calibre_plugins.wranglekit.runtime import plugin_ao3kit_command
+    from calibre_plugins.fanfic_organizer.runtime import plugin_ao3kit_command
 
     cmd = plugin_ao3kit_command(python, args, launcher=_launcher_path(project))
     if on_status and log_setup:
@@ -684,7 +684,7 @@ def enrich_records_via_ao3kit(
                     'This may take a while on first run (AO3 tag fetches).'
                 )
 
-        from calibre_plugins.wranglekit.scrape_run import (
+        from calibre_plugins.fanfic_organizer.scrape_run import (
             build_collections_argv,
             build_enrich_argv,
         )

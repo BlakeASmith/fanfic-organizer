@@ -3,7 +3,7 @@
 CLI and the Calibre plugin subprocess share
 one on-disk limiter so concurrent processes pace requests together.
 
-Override path with ``AO3KIT_RATE_DB``. Default: ``$XDG_STATE_HOME/wranglekit/ao3_rate.sqlite``.
+Override path with ``AO3KIT_RATE_DB``. Default: ``$XDG_STATE_HOME/fanfic-organizer/ao3_rate.sqlite``.
 
 The same file stores:
 

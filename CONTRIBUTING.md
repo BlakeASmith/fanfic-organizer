@@ -1,6 +1,6 @@
 # Contributing
 
-**Wranglekit** is the Calibre plugin (the product). **`ao3kit`** is the Python library it runs. This git repo is both. The CLI (`python -m ao3kit`) is optional for scripting — keep it in relative parity with the plugin, but do not document it as a second product.
+**Fanfic Organizer** is the Calibre plugin (the product). **`ao3kit`** is the Python library it runs. This git repo is both. The CLI (`python -m ao3kit`) is optional for scripting — keep it in relative parity with the plugin, but do not document it as a second product.
 
 ## Day 1
 
@@ -16,7 +16,7 @@ pytest
 
 `requirements.txt` is the `ao3kit` library runtime (also used by the optional CLI). `requirements-dev.txt` adds pytest and the Calibre-dev MCP extra. `just build` vendors that list into the zip except native packages Calibre already has (`lxml`, Pillow).
 
-Open a **throwaway Calibre library**. Search, import, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
+Open a **throwaway Calibre library**. Search, import, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
 
 ```bash
 python makeplugin.py install   # or: just load-dev
@@ -24,7 +24,7 @@ python makeplugin.py install   # or: just load-dev
 
 That copies the plugin UI into Calibre **and** writes `calibre-plugin/dev_project.json` (gitignored) with this checkout’s path. After you restart Calibre, jobs use this tree instead of the bundled zip. To override: plugin settings → Project path, or `AO3KIT_PROJECT`.
 
-Optional [just](https://github.com/casey/just) recipes: `just load-dev` (install), `just build` (`wranglekit.zip`), `just release` (next 0.x minor; add `patch` and/or `publish`).
+Optional [just](https://github.com/casey/just) recipes: `just load-dev` (install), `just build` (`fanfic-organizer.zip`), `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 Restart Calibre yourself unless you are iterating on plugin UI and need the GUI reloaded now (`python makeplugin.py install --restart` / MCP `restart=true`). Default is install only.
 
@@ -94,7 +94,7 @@ just release patch                          # next 0.x patch instead
 
 Same as `python makeplugin.py release` / `--patch` / `--publish`.
 
-`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `wranglekit.zip`, and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section.
+`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `fanfic-organizer.zip`, and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section.
 
 ## Tests and plugin install
 

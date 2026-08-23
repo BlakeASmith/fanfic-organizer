@@ -1198,7 +1198,7 @@ def _add_cache_args(parser: argparse.ArgumentParser) -> None:
         "--cache",
         type=Path,
         default=None,
-        help="Tag cache SQLite path (default: XDG cache dir / wranglekit)",
+        help="Tag cache SQLite path (default: XDG cache dir / fanfic-organizer)",
     )
     parser.add_argument(
         "--no-cache",

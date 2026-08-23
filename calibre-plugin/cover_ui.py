@@ -27,7 +27,7 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog
 
-from calibre_plugins.wranglekit.prefs import prefs
+from calibre_plugins.fanfic_organizer.prefs import prefs
 
 COVER_FIELD_LABELS = (
     ('title', 'Title'),
@@ -81,7 +81,7 @@ def default_cover_dict() -> dict[str, Any]:
 def load_cover_dict() -> dict[str, Any]:
     data = default_cover_dict()
     try:
-        from calibre_plugins.wranglekit.enrich import run_ao3kit
+        from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
 
         code, stdout, _stderr = run_ao3kit(['config', 'show'])
         if code == 0 and (stdout or '').strip():
@@ -98,7 +98,7 @@ def load_cover_dict() -> dict[str, Any]:
 
 
 def save_cover_dict(cover: dict[str, Any]) -> tuple[int, str, str]:
-    from calibre_plugins.wranglekit.enrich import run_ao3kit
+    from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
 
     prefs['generate_covers'] = bool(cover.get('enabled', True))
     prefs['set_calibre_cover'] = bool(cover.get('set_calibre_cover', True))
@@ -279,7 +279,7 @@ class CoverStyleDialog(QDialog):
         import tempfile
         from pathlib import Path
 
-        from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
+        from calibre_plugins.fanfic_organizer.enrich import EnrichCancelled, run_ao3kit
 
         values = self.values()
         tmp = Path(tempfile.mkdtemp(prefix='ao3-cover-')) / 'preview.png'
@@ -327,7 +327,7 @@ class CoverStyleDialog(QDialog):
         if code != 0 or not tmp.is_file():
             error_dialog(
                 self,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Could not render a sample cover.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
@@ -337,7 +337,7 @@ class CoverStyleDialog(QDialog):
         if pix.isNull():
             error_dialog(
                 self,
-                'Wranglekit',
+                'Fanfic Organizer',
                 'Wrote a sample cover but could not display it.',
                 show=True,
             )
