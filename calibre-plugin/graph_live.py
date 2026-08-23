@@ -28,17 +28,21 @@ GRAPH_RECORD_KEYS = (
 
 
 def _user_dirs():
-    name = 'wranglekit_user_dirs'
+    try:
+        from calibre_plugins.wranglekit.runtime import load_user_dirs
+        return load_user_dirs()
+    except ImportError:
+        pass
+    name = '_wranglekit_plugin_runtime'
     cached = sys.modules.get(name)
-    if cached is not None:
-        return cached
-    path = Path(__file__).resolve().parent / 'user_dirs.py'
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    if cached is None:
+        path = Path(__file__).resolve().parent / 'runtime.py'
+        spec = importlib.util.spec_from_file_location(name, path)
+        cached = importlib.util.module_from_spec(spec)
+        sys.modules[name] = cached
+        assert spec.loader is not None
+        spec.loader.exec_module(cached)
+    return cached.load_user_dirs()
 
 
 def graph_inbox_dir(project: Path) -> Path:

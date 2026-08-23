@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
@@ -91,17 +92,21 @@ def _prefs_set(key: str, value: str) -> None:
 
 
 def _user_dirs():
-    name = 'wranglekit_user_dirs'
+    try:
+        from calibre_plugins.wranglekit.runtime import load_user_dirs
+        return load_user_dirs()
+    except ImportError:
+        pass
+    name = '_wranglekit_plugin_runtime'
     cached = sys.modules.get(name)
-    if cached is not None:
-        return cached
-    path = Path(__file__).resolve().parent / 'user_dirs.py'
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    if cached is None:
+        path = Path(__file__).resolve().parent / 'runtime.py'
+        spec = importlib.util.spec_from_file_location(name, path)
+        cached = importlib.util.module_from_spec(spec)
+        sys.modules[name] = cached
+        assert spec.loader is not None
+        spec.loader.exec_module(cached)
+    return cached.load_user_dirs()
 
 
 def _python_stamp_path(project: Path) -> Path:
@@ -227,21 +232,76 @@ def _plugin_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-def read_dev_project_stamp(plugin_dir: Path | None = None) -> str:
-    """Checkout path written by ``python makeplugin.py install``."""
-    path = (plugin_dir or _plugin_dir()) / DEV_PROJECT_STAMP
-    try:
-        raw = path.read_text(encoding='utf-8')
-    except OSError:
+def _parse_dev_project_stamp(raw: str) -> str:
+    text = (raw or '').strip()
+    if not text:
         return ''
     try:
-        data = json.loads(raw)
+        data = json.loads(text)
     except json.JSONDecodeError:
-        return raw.strip()
+        return text
     if isinstance(data, dict):
         return str(data.get('project') or '').strip()
     if isinstance(data, str):
         return data.strip()
+    return ''
+
+
+def _read_dev_project_stamp_file(path: Path) -> str:
+    try:
+        return _parse_dev_project_stamp(path.read_text(encoding='utf-8'))
+    except OSError:
+        return ''
+
+
+def _read_dev_project_stamp_zip(zip_path: Path) -> str:
+    if not zip_path.is_file():
+        return ''
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = {name.replace('\\', '/') for name in zf.namelist()}
+            if DEV_PROJECT_STAMP not in names:
+                return ''
+            return _parse_dev_project_stamp(
+                zf.read(DEV_PROJECT_STAMP).decode('utf-8')
+            )
+    except (OSError, zipfile.BadZipFile, UnicodeDecodeError):
+        return ''
+
+
+def read_dev_project_stamp(plugin_dir: Path | None = None) -> str:
+    """Checkout path written by ``python makeplugin.py install``.
+
+    Calibre loads a ``calibre-customize -b`` plugin from the zip, so
+    ``__file__`` is ``…/Wranglekit.zip/enrich.py`` and the stamp is *inside*
+    that zip, not a sibling on disk.
+    """
+    locations: list[Path] = []
+    if plugin_dir is not None:
+        locations.append(Path(plugin_dir))
+    else:
+        locations.append(_plugin_dir())
+        try:
+            from calibre_plugins.wranglekit.runtime import installed_plugin_zip
+
+            zip_path = installed_plugin_zip()
+            if zip_path is not None:
+                locations.append(Path(zip_path))
+        except Exception:
+            pass
+
+    seen: set[Path] = set()
+    for location in locations:
+        resolved = location.resolve() if location.exists() else location
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if location.is_file() and location.suffix.lower() == '.zip':
+            value = _read_dev_project_stamp_zip(location)
+        else:
+            value = _read_dev_project_stamp_file(location / DEV_PROJECT_STAMP)
+        if value:
+            return value
     return ''
 
 

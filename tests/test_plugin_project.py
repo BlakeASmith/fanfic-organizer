@@ -61,6 +61,20 @@ def test_read_dev_project_stamp(tmp_path: Path):
     assert enrich.read_dev_project_stamp(plugin_dir) == "/tmp/checkout"
 
 
+def test_read_dev_project_stamp_from_plugin_zip(tmp_path: Path):
+    import zipfile
+
+    enrich = load_enrich()
+    zip_path = tmp_path / "Wranglekit.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(
+            enrich.DEV_PROJECT_STAMP,
+            json.dumps({"project": "/tmp/from-zip"}) + "\n",
+        )
+        zf.writestr("enrich.py", "# placeholder\n")
+    assert enrich.read_dev_project_stamp(zip_path) == "/tmp/from-zip"
+
+
 def test_is_ao3kit_project(tmp_path: Path):
     enrich = load_enrich()
     project = _fake_project(tmp_path / "repo")

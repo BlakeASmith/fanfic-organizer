@@ -14,7 +14,7 @@ cp .env.example .env        # optional AO3_USERNAME / AO3_PASSWORD
 pytest
 ```
 
-`requirements.txt` is the `ao3kit` library runtime (also used by the optional CLI). `requirements-dev.txt` adds pytest and the Calibre-dev MCP extra. `requirements-plugin.txt` is what goes inside the release zip.
+`requirements.txt` is the `ao3kit` library runtime (also used by the optional CLI). `requirements-dev.txt` adds pytest and the Calibre-dev MCP extra. `just build` vendors that list into the zip except native packages Calibre already has (`lxml`, Pillow).
 
 Open a **throwaway Calibre library**. Search, import, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
 

@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
 OUTPUT = ROOT / "wranglekit.zip"
-PLUGIN_REQUIREMENTS = ROOT / "requirements-plugin.txt"
+RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
+# Native wheels (or already in Calibre). Do not pip-install these into vendor/.
+SKIP_VENDOR_PACKAGES = frozenset({"lxml", "pillow", "pil"})
 NATIVE_SUFFIXES = {".so", ".pyd", ".dylib", ".dll"}
 SKIP_DIR_NAMES = {
     "__pycache__",
@@ -47,8 +49,35 @@ def _purge_native_extensions(root: Path) -> None:
             path.unlink()
 
 
+def _requirement_name(line: str) -> str:
+    spec = line.split("#", 1)[0].strip()
+    if not spec or spec.startswith("-"):
+        return ""
+    for sep in ("===", "==", "<=", ">=", "~=", "!=", "<", ">"):
+        if sep in spec:
+            spec = spec.split(sep, 1)[0]
+            break
+    return spec.split("[", 1)[0].strip().lower().replace("_", "-")
+
+
+def vendor_requirement_lines(text: str | None = None) -> list[str]:
+    """Runtime requirements minus native/Calibre-provided packages."""
+    raw = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8") if text is None else text
+    lines: list[str] = []
+    for line in raw.splitlines():
+        spec = line.split("#", 1)[0].strip()
+        if not spec or spec.startswith("-"):
+            continue
+        name = _requirement_name(spec)
+        if not name or name in SKIP_VENDOR_PACKAGES:
+            continue
+        lines.append(spec)
+    return lines
+
+
 def vendor_requirements_hash() -> str:
-    return hashlib.sha256(PLUGIN_REQUIREMENTS.read_bytes()).hexdigest()
+    payload = "\n".join(vendor_requirement_lines()).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def vendor_cache_dir() -> Path:
@@ -73,6 +102,9 @@ def ensure_vendor(*, force: bool = False) -> Path:
     if cache.exists():
         shutil.rmtree(cache)
     cache.mkdir(parents=True, exist_ok=True)
+    reqs = vendor_requirement_lines()
+    if not reqs:
+        raise SystemExit("no pure-Python packages left to vendor from requirements.txt")
     subprocess.check_call(
         [
             sys.executable,
@@ -82,8 +114,7 @@ def ensure_vendor(*, force: bool = False) -> Path:
             "--disable-pip-version-check",
             "--no-compile",
             "-q",
-            "-r",
-            str(PLUGIN_REQUIREMENTS),
+            *reqs,
             "--target",
             str(cache),
         ]

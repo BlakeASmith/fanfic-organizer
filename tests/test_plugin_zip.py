@@ -70,3 +70,18 @@ def test_plugin_version_matches_ao3kit():
     end = text.index(")", start)
     parts = tuple(int(p.strip()) for p in text[start:end].split(","))
     assert ".".join(str(p) for p in parts) == ao3kit_version
+
+
+def test_vendor_requirement_lines_skip_native_packages():
+    lines = makeplugin.vendor_requirement_lines(
+        "requests>=2.31\nlxml>=5.0\npillow>=10.0\nbeautifulsoup4>=4.12\n"
+    )
+    assert lines == ["requests>=2.31", "beautifulsoup4>=4.12"]
+
+
+def test_vendor_requirement_lines_match_requirements_txt():
+    names = {makeplugin._requirement_name(line) for line in makeplugin.vendor_requirement_lines()}
+    assert "requests" in names
+    assert "pyyaml" in names
+    assert "lxml" not in names
+    assert "pillow" not in names

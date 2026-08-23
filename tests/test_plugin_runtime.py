@@ -53,6 +53,13 @@ def test_extract_leaves_unrelated_files(tmp_path: Path):
     assert leftover.read_text(encoding="utf-8") == "yes\n"
 
 
+def test_load_user_dirs_from_checkout():
+    runtime = load_runtime()
+    dirs = runtime.load_user_dirs()
+    assert dirs.jobs_dir().name == "jobs"
+    assert dirs.APP_NAME == "wranglekit"
+
+
 def test_extract_skips_when_stamp_matches(tmp_path: Path):
     runtime = load_runtime()
     zip_path = tmp_path / "wranglekit.zip"

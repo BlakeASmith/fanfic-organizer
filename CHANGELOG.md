@@ -21,7 +21,12 @@ Release command: `just release X.Y.Z` (add `publish` to tag and create the GitHu
 
 ### Bug Fixes
 
+- Fix checkout installs not finding ao3kit after Calibre loads the plugin from its zip (`dev_project.json` is read from inside that zip).
 - Dev install registers the plugin as **Wranglekit** and removes a leftover **AO3 Scraper** plugin or toolbar button.
+
+### Build
+
+- Vendor the plugin zip from `requirements.txt`, skipping native packages Calibre already provides (`lxml`, Pillow).
 
 ### Documentation
 

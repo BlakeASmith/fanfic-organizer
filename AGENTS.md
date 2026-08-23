@@ -68,7 +68,7 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 
 | Command | What it does |
 |---|---|
-| `python makeplugin.py zip` / `just build` | Self-contained `wranglekit.zip` (plugin + ao3kit + vendor from `requirements-plugin.txt`) for GitHub Releases. Native wheels are stripped. |
+| `python makeplugin.py zip` / `just build` | Self-contained `wranglekit.zip` (plugin + ao3kit + vendor from `requirements.txt`, skipping `lxml` and Pillow) for GitHub Releases. Native wheels are stripped. |
 | `python makeplugin.py install` / `just load-dev` | Remove leftover **AO3 Scraper**, `calibre-customize -b` as **Wranglekit** (checkout jobs via `dev_project.json`). Then tell the user to restart. |
 | `python makeplugin.py install --restart` | Install, then quit and start Calibre. |
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |

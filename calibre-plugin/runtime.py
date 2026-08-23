@@ -10,8 +10,10 @@ GitHub releases ship ``wranglekit.zip`` with ``ao3kit/``, pure-Python
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 from typing import Iterable
@@ -222,3 +224,25 @@ def ensure_bundled_runtime(
         dest,
         version=version or plugin_version_string(),
     )
+
+
+def load_user_dirs():
+    """Load ``user_dirs`` from the Calibre plugin package or a checkout file.
+
+    Calibre imports the plugin from a zip, so ``Path(__file__).parent / 'user_dirs.py'``
+    is not a real filesystem path. Pytest loads these modules from disk.
+    """
+    name = 'wranglekit_user_dirs'
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    try:
+        from calibre_plugins.wranglekit import user_dirs as module
+    except ImportError:
+        path = Path(__file__).resolve().parent / 'user_dirs.py'
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    sys.modules[name] = module
+    return module
