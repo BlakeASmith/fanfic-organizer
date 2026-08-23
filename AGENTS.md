@@ -34,9 +34,6 @@ pyproject.toml          # Package metadata; version from ao3kit.__version__
 .cursor/mcp.json        # calibre-dev MCP (stdio)
 ```
 
-Root `scrape_ao3.py`, `tag_metadata.py`, `download_epubs.py`, `ao3_http.py`,
-and `ao3_rate.py` are thin compatibility shims. Prefer importing from `ao3kit`.
-
 ## Interface parity
 
 The plugin and optional CLI share one core. Prefer implementing behavior in `ao3kit` library modules, then wiring the plugin (and a matching CLI flag for scripting). Cursor agents: see `.cursor/rules/interface-parity.mdc`. User-facing docs describe the **plugin**; `python -m ao3kit --help` is enough for the CLI.
@@ -273,7 +270,7 @@ Rules are **Python** (`TagRule.apply` or `@rule` functions). YAML is optional wi
 | Collections | Every applying rule contributes (union) |
 | `stop: true` | End rule evaluation for that tag |
 
-Preferred config module (`example_tag_rules.py`):
+Preferred config module:
 
 ```python
 from ao3kit.tags.rules import TagRule, RuleContext, RuleEffect, TagRulesConfig

@@ -175,16 +175,32 @@ def test_stop_skips_lower_priority_rules():
     assert item.applied_rules == ["early-stop"]
 
 
-def test_load_example_python_rules():
-    path = Path(__file__).resolve().parents[1] / "example_tag_rules.py"
+def test_load_python_rules_from_file(tmp_path: Path):
+    path = tmp_path / "rules.py"
+    path.write_text(
+        "from ao3kit.tags.rules import KeepSeparateRule, TagRulesConfig\n"
+        "RULES = TagRulesConfig(\n"
+        "    resolve_canonical=True,\n"
+        "    rules=[KeepSeparateRule(id='keep-jegulus', tags_ci=['Jegulus'])],\n"
+        ")\n",
+        encoding="utf-8",
+    )
     config = load_tag_rules(path)
     assert config.resolve_canonical is True
-    assert any(rule.id == "river-song-collection" for rule in config.rules)
     assert any(rule.id == "keep-jegulus" for rule in config.rules)
 
 
-def test_load_example_yaml_rules():
-    path = Path(__file__).resolve().parents[1] / "example_tag_rules.yaml"
+def test_load_yaml_rules_from_file(tmp_path: Path):
+    path = tmp_path / "rules.yaml"
+    path.write_text(
+        "version: 1\n"
+        "resolve_canonical: true\n"
+        "rules:\n"
+        "  - use: keep_separate\n"
+        "    id: keep-jegulus\n"
+        "    tags_ci: [Jegulus]\n",
+        encoding="utf-8",
+    )
     config = load_tag_rules(path)
     assert any(rule.id == "keep-jegulus" for rule in config.rules)
     engine = TagRulesEngine(

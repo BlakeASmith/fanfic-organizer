@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -552,13 +551,9 @@ def init_user_config(
 
 
 def copy_example_rules(cfg: UserConfig, *, name: str = "example") -> Path:
-    """Copy repo ``example_tag_rules.py`` into the user's rules dir."""
-    project = Path(__file__).resolve().parents[1]
-    src = project / "example_tag_rules.py"
-    if not src.is_file():
-        raise FileNotFoundError(f"Bundled example missing: {src}")
+    """Write the bundled rules template into the user's rules dir."""
     dest = cfg.rule_path(name)
     if dest.exists():
         raise FileExistsError(f"Already exists: {dest}")
-    shutil.copy2(src, dest)
+    dest.write_text(DEFAULT_RULES_TEMPLATE, encoding="utf-8")
     return dest
