@@ -74,7 +74,7 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |
 | `python makeplugin.py status` | GUI running? Restart lock held? |
 | `python makeplugin.py changelog` | Print `[Unreleased]` (or `changelog 0.26.0` for a shipped section). |
-| `python makeplugin.py release X.Y.Z` / `just release X.Y.Z` | Cut `[Unreleased]` into `X.Y.Z`, bump `ao3kit.__version__` and the plugin tuple. Add `--publish` / `just release X.Y.Z publish` to commit, push, zip, and `gh release create`. |
+| `python makeplugin.py release` / `just release` | Cut `[Unreleased]` into the next 0.x minor (or `--patch` / `just release patch`). Add `--publish` / `just release publish` to commit, push, zip, and `gh release create`. 1.0+ is not supported. |
 
 Checkout **install** is for developers. End users only ever load **wranglekit.zip** from GitHub Releases. Tag `vX.Y.Z` runs `.github/workflows/release.yml`, which zips the plugin and attaches it using the matching CHANGELOG section as the release body.
 
@@ -84,7 +84,7 @@ Keep [CHANGELOG.md](CHANGELOG.md) current. Standards are in [CONTRIBUTING.md](CO
 
 - User-facing work updates **[Unreleased]** in the same change (Conventional Commit type → heading).
 - Do not ship a tag with an empty Unreleased section.
-- `python makeplugin.py release X.Y.Z --publish` is the usual release path; pushing the tag alone is enough for CI to attach the zip if the changelog was already cut.
+- `just release publish` is the usual release path; pushing the tag alone is enough for CI to attach the zip if the changelog was already cut.
 - Every **0.x** GitHub release body includes the pre-1.0 testing disclaimer (not fully tested; prefer **Stable** after the fact; try another tag if one will not run). Do not strip it. Mark **Stable** only after soak with no reported problems — see CONTRIBUTING.
 
 `--restart` / `restart` take a **host-wide lock** (`$XDG_RUNTIME_DIR/wranglekit/calibre_restart.lock`, override `AO3KIT_CALIBRE_LOCK`). Only one agent can force-restart at a time. Pass `--agent-id <short-name>` so the holder is visible. CLI waits up to `--lock-timeout` seconds (default 15); if still busy, it exits without killing Calibre.

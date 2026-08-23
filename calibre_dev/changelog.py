@@ -63,6 +63,28 @@ def format_version(parts: tuple[int, int, int]) -> str:
     return f"{parts[0]}.{parts[1]}.{parts[2]}"
 
 
+def require_0x(parts: tuple[int, int, int]) -> tuple[int, int, int]:
+    """This tool only cuts 0.x. 1.0+ is a deliberate, manual decision."""
+    if parts[0] >= 1:
+        raise ChangelogError(
+            f"{format_version(parts)} is 1.0+; this tool only cuts 0.x releases"
+        )
+    return parts
+
+
+def next_0x_version(
+    current: tuple[int, int, int],
+    *,
+    patch: bool = False,
+) -> tuple[int, int, int]:
+    """Next 0.x: minor+1 (default) or patch+1. Never increments major."""
+    require_0x(current)
+    major, minor, patch_n = current
+    if patch:
+        return (major, minor, patch_n + 1)
+    return (major, minor + 1, 0)
+
+
 def parse_changelog(text: str) -> tuple[str, list[ChangelogSection]]:
     matches = list(HEADING_RE.finditer(text))
     if not matches:
@@ -207,7 +229,7 @@ def prepare_release(
     write: bool = True,
 ) -> str:
     """Move [Unreleased] to ``version``, bump plugin + package, return notes."""
-    parts = parse_version(version)
+    parts = require_0x(parse_version(version))
     current = read_plugin_version(plugin_init)
     if parts <= current:
         raise ChangelogError(

@@ -24,7 +24,7 @@ python makeplugin.py install   # or: just load-dev
 
 That copies the plugin UI into Calibre **and** writes `calibre-plugin/dev_project.json` (gitignored) with this checkout’s path. After you restart Calibre, jobs use this tree instead of the bundled zip. To override: plugin settings → Project path, or `AO3KIT_PROJECT`.
 
-Optional [just](https://github.com/casey/just) recipes: `just load-dev` (install), `just build` (`wranglekit.zip`), `just release 0.27.0` (cut changelog; add `publish` to commit, push, zip, and `gh release create`).
+Optional [just](https://github.com/casey/just) recipes: `just load-dev` (install), `just build` (`wranglekit.zip`), `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 Restart Calibre yourself unless you are iterating on plugin UI and need the GUI reloaded now (`python makeplugin.py install --restart` / MCP `restart=true`). Default is install only.
 
@@ -47,7 +47,7 @@ Known copies (do not invent a third): `calibre-plugin/similar.py` mirrors `ao3ki
 
 ## Version, changelog, and releases
 
-One version string: `ao3kit.__version__` (today `0.26.0`). The plugin tuple in `calibre-plugin/__init__.py` must match. `pyproject.toml` reads the package attribute. `python makeplugin.py release X.Y.Z` bumps both.
+One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__init__.py` must match. `pyproject.toml` reads the package attribute. `just release` (or `python makeplugin.py release`) bumps the next **0.x minor** (0.26.0 → 0.27.0). Pass `--patch` / `just release patch` for a patch bump. This tool does not cut 1.0+.
 
 ### Pre-1.0
 
@@ -87,13 +87,14 @@ Unreleased notes **are** the GitHub release body (plus the pre-1.0 disclaimer `m
 ```bash
 python makeplugin.py changelog              # preview [Unreleased]
 pytest
-just release 0.27.0                         # cut changelog + bump versions (working tree)
-just release 0.27.0 publish                 # commit, push, zip, gh release
+just release                                # next 0.x minor (working tree)
+just release publish                        # cut + commit + push + zip + gh release
+just release patch                          # next 0.x patch instead
 ```
 
-Same as `python makeplugin.py release 0.27.0` / `--publish`.
+Same as `python makeplugin.py release` / `--patch` / `--publish`.
 
-`--publish` commits the changelog/version files (`chore(release): 0.27.0`), pushes, builds `wranglekit.zip`, and runs `gh release create` with those notes. Pushing tag `v0.27.0` also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section.
+`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `wranglekit.zip`, and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section.
 
 ## Tests and plugin install
 

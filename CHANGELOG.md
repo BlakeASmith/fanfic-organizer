@@ -10,7 +10,7 @@ go under Breaking Changes.
 
 Put new bullets under **[Unreleased]** in the same change that ships them.
 `chore` / `test` / `style` stay out unless a user would notice.
-Release command: `just release X.Y.Z` (add `publish` to tag and create the GitHub release).
+Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
@@ -27,6 +27,7 @@ Release command: `just release X.Y.Z` (add `publish` to tag and create the GitHu
 ### Build
 
 - Vendor the plugin zip from `requirements.txt`, skipping native packages Calibre already provides (`lxml`, Pillow).
+- `just release` / `python makeplugin.py release` bump the next 0.x minor (or `--patch`); 1.0+ is not supported.
 
 ### Documentation
 

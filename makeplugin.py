@@ -295,13 +295,30 @@ def _cmd_release(
     *,
     publish: bool,
     dry_run: bool,
+    patch: bool,
     release_date: str | None,
 ) -> int:
-    from calibre_dev.changelog import ChangelogError, prepare_release
+    from calibre_dev.changelog import (
+        ChangelogError,
+        format_version,
+        next_0x_version,
+        parse_version,
+        prepare_release,
+        read_plugin_version,
+        require_0x,
+    )
 
-    if not version:
-        print("release requires X.Y.Z (example: python makeplugin.py release 0.27.0)", file=sys.stderr)
+    if version and patch:
+        print("use either a version or --patch, not both", file=sys.stderr)
         return 2
+    try:
+        if version:
+            version = format_version(require_0x(parse_version(version)))
+        else:
+            version = format_version(next_0x_version(read_plugin_version(), patch=patch))
+    except ChangelogError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     if publish and dry_run:
         print("use either --publish or --dry-run, not both", file=sys.stderr)
         return 2
@@ -336,9 +353,9 @@ def _cmd_release(
         print(f"Published GitHub release v{version} with wranglekit.zip.", file=sys.stderr)
     else:
         print(
-            "Commit those files, then either "
-            f"`python makeplugin.py release {version} --publish` "
-            f"or tag v{version} and push (CI attaches wranglekit.zip).",
+            f"Commit those files and tag v{version} "
+            "(push the tag; CI attaches wranglekit.zip). "
+            "To cut and publish in one step: python makeplugin.py release --publish",
             file=sys.stderr,
         )
     return 0
@@ -363,7 +380,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "version",
         nargs="?",
-        help="X.Y.Z for release, or changelog section to print (default Unreleased).",
+        help=(
+            "Optional 0.x X.Y.Z for release (default: next minor). "
+            "For changelog: section to print (default Unreleased)."
+        ),
     )
     parser.add_argument(
         "-i",
@@ -399,6 +419,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-run pip install into the XDG plugin-vendor cache before zipping.",
     )
     parser.add_argument(
+        "--patch",
+        action="store_true",
+        help="With release: bump 0.x patch instead of minor. Do not pass a version.",
+    )
+    parser.add_argument(
         "--publish",
         action="store_true",
         help="With release: commit, push, zip, and create the GitHub release from [Unreleased].",
@@ -422,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--publish requires release")
     if args.dry_run and command != "release":
         parser.error("--dry-run requires release")
+    if args.patch and command != "release":
+        parser.error("--patch requires release")
     if command in {"zip", "install", "restart", "status"} and args.version:
         parser.error(f"{command} does not take a version")
     if command == "changelog":
@@ -431,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
             args.version,
             publish=args.publish,
             dry_run=args.dry_run,
+            patch=args.patch,
             release_date=args.date or None,
         )
     if command is None:

@@ -18,14 +18,17 @@ load-dev:
     {{ python }} makeplugin.py install
     @echo "Restart Calibre to load the plugin."
 
-# Cut [Unreleased] into X.Y.Z. `just release 0.27.0` or `just release 0.27.0 publish`
-release version publish="":
+# Next 0.x minor. `just release` / `just release patch` / `just release publish` / `just release patch publish`
+release first="" second="":
     #!/usr/bin/env bash
     set -euo pipefail
     extra=()
-    case "{{ publish }}" in
-      "") ;;
-      publish|--publish) extra+=(--publish) ;;
-      *) echo "usage: just release X.Y.Z [publish]" >&2; exit 2 ;;
-    esac
-    {{ python }} makeplugin.py release "{{ version }}" "${extra[@]}"
+    for arg in "{{ first }}" "{{ second }}"; do
+      case "$arg" in
+        "") ;;
+        patch|--patch) extra+=(--patch) ;;
+        publish|--publish) extra+=(--publish) ;;
+        *) echo "usage: just release [patch] [publish]" >&2; exit 2 ;;
+      esac
+    done
+    {{ python }} makeplugin.py release "${extra[@]}"

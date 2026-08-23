@@ -12,10 +12,12 @@ from calibre_dev.changelog import (
     cut_unreleased,
     format_version,
     is_pre_1_0,
+    next_0x_version,
     notes_for_version,
     parse_version,
     prepare_release,
     read_plugin_version,
+    require_0x,
     set_package_version,
     set_plugin_version,
 )
@@ -49,6 +51,16 @@ def test_parse_version_strips_v_prefix():
     assert format_version((1, 2, 3)) == "1.2.3"
     with pytest.raises(ChangelogError):
         parse_version("1.2")
+
+
+def test_next_0x_version_minor_and_patch():
+    assert next_0x_version((0, 26, 0)) == (0, 27, 0)
+    assert next_0x_version((0, 26, 3), patch=True) == (0, 26, 4)
+    assert next_0x_version((0, 26, 3)) == (0, 27, 0)
+    with pytest.raises(ChangelogError, match="1.0"):
+        next_0x_version((1, 0, 0))
+    with pytest.raises(ChangelogError, match="1.0"):
+        require_0x((1, 2, 0))
 
 
 def test_notes_for_unreleased_drops_empty_groups():
@@ -138,6 +150,14 @@ def test_prepare_release_rejects_non_increasing_version(tmp_path: Path):
             package_init=package,
             write=False,
         )
+    with pytest.raises(ChangelogError, match="1.0"):
+        prepare_release(
+            "1.0.0",
+            changelog_path=changelog,
+            plugin_init=plugin,
+            package_init=package,
+            write=False,
+        )
 
 
 def test_set_versions_round_trip(tmp_path: Path):
@@ -183,3 +203,39 @@ def test_makeplugin_release_dry_run_does_not_write(capsys):
     assert "dry-run" in out.err
     assert CHANGELOG_PATH.read_text(encoding="utf-8") == before_log
     assert PLUGIN_INIT.read_text(encoding="utf-8") == before_plugin
+
+
+def test_makeplugin_release_dry_run_auto_minor(capsys):
+    import makeplugin
+    from calibre_dev.changelog import CHANGELOG_PATH, PLUGIN_INIT
+
+    current = read_plugin_version()
+    expected = format_version(next_0x_version(current))
+    before_log = CHANGELOG_PATH.read_text(encoding="utf-8")
+    before_plugin = PLUGIN_INIT.read_text(encoding="utf-8")
+    assert makeplugin.main(["release", "--dry-run", "--date", "2026-08-24"]) == 0
+    err = capsys.readouterr().err
+    assert expected in err
+    assert CHANGELOG_PATH.read_text(encoding="utf-8") == before_log
+    assert PLUGIN_INIT.read_text(encoding="utf-8") == before_plugin
+
+
+def test_makeplugin_release_dry_run_auto_patch(capsys):
+    import makeplugin
+
+    expected = format_version(next_0x_version(read_plugin_version(), patch=True))
+    assert makeplugin.main(["release", "--patch", "--dry-run", "--date", "2026-08-24"]) == 0
+    assert expected in capsys.readouterr().err
+
+
+def test_makeplugin_release_rejects_1_0(capsys):
+    import makeplugin
+
+    assert makeplugin.main(["release", "1.0.0", "--dry-run"]) == 1
+    assert "1.0" in capsys.readouterr().err
+
+
+def test_makeplugin_release_rejects_version_with_patch():
+    import makeplugin
+
+    assert makeplugin.main(["release", "0.27.1", "--patch", "--dry-run"]) == 2

@@ -18,11 +18,13 @@ feat!:  ### Breaking Changes
 Leave out `chore` / `test` / `style` unless a user would notice. Imperative voice (`- Add …`, `- Fix …`). Do not rewrite old version sections.
 
 ```bash
-just release X.Y.Z                             # cut Unreleased, bump ao3kit + plugin
-just release X.Y.Z publish                     # commit, push, zip, gh release
+just release                                   # next 0.x minor from current
+just release patch                             # next 0.x patch
+just release publish                           # cut + commit + push + gh release
+just release patch publish
 python makeplugin.py changelog                 # preview Unreleased
-python makeplugin.py release X.Y.Z             # same as just release
-python makeplugin.py release X.Y.Z --publish   # same as just release … publish
+python makeplugin.py release                   # same as just release
+python makeplugin.py release --patch --publish
 ```
 
 `--publish` uses [Unreleased] (now the versioned section) as the GitHub release body and attaches `wranglekit.zip`. Do not invent a second notes file. Fail the release if Unreleased has no bullets.
