@@ -310,15 +310,25 @@ def test_makeplugin_legacy_dash_i(monkeypatch: pytest.MonkeyPatch):
     assert makeplugin.main(["-i"]) == 0
 
 
+async def _mcp_tools_by_name(app) -> dict:
+    """FastMCP 2: get_tools() → dict. FastMCP 3: list_tools() → list."""
+    if hasattr(app, "get_tools"):
+        tools = await app.get_tools()
+        if isinstance(tools, dict):
+            return tools
+        return {tool.name: tool for tool in tools}
+    tools = await app.list_tools()
+    return {tool.name: tool for tool in tools}
+
+
 def test_mcp_tools_default_install_does_not_restart(tmp_path: Path):
     pytest.importorskip("fastmcp")
     from calibre_dev.mcp import create_server
 
     ctl = FakeCtl(tmp_path, pids=[3])
     app = create_server(ctl=ctl)
-    tools = asyncio.run(app.get_tools())
+    tools = asyncio.run(_mcp_tools_by_name(app))
     assert set(tools) >= {"calibre_status", "install_plugin", "restart_calibre"}
-    install = tools["install_plugin"]
-    result = install.fn(restart=False)
+    result = tools["install_plugin"].fn(restart=False)
     assert result["restarted"] is False
     assert ctl.actions == ["install"]

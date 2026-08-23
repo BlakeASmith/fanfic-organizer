@@ -172,43 +172,68 @@ def test_set_versions_round_trip(tmp_path: Path):
 
 
 def test_repo_changelog_has_unreleased_and_first_release():
-    from calibre_dev.changelog import CHANGELOG_PATH
+    from calibre_dev.changelog import CHANGELOG_PATH, parse_changelog
 
     text = CHANGELOG_PATH.read_text(encoding="utf-8")
-    assert "Keep a Changelog" in notes_for_version(text)
+    _preamble, sections = parse_changelog(text)
+    assert sections[0].title == "Unreleased"
     assert "wranglekit.zip" in notes_for_version(text, "0.26.0")
 
 
 def test_makeplugin_changelog_stdout(capsys):
     import makeplugin
 
-    assert makeplugin.main(["changelog"]) == 0
-    out = capsys.readouterr().out
-    assert "### Documentation" in out
+    rc = makeplugin.main(["changelog"])
+    captured = capsys.readouterr()
+    if rc == 0:
+        assert captured.out.strip()
+    else:
+        assert "no entries" in captured.err
     assert makeplugin.main(["changelog", "0.26.0"]) == 0
     shipped = capsys.readouterr().out
     assert "First GitHub Release" in shipped
     assert "0.x releases are not rigorously tested" in shipped
 
 
-def test_makeplugin_release_dry_run_does_not_write(capsys):
+def _stub_release_changelog(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Dry-run CLI still needs Unreleased bullets; the live file is often empty."""
+    from calibre_dev import changelog as cl
+
+    log = tmp_path / "CHANGELOG.md"
+    log.write_text(SAMPLE, encoding="utf-8")
+    orig = cl.prepare_release
+
+    def wrapped(version, **kwargs):
+        kwargs["changelog_path"] = log
+        return orig(version, **kwargs)
+
+    monkeypatch.setattr(cl, "prepare_release", wrapped)
+
+
+def test_makeplugin_release_dry_run_does_not_write(
+    capsys, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     import makeplugin
     from calibre_dev.changelog import CHANGELOG_PATH, PLUGIN_INIT
 
+    _stub_release_changelog(monkeypatch, tmp_path)
     before_log = CHANGELOG_PATH.read_text(encoding="utf-8")
     before_plugin = PLUGIN_INIT.read_text(encoding="utf-8")
     assert makeplugin.main(["release", "0.27.0", "--dry-run", "--date", "2026-08-24"]) == 0
     out = capsys.readouterr()
-    assert "Keep a Changelog" in out.out
+    assert "New search filter." in out.out
     assert "dry-run" in out.err
     assert CHANGELOG_PATH.read_text(encoding="utf-8") == before_log
     assert PLUGIN_INIT.read_text(encoding="utf-8") == before_plugin
 
 
-def test_makeplugin_release_dry_run_auto_minor(capsys):
+def test_makeplugin_release_dry_run_auto_minor(
+    capsys, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     import makeplugin
     from calibre_dev.changelog import CHANGELOG_PATH, PLUGIN_INIT
 
+    _stub_release_changelog(monkeypatch, tmp_path)
     current = read_plugin_version()
     expected = format_version(next_0x_version(current))
     before_log = CHANGELOG_PATH.read_text(encoding="utf-8")
@@ -220,9 +245,12 @@ def test_makeplugin_release_dry_run_auto_minor(capsys):
     assert PLUGIN_INIT.read_text(encoding="utf-8") == before_plugin
 
 
-def test_makeplugin_release_dry_run_auto_patch(capsys):
+def test_makeplugin_release_dry_run_auto_patch(
+    capsys, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     import makeplugin
 
+    _stub_release_changelog(monkeypatch, tmp_path)
     expected = format_version(next_0x_version(read_plugin_version(), patch=True))
     assert makeplugin.main(["release", "--patch", "--dry-run", "--date", "2026-08-24"]) == 0
     assert expected in capsys.readouterr().err

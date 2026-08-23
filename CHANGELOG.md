@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Documentation
+
+- Add a features list and attribution section to the README.
+
 ## [0.26.1] - 2026-08-23
 
 ### Breaking Changes

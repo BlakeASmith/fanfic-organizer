@@ -22,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "fastmcp>=2.8",
+    "fastmcp>=2.8,<4",
 ]
 
 [project.urls]
