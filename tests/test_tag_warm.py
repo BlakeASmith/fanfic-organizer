@@ -760,7 +760,9 @@ def test_plugin_unique_names_and_status_text(tmp_path: Path):
     assert "Running (pid 4)" in header
     assert "7/10 cached" in header
     assert str(log_path) in header
-    assert mod.warm_log_path(tmp_path) == tmp_path / ".cache" / "tag_warm.log"
+    from ao3kit.paths import warm_log_file
+
+    assert mod.warm_log_path(tmp_path) == warm_log_file()
 
     summary, details = mod.format_warm_stopped_dialog(
         {

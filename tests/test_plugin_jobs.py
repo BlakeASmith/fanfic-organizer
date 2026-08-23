@@ -108,6 +108,47 @@ def test_first_line_handles_empty_and_whitespace():
     assert jobs.first_line("  hello  ", 4) == "hell"
 
 
+def test_job_watch_phase_and_header_while_saving():
+    jobs = _load("plugin_jobs", PLUGIN / "jobs.py")
+    running = {"title": "Search AO3", "running": True, "message": "Page 2/5"}
+    saving = {
+        "title": "Search AO3",
+        "running": False,
+        "exit_code": 0,
+        "finished_at": "2026-01-01T00:00:00Z",
+        "ingest": "pending",
+        "message": "Wrote 3 works",
+    }
+    done = {
+        "title": "Search AO3",
+        "running": False,
+        "exit_code": 0,
+        "finished_at": "2026-01-01T00:00:00Z",
+        "ingest": "done",
+        "result": "Imported 3 books.",
+    }
+    failed = {
+        "title": "Search AO3",
+        "running": False,
+        "exit_code": 1,
+        "ingest": "skipped",
+        "message": "AO3 returned 429",
+    }
+    assert jobs.job_watch_phase(running) == "running"
+    assert jobs.job_watch_phase(saving) == "saving"
+    assert jobs.job_watch_phase(done) == "done"
+    assert jobs.job_watch_phase(failed) == "failed"
+    header_saving = jobs.format_job_header(saving, Path("/tmp/job.log"))
+    assert "Finished" not in header_saving
+    assert "Saving" in header_saving
+    assert "/tmp/job.log" not in header_saving
+    header_done = jobs.format_job_header(done)
+    assert "Done" in header_done
+    assert "Imported 3 books." in header_done
+    assert jobs.job_was_notified({"notified": True})
+    assert not jobs.job_was_notified({})
+
+
 def test_plan_scrape_adds_enrich_step(tmp_path: Path):
     plans = load_job_plans()
     job_dir = tmp_path / "scrape-1"

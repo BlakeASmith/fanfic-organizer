@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -10,8 +11,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
+
+DEV_PROJECT_STAMP = 'dev_project.json'
 
 
 StatusCallback = Callable[[str], None]
@@ -86,8 +90,22 @@ def _prefs_set(key: str, value: str) -> None:
         pass
 
 
+def _user_dirs():
+    name = 'wranglekit_user_dirs'
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = Path(__file__).resolve().parent / 'user_dirs.py'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def _python_stamp_path(project: Path) -> Path:
-    return project / '.ao3kit' / 'python'
+    return _user_dirs().resolve_python_stamp_file(Path(project))
 
 
 def _stamp_python(project: Path) -> str:
@@ -96,7 +114,9 @@ def _stamp_python(project: Path) -> str:
         value = stamp.read_text(encoding='utf-8').strip()
     except OSError:
         return ''
-    return value if value and Path(value).is_file() else ''
+    if value and Path(value).is_file():
+        return value
+    return ''
 
 
 def _write_python_stamp(project: Path, python: str) -> None:
@@ -203,29 +223,51 @@ def _candidate_pythons(project: Path) -> list[str]:
     return found
 
 
-def _candidate_projects() -> list[Path]:
-    projects: list[Path] = []
-    configured = _prefs_get('ao3kit_project')
-    if configured:
-        projects.append(Path(configured).expanduser())
+def _plugin_dir() -> Path:
+    return Path(__file__).resolve().parent
 
-    env_home = os.environ.get('AO3KIT_HOME', '').strip()
-    if env_home:
-        home = Path(env_home).expanduser()
-        projects.append(home)
-        projects.append(home.parent)
 
-    projects.append(Path.home() / 'emily' / 'ao3')
-    projects.append(Path('/Users/blake/emily/ao3'))
-
+def read_dev_project_stamp(plugin_dir: Path | None = None) -> str:
+    """Checkout path written by ``python makeplugin.py install``."""
+    path = (plugin_dir or _plugin_dir()) / DEV_PROJECT_STAMP
     try:
-        from calibre_plugins.wranglekit.runtime import ensure_bundled_runtime
+        raw = path.read_text(encoding='utf-8')
+    except OSError:
+        return ''
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw.strip()
+    if isinstance(data, dict):
+        return str(data.get('project') or '').strip()
+    if isinstance(data, str):
+        return data.strip()
+    return ''
 
-        bundled = ensure_bundled_runtime()
-        if bundled is not None:
-            projects.append(bundled)
-    except Exception:
-        pass
+
+def _candidate_projects(
+    *,
+    configured: str = '',
+    env: Mapping[str, str] | None = None,
+    stamp_project: str = '',
+    bundled: Path | None = None,
+) -> list[Path]:
+    """Ordered checkout / runtime roots. No machine-specific default paths."""
+    environ = os.environ if env is None else env
+    projects: list[Path] = []
+
+    def add(value: str | Path | None) -> None:
+        if value is None:
+            return
+        text = str(value).strip()
+        if not text:
+            return
+        projects.append(Path(text).expanduser())
+
+    add(configured)
+    add(environ.get('AO3KIT_PROJECT', ''))
+    add(stamp_project)
+    add(bundled)
 
     unique: list[Path] = []
     for path in projects:
@@ -235,12 +277,28 @@ def _candidate_projects() -> list[Path]:
     return unique
 
 
+def _is_ao3kit_project(path: Path) -> Path | None:
+    if (path / 'ao3kit' / '__init__.py').is_file():
+        return path
+    return None
+
+
 def find_ao3kit_project() -> Path | None:
-    for project in _candidate_projects():
-        if (project / 'ao3kit' / '__init__.py').is_file():
-            return project
-        if project.name == '.ao3kit' and (project.parent / 'ao3kit' / '__init__.py').is_file():
-            return project.parent
+    bundled = None
+    try:
+        from calibre_plugins.wranglekit.runtime import ensure_bundled_runtime
+
+        bundled = ensure_bundled_runtime()
+    except Exception:
+        bundled = None
+    for project in _candidate_projects(
+        configured=_prefs_get('ao3kit_project'),
+        stamp_project=read_dev_project_stamp(),
+        bundled=bundled,
+    ):
+        found = _is_ao3kit_project(project)
+        if found is not None:
+            return found
     return None
 
 
@@ -251,8 +309,6 @@ def _launcher_path(project: Path) -> str:
 
 def _enrich_env(project: Path) -> dict[str, str]:
     env = os.environ.copy()
-    home = env.get('AO3KIT_HOME') or str(project / '.ao3kit')
-    env['AO3KIT_HOME'] = home
     paths = [str(project)]
     vendor = Path(project) / 'vendor'
     if vendor.is_dir():
@@ -346,8 +402,9 @@ def resolve_ao3kit_runtime(
     if project is None:
         return None, None, (
             'Could not find ao3kit. Install wranglekit.zip from GitHub Releases '
-            '(Calibre → Preferences → Plugins → Load plugin from file), or set '
-            'Project path in plugin settings to a git checkout.'
+            '(Calibre → Preferences → Plugins → Load plugin from file), run '
+            'python makeplugin.py install from a git checkout, or set Project '
+            'path in plugin settings / AO3KIT_PROJECT.'
         )
 
     pythons = _candidate_pythons(project)

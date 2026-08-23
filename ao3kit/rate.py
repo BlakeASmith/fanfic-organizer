@@ -5,7 +5,7 @@ AO3's robots.txt (User-agent: *) has no Crawl-delay, but disallows
 This tool still fetches work pages, user-requested search listings, and
 native EPUB files for personal library backup.
 
-All interfaces (CLI, Calibre→ao3kit subprocess, and the frozen web UI / REST API) share one
+CLI and the Calibre plugin’s ao3kit subprocess share one
 on-disk limiter (see ``ao3kit.rate_store``) so concurrent processes on the
 same host pace together:
 
@@ -27,7 +27,6 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from ao3kit.rate_store import (
-    DEFAULT_RATE_DB_PATH,
     RateEvent,
     RateSnapshot,
     SharedRateStore,
@@ -644,8 +643,8 @@ def interval_for_url(url: str) -> float:
 def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> float:
     """Block until this host may hit AO3 again. Returns seconds waited.
 
-    Slot reservation is shared across processes via SQLite so CLI / web / API /
-    plugin enrich all observe the same pacing.
+    Slot reservation is shared across processes via SQLite so CLI and
+    plugin jobs observe the same pacing.
     """
     if _STATE.skip_wait:
         return 0.0
@@ -712,7 +711,7 @@ def ensure_robots(
 ) -> None:
     """Load robots.txt without blocking a scrape on the network.
 
-    Process memory and the host-wide rate DB cache are reused across CLI / web /
+    Process memory and the host-wide rate DB cache are reused across CLI /
     plugin subprocesses. A new process uses the disk cache or baked-in AO3
     defaults immediately; a live fetch only runs in the background (or
     synchronously when ``fetcher`` is passed, for tests).
@@ -851,7 +850,7 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "ABSOLUTE_MIN_INTERVAL",
     "DEFAULT_MIN_INTERVAL",
-    "DEFAULT_RATE_DB_PATH",
+    "default_rate_db_path",
     "LOGIN_MAX_WAIT",
     "LOGIN_MIN_INTERVAL",
     "MAX_MIN_INTERVAL",

@@ -28,15 +28,16 @@ from calibre_plugins.wranglekit.importer import (
 from calibre_plugins.wranglekit.job_plans import merge_ready_with_jsonl
 from calibre_plugins.wranglekit.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.wranglekit.jobs import (
+    first_line,
     job_is_retryable,
     job_paths,
+    job_was_notified,
     jobs_root,
     new_job_id,
     parse_job_list_json,
     parse_job_status_json,
     read_json,
     write_json,
-    first_line,
 )
 from calibre_plugins.wranglekit.jsonl_loader import load_jsonl_records, resolve_epub_path
 from calibre_plugins.wranglekit.progress import (
@@ -139,7 +140,11 @@ class JobSupervisor:
         project = self._project()
         if project is None:
             return None
-        from calibre_plugins.wranglekit.tag_warm import read_status_file, warm_status_path
+        from calibre_plugins.wranglekit.tag_warm import (
+            read_status_file,
+            warm_log_path,
+            warm_status_path,
+        )
 
         status = read_status_file(warm_status_path(project))
         if not status:
@@ -151,7 +156,7 @@ class JobSupervisor:
             'running': bool(status.get('running')),
             'pid': status.get('pid'),
             'message': status.get('message') or '',
-            'log_path': str(project / '.cache' / 'tag_warm.log'),
+            'log_path': str(warm_log_path(project)),
             'ingest': 'none',
             'result': (
                 f"{status.get('cached') or 0}/{status.get('source_count') or 0} cached"
@@ -293,7 +298,7 @@ class JobSupervisor:
             status_path=status_path,
             supervisor=self,
         )
-        dialog.finished.connect(lambda *_a, jid=job_id: self._dialogs.pop(jid, None))
+        dialog.destroyed.connect(lambda *_a, jid=job_id: self._dialogs.pop(jid, None))
         self._dialogs[job_id] = dialog
         dialog.show()
 
@@ -447,9 +452,11 @@ class JobSupervisor:
             project = self._project()
             if project is None:
                 return None, None, 'Background tag cache'
+            from calibre_plugins.wranglekit.tag_warm import warm_log_path, warm_status_path
+
             return (
-                project / '.cache' / 'tag_warm.log',
-                project / '.cache' / 'tag_warm.status.json',
+                warm_log_path(project),
+                warm_status_path(project),
                 'Background tag cache',
             )
         root = self.jobs_dir()
@@ -480,7 +487,7 @@ class JobSupervisor:
             elif plugin.get('incremental_epubs'):
                 self._poll_epubs(job_id, plugin)
             return
-        if status.get('notified') or job_id in self._ingesting:
+        if job_was_notified(status) or job_id in self._ingesting:
             return
         ingest = str(status.get('ingest') or 'none')
         if ingest == 'pending':
@@ -517,7 +524,12 @@ class JobSupervisor:
             return
         finished = bool(status.get('finished_at')) or status.get('exit_code') is not None
         if ingest == 'done' or (ingest == 'none' and finished):
-            self._mark_notified(job_dir)
+            summary = (
+                first_line(status.get('result'), 200)
+                or first_line(status.get('message'), 200)
+                or 'Finished.'
+            )
+            self._notify(job_id, summary, ok=True)
 
     def _poll_epubs(self, job_id: str, plugin: dict[str, Any]) -> None:
         items_path = plugin.get('items_json')
@@ -898,6 +910,30 @@ class JobSupervisor:
         message = str(status.get('message') or 'Job failed.')
         self._notify(job_id, message, ok=False, detail=message)
 
+    def _live_log(self, job_id: str) -> JobLogDialog | None:
+        dialog = self._dialogs.get(job_id)
+        if dialog is not None:
+            try:
+                dialog.windowTitle()
+                return dialog
+            except RuntimeError:
+                self._dialogs.pop(job_id, None)
+        try:
+            from PyQt5.Qt import QApplication
+        except ImportError:
+            from PyQt5.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return None
+        for widget in app.topLevelWidgets():
+            if (
+                isinstance(widget, JobLogDialog)
+                and getattr(widget, 'job_id', None) == job_id
+            ):
+                self._dialogs[job_id] = widget
+                return widget
+        return None
+
     def _notify(self, job_id: str, summary: str, *, ok: bool, detail: str = '') -> None:
         root = self.jobs_dir()
         job_dir = root / job_id if root is not None else None
@@ -907,10 +943,12 @@ class JobSupervisor:
             if result:
                 fields['result'] = result
             self._update_status(job_dir, **fields)
-        dialog = self._dialogs.get(job_id)
+        dialog = self._live_log(job_id)
         if dialog is not None:
             try:
                 dialog.mark_finished(summary, ok=ok, detail=detail)
+                dialog.raise_()
+                dialog.activateWindow()
                 return
             except RuntimeError:
                 self._dialogs.pop(job_id, None)

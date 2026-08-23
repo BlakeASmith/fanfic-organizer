@@ -491,13 +491,13 @@ def enrich_records(
         request_delay = (
             delay if delay is not None else user_cfg.settings.request_delay
         )
-        from ao3kit.tags.metadata import DEFAULT_TAG_CACHE_PATH
+        from ao3kit.tags.cache import default_tag_cache_path
 
         use_cache = user_cfg.settings.tag_cache_enabled
         resolver = TagResolver(
             delay=request_delay,
             on_status=on_status,
-            cache_path=DEFAULT_TAG_CACHE_PATH if use_cache else None,
+            cache_path=default_tag_cache_path() if use_cache else None,
             follow_canonical=user_cfg.settings.follow_canonical,
             persist=use_cache,
             ttl_days=user_cfg.settings.tag_cache_ttl_days,

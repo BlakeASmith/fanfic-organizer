@@ -27,12 +27,12 @@ def _print(data: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Manage ao3kit user config and rule files (.ao3kit/)."
+        description="Manage ao3kit user config and rule files (XDG config dir)."
     )
     parser.add_argument(
         "--home",
         type=Path,
-        help="Config directory (default: AO3KIT_HOME or ./.ao3kit)",
+        help="Config directory (default: AO3KIT_HOME or XDG config home / wranglekit)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -489,7 +489,8 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         if cmd == "preview":
-            from ao3kit.tags.metadata import DEFAULT_TAG_CACHE_PATH, TagResolver
+            from ao3kit.tags.cache import default_tag_cache_path
+            from ao3kit.tags.metadata import TagResolver
             from ao3kit.tags.rules import TagRulesEngine
 
             rules = cfg.load_active_rules()
@@ -498,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
             use_cache = (not args.no_cache) and cfg.settings.tag_cache_enabled
             with TagResolver(
                 delay=cfg.settings.request_delay,
-                cache_path=DEFAULT_TAG_CACHE_PATH if use_cache else None,
+                cache_path=default_tag_cache_path() if use_cache else None,
                 follow_canonical=cfg.settings.follow_canonical,
                 persist=use_cache,
                 ttl_days=cfg.settings.tag_cache_ttl_days,

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Build or dev-install the Calibre plugin.
+"""Build, install, or release the Calibre plugin.
 
 ``zip`` writes a self-contained ``wranglekit.zip`` for GitHub Releases
 (plugin UI + ao3kit + vendored pure-Python deps). ``install`` still uses
 ``calibre-customize -b`` from ``calibre-plugin/`` for fast UI iteration.
+``release`` cuts ``CHANGELOG.md`` [Unreleased] into a versioned section,
+bumps ``ao3kit`` + plugin versions, and optionally publishes the GitHub release.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
 OUTPUT = ROOT / "wranglekit.zip"
-VENDOR_CACHE = ROOT / ".cache" / "plugin-vendor"
 PLUGIN_REQUIREMENTS = ROOT / "requirements-plugin.txt"
 NATIVE_SUFFIXES = {".so", ".pyd", ".dylib", ".dll"}
 SKIP_DIR_NAMES = {
@@ -30,6 +31,14 @@ SKIP_DIR_NAMES = {
     "bin",
     "tests",
 }
+SKIP_FILE_NAMES = {
+    "dev_project.json",
+}
+RELEASE_PATHS = (
+    "CHANGELOG.md",
+    "ao3kit/__init__.py",
+    "calibre-plugin/__init__.py",
+)
 
 
 def _purge_native_extensions(root: Path) -> None:
@@ -42,21 +51,28 @@ def vendor_requirements_hash() -> str:
     return hashlib.sha256(PLUGIN_REQUIREMENTS.read_bytes()).hexdigest()
 
 
+def vendor_cache_dir() -> Path:
+    from ao3kit.paths import plugin_vendor_dir
+
+    return plugin_vendor_dir()
+
+
 def ensure_vendor(*, force: bool = False) -> Path:
-    """pip-install plugin runtime deps into ``.cache/plugin-vendor``."""
-    stamp = VENDOR_CACHE / ".requirements.sha256"
+    """pip-install plugin runtime deps into the XDG plugin-vendor cache."""
+    cache = vendor_cache_dir()
+    stamp = cache / ".requirements.sha256"
     req_hash = vendor_requirements_hash()
     if (
         not force
-        and (VENDOR_CACHE / "requests" / "__init__.py").is_file()
-        and (VENDOR_CACHE / "yaml" / "__init__.py").is_file()
+        and (cache / "requests" / "__init__.py").is_file()
+        and (cache / "yaml" / "__init__.py").is_file()
         and stamp.is_file()
         and stamp.read_text(encoding="utf-8").strip() == req_hash
     ):
-        return VENDOR_CACHE
-    if VENDOR_CACHE.exists():
-        shutil.rmtree(VENDOR_CACHE)
-    VENDOR_CACHE.mkdir(parents=True, exist_ok=True)
+        return cache
+    if cache.exists():
+        shutil.rmtree(cache)
+    cache.mkdir(parents=True, exist_ok=True)
     subprocess.check_call(
         [
             sys.executable,
@@ -69,17 +85,19 @@ def ensure_vendor(*, force: bool = False) -> Path:
             "-r",
             str(PLUGIN_REQUIREMENTS),
             "--target",
-            str(VENDOR_CACHE),
+            str(cache),
         ]
     )
-    _purge_native_extensions(VENDOR_CACHE)
+    _purge_native_extensions(cache)
     stamp.write_text(req_hash + "\n", encoding="utf-8")
-    return VENDOR_CACHE
+    return cache
 
 
 def _should_skip(path: Path, root: Path) -> bool:
     rel_parts = path.relative_to(root).parts
     if any(part in SKIP_DIR_NAMES for part in rel_parts):
+        return True
+    if path.name in SKIP_FILE_NAMES:
         return True
     if path.suffix in {".pyc", ".pyo"}:
         return True
@@ -169,21 +187,152 @@ def _ctl():
     return CalibreCtl(plugin_dir=PLUGIN_DIR)
 
 
+def _git(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        **kwargs,
+    )
+
+
+def _dirty_paths_outside_release() -> list[str]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    blocked: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].split(" -> ", 1)[-1].strip().strip('"')
+        if path not in RELEASE_PATHS:
+            blocked.append(path)
+    return blocked
+
+
+def _cmd_changelog(version: str | None) -> int:
+    from calibre_dev.changelog import CHANGELOG_PATH, ChangelogError, notes_for_version
+
+    try:
+        notes = notes_for_version(
+            CHANGELOG_PATH.read_text(encoding="utf-8"),
+            version,
+        )
+    except ChangelogError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    sys.stdout.write(notes)
+    return 0
+
+
+def _publish_release(version: str, notes: str) -> None:
+    tag = f"v{version}"
+    _git(["add", *RELEASE_PATHS])
+    _git(["commit", "-m", f"chore(release): {version}"])
+    _git(["push", "origin", "HEAD"])
+    dest = build_zip()
+    from ao3kit.paths import cache_dir
+
+    notes_path = cache_dir() / "release-notes.md"
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    notes_path.write_text(notes, encoding="utf-8")
+    subprocess.run(
+        [
+            "gh",
+            "release",
+            "create",
+            tag,
+            str(dest),
+            "--title",
+            tag,
+            "--notes-file",
+            str(notes_path),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+    _git(["fetch", "origin", f"refs/tags/{tag}:refs/tags/{tag}"])
+
+
+def _cmd_release(
+    version: str | None,
+    *,
+    publish: bool,
+    dry_run: bool,
+    release_date: str | None,
+) -> int:
+    from calibre_dev.changelog import ChangelogError, prepare_release
+
+    if not version:
+        print("release requires X.Y.Z (example: python makeplugin.py release 0.27.0)", file=sys.stderr)
+        return 2
+    if publish and dry_run:
+        print("use either --publish or --dry-run, not both", file=sys.stderr)
+        return 2
+    if publish:
+        blocked = _dirty_paths_outside_release()
+        if blocked:
+            print(
+                "--publish needs a clean tree except changelog/version files; "
+                f"blocked by: {', '.join(blocked)}",
+                file=sys.stderr,
+            )
+            return 1
+    try:
+        notes = prepare_release(
+            version,
+            release_date=release_date or None,
+            write=not dry_run,
+        )
+    except ChangelogError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    sys.stdout.write(notes)
+    if dry_run:
+        print(f"(dry-run) would cut [Unreleased] into {version}", file=sys.stderr)
+        return 0
+    print(
+        f"Cut [Unreleased] into {version}; bumped ao3kit and plugin versions.",
+        file=sys.stderr,
+    )
+    if publish:
+        _publish_release(version, notes)
+        print(f"Published GitHub release v{version} with wranglekit.zip.", file=sys.stderr)
+    else:
+        print(
+            "Commit those files, then either "
+            f"`python makeplugin.py release {version} --publish` "
+            f"or tag v{version} and push (CI attaches wranglekit.zip).",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog="makeplugin.py",
         description=(
-            "Build a self-contained wranglekit.zip for GitHub Releases, or "
-            "install the Calibre plugin from calibre-plugin/. Restart is "
-            "opt-in and lock-aware."
+            "Build a self-contained wranglekit.zip for GitHub Releases, "
+            "install the Calibre plugin from calibre-plugin/, or cut a "
+            "changelog release. Restart is opt-in and lock-aware."
         ),
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("zip", "install", "restart", "status"),
-        help="zip (default), install, restart, or status.",
+        choices=("zip", "install", "restart", "status", "changelog", "release"),
+        help="zip (default), install, restart, status, changelog, or release.",
+    )
+    parser.add_argument(
+        "version",
+        nargs="?",
+        help="X.Y.Z for release, or changelog section to print (default Unreleased).",
     )
     parser.add_argument(
         "-i",
@@ -216,13 +365,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force-vendor",
         action="store_true",
-        help="Re-run pip install into .cache/plugin-vendor before zipping.",
+        help="Re-run pip install into the XDG plugin-vendor cache before zipping.",
+    )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="With release: commit, push, zip, and create the GitHub release from [Unreleased].",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With release: print notes without writing files.",
+    )
+    parser.add_argument(
+        "--date",
+        default="",
+        help="With release: YYYY-MM-DD (default: today).",
     )
     args = parser.parse_args(argv)
     command = args.command
     if args.install:
         command = "install"
     restart = bool(args.restart)
+    if args.publish and command != "release":
+        parser.error("--publish requires release")
+    if args.dry_run and command != "release":
+        parser.error("--dry-run requires release")
+    if command in {"zip", "install", "restart", "status"} and args.version:
+        parser.error(f"{command} does not take a version")
+    if command == "changelog":
+        return _cmd_changelog(args.version)
+    if command == "release":
+        return _cmd_release(
+            args.version,
+            publish=args.publish,
+            dry_run=args.dry_run,
+            release_date=args.date or None,
+        )
     if command is None:
         if restart:
             parser.error("--restart requires install (or use: makeplugin.py restart)")

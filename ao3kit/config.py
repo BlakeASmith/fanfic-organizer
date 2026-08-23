@@ -1,16 +1,19 @@
 """Persistent user configuration and rule files for ao3kit.
 
-Default location: ``<project>/.ao3kit/`` (override with ``AO3KIT_HOME``).
+Default location follows the XDG Base Directory spec
+(``$XDG_CONFIG_HOME/wranglekit``, usually ``~/.config/wranglekit``).
+Override with ``AO3KIT_HOME`` or ``AO3KIT_CONFIG_DIR``.
 
 Layout::
 
-    .ao3kit/
-      config.yaml          # settings
-      mappings.yaml        # extra keep/map/drop rows
-      collections.yaml     # collection membership rules + per-work pins
-      ao3_session.json     # cached AO3 cookies (not the password)
-      rules/
-        default.py         # active rules module (code-first)
+    config.yaml          # settings
+    mappings.yaml        # extra keep/map/drop rows
+    collections.yaml     # collection membership rules + per-work pins
+    rules/
+      default.py         # active rules module (code-first)
+
+AO3 session cookies live under the XDG state dir. The tag cache, jobs, and
+rate-limit database are also XDG paths; see ``ao3kit.paths``.
 """
 
 from __future__ import annotations
@@ -33,9 +36,9 @@ _SAFE_RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 DEFAULT_RULES_TEMPLATE = '''\
 """User tag rules for ao3kit.
 
-Simple keep / rename / drop rows live in ``.ao3kit/mappings.yaml``
+Simple keep / rename / drop rows live in ``mappings.yaml``
 (Calibre plugin: Collections & tag rules → Tag rules, or ``python -m ao3kit config mappings``).
-Collection membership lives in ``.ao3kit/collections.yaml``
+Collection membership lives in ``collections.yaml``
 (``python -m ao3kit config collections``).
 Use this Python module for custom logic that YAML cannot express.
 Docs: TagRule, RuleContext, RuleEffect, KeepSeparateRule, CollectRule, …
@@ -329,8 +332,8 @@ class UserConfig:
 
     def ensure_layout(self, *, write_default_rules: bool = True) -> None:
         """Create home, config.yaml, and rules/default.py if missing."""
-        self.home.mkdir(parents=True, exist_ok=True)
-        self.rules_dir.mkdir(parents=True, exist_ok=True)
+        self.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.rules_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         if not self.config_path.is_file():
             self.save()
         default_rules = self.rules_dir / DEFAULT_RULES_FILENAME
@@ -440,7 +443,7 @@ class UserConfig:
         return save_mappings(self.mappings_path, mappings)
 
     def load_collection_rules(self):
-        """Load collection membership rules (``.ao3kit/collections.yaml``)."""
+        """Load collection membership rules (``collections.yaml``)."""
         from ao3kit.tags.collections import load_collection_rules
 
         return load_collection_rules(self.collections_path)
@@ -469,12 +472,10 @@ class UserConfig:
 
 
 def default_home(project_root: Path | None = None) -> Path:
-    """Resolve config home: ``AO3KIT_HOME`` or ``<project>/.ao3kit``."""
-    env = os.environ.get("AO3KIT_HOME", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
-    root = project_root or Path(__file__).resolve().parents[1]
-    return (root / ".ao3kit").resolve()
+    """Resolve config home (XDG, or ``AO3KIT_HOME`` / ``AO3KIT_CONFIG_DIR``)."""
+    from ao3kit.paths import config_dir
+
+    return config_dir()
 
 
 def _read_settings(path: Path) -> UserSettings:

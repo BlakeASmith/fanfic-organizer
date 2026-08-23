@@ -1,53 +1,45 @@
 ---
-description: Keep CLI and Calibre plugin in relative feature parity; web UI and REST API are deprecated
+description: Keep plugin and CLI in relative feature parity; plugin is the product
 alwaysApply: true
 ---
 
-# Interface parity (CLI · Plugin)
+# Interface parity (Plugin · CLI)
 
-ao3kit’s supported surfaces are the **CLI** and the **Calibre plugin**. When you change one, keep the other in **relative feature parity** — not identical UX, but the same user-facing abilities and shared data contracts.
-
-The **web UI** (`ao3kit.webapp`) and **REST API** (`ao3kit.api`) are **deprecated and frozen**. Leave them in place; do not add features, endpoints, templates, or docs to keep them current.
+The **Calibre plugin** is the primary user-facing product. **`ao3kit`** is the library it runs. The **CLI** (`python -m ao3kit`) is an optional scripting surface for enthusiasts — keep it in **relative feature parity** with the plugin (same abilities and data contracts, not the same UX), but do **not** document it heavily in README or user-facing docs.
 
 | Surface | Entry | Role |
 |---|---|---|
-| CLI | `python -m ao3kit …` | Scriptable full toolkit (supported) |
-| Calibre plugin | `calibre-plugin/` | Search/scrape AO3 via `python -m ao3kit` subprocess + import JSONL/zip + background tag cache + tag graph + fanfic layout columns (Fandom, Relationships, Collections, Original Tags, word count) + built-in Series + generated EPUB covers |
-| Web UI (deprecated) | `ao3kit.webapp` (`/`) | Frozen HTMX forms + SSE; `python -m ao3kit serve` |
-| REST API (deprecated) | `ao3kit.api` (`/api/v1`) | Frozen JSON jobs + OpenAPI |
+| Calibre plugin | `calibre-plugin/` | Primary product: search/scrape AO3 via `python -m ao3kit` subprocess + import JSONL/zip + background tag cache + tag graph + fanfic layout columns (Fandom, Relationships, Collections, Original Tags, word count) + built-in Series + generated EPUB covers |
+| CLI | `python -m ao3kit …` | Optional scripting; `--help` is enough for users |
 
 ## Shared core first
 
 - Put behavior in library modules (`scrape`, `series`, `tags`, `epubs`, `covers`, `config`, `http`, `rate`, `jobs`) — not only in one UI.
 - Surfaces should call those modules; avoid copy-pasted scrape/tag/download logic.
-- Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across CLI and the plugin.
-- **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). CLI, plugin, and the frozen web/API paths must go through `ao3kit.http` (or `wait_for_request`). Do not add per-interface sleeps or separate request paths that bypass it.
+- Work records, `cleaned` enrich shape, and import zip layout (`ao3-import.zip` / `results.jsonl` / `epubs/`) are contracts across plugin and CLI.
+- **Host-wide AO3 rate limiting** lives in `ao3kit.rate` + `ao3kit.rate_store` (SQLite). Plugin and CLI must go through `ao3kit.http` (or `wait_for_request`). Do not add per-interface sleeps or separate request paths that bypass it.
 
 ## When adding or changing a feature
 
 1. Implement (or extend) the **library** API.
-2. Expose it on the supported surfaces that reasonably apply:
-   - **CLI** subcommand/flags
-   - **Plugin** when it is user-facing in Calibre (search/scrape/import, columns, enrich-on-import, bundle layout)
-3. Do **not** add matching web UI controls, REST endpoints, or OpenAPI/docs updates for new features.
-4. Update **AGENTS.md** / **README** CLI or plugin examples if the public supported surface changed.
-5. Add **pytest** coverage at the library layer; plugin/CLI tests where behavior diverges. Do not add new API/web tests unless you are fixing a bug in the frozen surfaces.
-6. **Always reinstall the Calibre plugin:** `python makeplugin.py install` after every change (even `ao3kit/` or docs). Do **not** pass `--restart` / MCP `restart=true` unless you are iterating on plugin UI in this session and need the GUI reloaded now. Default: install, then tell the user to restart Calibre. If you do restart, use the `calibre-dev` MCP tools or `python makeplugin.py install --restart` (lock-aware). Never `killall calibre`.
+2. Expose it on the plugin when it is user-facing in Calibre (search/scrape/import, columns, enrich-on-import, bundle layout). Keep a matching CLI subcommand/flag so scripting still works; do not add README catalogs for those flags.
+3. Update **AGENTS.md** / **README** / **CONTRIBUTING.md** if the public plugin surface or Day-1 setup changed.
+4. Add **pytest** coverage at the library layer; plugin/CLI tests where behavior diverges.
+5. **Always reinstall the Calibre plugin:** `python makeplugin.py install` after every change (even `ao3kit/` or docs). Do **not** pass `--restart` / MCP `restart=true` unless you are iterating on plugin UI in this session and need the GUI reloaded now. Default: install, then tell the user to restart Calibre. If you do restart, use the `calibre-dev` MCP tools or `python makeplugin.py install --restart` (lock-aware). Never `killall calibre`.
 
 ## Relative, not identical
 
 - OK: CLI stdout vs Qt dialogs.
 - OK: plugin search UI is Qt and shells out to `python -m ao3kit job start` (steps: `scrape` / `download` / `tags enrich` / `tags collections`) instead of importing `ao3kit` inside Calibre’s Python.
-- Not OK: a scrape filter or tag resolve path that exists on only one of CLI / plugin.
+- Not OK: a scrape filter or tag resolve path that exists on only one of plugin / CLI.
 - Not OK: plugin scraping AO3 with raw `requests` that bypass `ao3kit.http` / the host-wide limiter.
 - Not OK: changing JSONL/`cleaned` fields or zip layout without updating the plugin importer and docs.
-- Not OK: extending `ao3kit.webapp`, `ao3kit.api`, or `templates/` to match a new CLI/plugin feature.
 
 ## Checklist before finishing a feature PR/change
 
 - [ ] Core logic lives under `ao3kit/` (not only the plugin or a CLI wrapper)
-- [ ] CLI updated where the feature is user-facing
-- [ ] Plugin updated if import, metadata columns, or enrich path is affected
-- [ ] Web UI / REST API left unchanged (unless fixing a critical bug in existing frozen behavior)
-- [ ] Docs mention the new capability on CLI and plugin, not as a new API/web feature
+- [ ] Plugin updated if the feature is user-facing in Calibre
+- [ ] CLI kept in relative parity (`--help`), without new user-facing CLI docs
+- [ ] Docs mention the new capability on the plugin
 - [ ] `python makeplugin.py install` ran; user told to restart Calibre (only `--restart` / MCP restart when iterating on plugin UI now)
+- [ ] User-facing changes have a **[Unreleased]** bullet in CHANGELOG.md (Conventional Commit type → heading)

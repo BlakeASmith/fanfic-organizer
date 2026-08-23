@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tag_metadata import (
+from ao3kit.tags.metadata import (
     TagSearchCriteria,
     build_tag_search_url,
     build_tag_sets_search_url,
@@ -227,7 +227,7 @@ def _profile(
     metatags: list[str] | None = None,
     category: str = "Additional Tags",
 ) -> TagProfile:
-    from tag_metadata import TagProfile, TagRef
+    from ao3kit.tags.metadata import TagProfile, TagRef
 
     return TagProfile(
         name=name,
@@ -253,7 +253,7 @@ def _profile(
 
 
 def test_tag_resolver_simplifies_synonyms_and_dedupes():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(), delay=0, owns_session=False, cache_path=None, persist=False
@@ -304,7 +304,7 @@ def test_tag_resolver_simplifies_synonyms_and_dedupes():
 
 
 def test_tag_resolver_drop_unmarked():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(), delay=0, owns_session=False, cache_path=None, persist=False
@@ -321,7 +321,7 @@ def test_tag_resolver_drop_unmarked():
 
 def test_tag_cache_persists_and_fans_out_synonyms(tmp_path: Path):
     from ao3kit.tags.cache import TagCache
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
@@ -371,7 +371,7 @@ def test_tag_cache_expires_whole_tree(tmp_path: Path):
     from datetime import datetime, timedelta, timezone
 
     from ao3kit.tags.cache import TagCache
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
@@ -452,7 +452,7 @@ def test_remember_profile_keeps_unlisted_synonym(tmp_path: Path):
 
 
 def test_warm_persist_failure_does_not_leave_memory_hit(tmp_path: Path):
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(),
@@ -480,7 +480,7 @@ def test_warm_persist_failure_does_not_leave_memory_hit(tmp_path: Path):
 
 def test_tag_resolver_follow_canonical_keeps_unlisted_synonym(tmp_path: Path):
     from ao3kit.tags.warm import uncached_names
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
@@ -531,7 +531,7 @@ def test_tag_resolver_follow_canonical_keeps_unlisted_synonym(tmp_path: Path):
 
 
 def test_follow_canonical_skips_fetch_when_canonical_already_cached(tmp_path: Path):
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     path = tmp_path / "tags.sqlite"
     seeded = TagResolver(
@@ -580,7 +580,7 @@ def test_follow_canonical_skips_fetch_when_canonical_already_cached(tmp_path: Pa
 
 
 def test_tag_resolver_follow_canonical_indexes_siblings():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     fetches: list[str] = []
 
@@ -631,7 +631,7 @@ def test_tag_resolver_follow_canonical_indexes_siblings():
 def test_tag_resolver_skips_session_and_login_on_cache_hit(
     tmp_path: Path, monkeypatch
 ):
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     def boom(*_a, **_k):
         raise AssertionError("should not open a session or log in")
@@ -669,7 +669,7 @@ def test_tag_resolver_skips_session_and_login_on_cache_hit(
 
 
 def test_tag_resolver_logs_in_only_when_tag_page_is_locked(monkeypatch):
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     wall = """
     <html><body>
@@ -711,7 +711,7 @@ def test_tag_resolver_logs_in_only_when_tag_page_is_locked(monkeypatch):
 
 
 def test_tag_resolver_does_not_login_for_public_tag_fetch(monkeypatch):
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     session = _TagFetchSession(_load("tag_canonical_freeform.html"))
 
@@ -742,7 +742,7 @@ def test_tag_resolver_does_not_login_for_public_tag_fetch(monkeypatch):
 
 
 def test_simplify_appends_metatags_without_duplicates():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(), delay=0, owns_session=False, cache_path=None, persist=False
@@ -784,7 +784,7 @@ def test_simplify_appends_metatags_without_duplicates():
 
 
 def test_simplify_skips_metatags_for_non_fandom_tags():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(), delay=0, owns_session=False, cache_path=None, persist=False
@@ -803,7 +803,7 @@ def test_simplify_skips_metatags_for_non_fandom_tags():
 
 
 def test_simplify_uses_canonical_metatags_for_synonyms():
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
         session=object(), delay=0, owns_session=False, cache_path=None, persist=False
@@ -827,7 +827,7 @@ def test_simplify_uses_canonical_metatags_for_synonyms():
 
 def test_tag_cache_persists_metatags(tmp_path: Path):
     from ao3kit.tags.cache import TagCache
-    from tag_metadata import TagResolver
+    from ao3kit.tags.metadata import TagResolver
 
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
@@ -920,7 +920,7 @@ def test_tag_cache_migrates_metatags_column(tmp_path: Path):
 
 
 def test_simplify_appends_nested_metatags_from_profile_page():
-    from tag_metadata import TagResolver, parse_tag_page
+    from ao3kit.tags.metadata import TagResolver, parse_tag_page
 
     html = _load("tag_canonical_fandom.html")
     profile = parse_tag_page(

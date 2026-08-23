@@ -20,7 +20,9 @@ def default_lock_path() -> Path:
     env = os.environ.get(LOCK_ENV, "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    return Path(__file__).resolve().parents[1] / ".cache" / "calibre_restart.lock"
+    from ao3kit.paths import calibre_lock_file
+
+    return calibre_lock_file()
 
 
 class RestartLocked(Exception):

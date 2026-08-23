@@ -7,7 +7,7 @@ from zipfile import ZipFile
 import pytest
 import requests
 
-from download_epubs import (
+from ao3kit.epubs import (
     DownloadOutcome,
     DownloadReport,
     JsonlWriter,
@@ -38,7 +38,7 @@ def test_parse_jsonl_text_skips_blank_and_requires_id():
 def test_download_records_keeps_manifest_if_later_work_crashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession()
     session.add(
         "https://archiveofourown.org/works/50448730?view_adult=true",
@@ -81,7 +81,7 @@ def test_download_records_keeps_manifest_if_later_work_crashes(
 
 
 def test_download_records_enriches_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession()
     session.add(
         "https://archiveofourown.org/works/50448730?view_adult=true",
@@ -331,7 +331,7 @@ def test_skip_existing_does_not_hit_network(tmp_path: Path):
 
 
 def test_pack_and_download_from_jsonl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     jsonl = tmp_path / "in.jsonl"
     jsonl.write_text(
         '{"work_id":"50448730","url":"https://archiveofourown.org/works/50448730","title":"Clandestine"}\n',

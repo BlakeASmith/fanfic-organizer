@@ -536,7 +536,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Download AO3 native EPUB files for works listed in a JSONL scrape."
     )
-    parser.add_argument("-i", "--input", required=True, help="Input JSONL from scrape_ao3.py")
+    parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        help="Input JSONL from python -m ao3kit scrape",
+    )
     parser.add_argument(
         "-d",
         "--dir",

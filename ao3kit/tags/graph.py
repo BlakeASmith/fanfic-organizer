@@ -31,10 +31,10 @@ from pathlib import Path
 from typing import Any, Literal, Sequence
 
 from ao3kit.tags.cache import (
-    DEFAULT_TAG_CACHE_PATH,
     DEFAULT_TAG_CACHE_TTL_DAYS,
     CacheRow,
     TagCache,
+    default_tag_cache_path,
 )
 from ao3kit.tags.clean import collect_unique_tag_names
 from ao3kit.tags.warm import EXTRA_NAME_KEYS, collect_warm_names, load_jsonl_records
@@ -42,12 +42,31 @@ from ao3kit.tags.warm import EXTRA_NAME_KEYS, collect_warm_names, load_jsonl_rec
 SynonymMode = Literal["seed", "all", "none"]
 GraphFormat = Literal["html", "json", "dot"]
 
-_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
-DEFAULT_GRAPH_HTML = _CACHE_DIR / "tag-graph.html"
-DEFAULT_GRAPH_JSONL = _CACHE_DIR / "tag_graph_works.jsonl"
-DEFAULT_GRAPH_JSON = _CACHE_DIR / "tag-graph.json"
-DEFAULT_GRAPH_SERVE_STAMP = _CACHE_DIR / "tag-graph-serve.json"
 DEFAULT_GRAPH_PORT = 8767
+
+
+def default_graph_html() -> Path:
+    from ao3kit.paths import graph_html_file
+
+    return graph_html_file()
+
+
+def default_graph_jsonl() -> Path:
+    from ao3kit.paths import graph_jsonl_file
+
+    return graph_jsonl_file()
+
+
+def default_graph_json() -> Path:
+    from ao3kit.paths import graph_json_file
+
+    return graph_json_file()
+
+
+def default_graph_serve_stamp() -> Path:
+    from ao3kit.paths import graph_serve_stamp_file
+
+    return graph_serve_stamp_file()
 
 # Calibre / FanFicFare status labels, plus AO3 archive warnings (not content tags).
 _SKIP_WORK_TAGS = frozenset(
@@ -1318,7 +1337,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-o",
         "--output",
-        help="Output path (default: .cache/tag-graph.html, or stdout for json/dot)",
+        help="Output path (default: XDG cache dir / wranglekit / tag-graph.html, or stdout for json/dot)",
     )
     parser.add_argument(
         "--format",
@@ -1347,8 +1366,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--cache",
         type=Path,
-        default=DEFAULT_TAG_CACHE_PATH,
-        help=f"Tag cache SQLite path (default: {DEFAULT_TAG_CACHE_PATH})",
+        default=None,
+        help="Tag cache SQLite path (default: XDG cache dir / wranglekit)",
     )
     parser.add_argument(
         "--cache-ttl-days",
@@ -1369,7 +1388,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cache_ttl_days is not None
         else float(user_cfg.settings.tag_cache_ttl_days)
     )
-    cache_path = Path(args.cache) if args.cache else DEFAULT_TAG_CACHE_PATH
+    cache_path = Path(args.cache) if args.cache else default_tag_cache_path()
     if not cache_path.is_file():
         print(f"Tag cache not found: {cache_path}", file=sys.stderr)
         print(
@@ -1391,7 +1410,7 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.output) if args.output else None
     fmt = infer_format(out_path, args.format)
     if out_path is None and fmt == "html":
-        out_path = DEFAULT_GRAPH_HTML
+        out_path = default_graph_html()
     body = write_graph(graph, out_path, fmt)
     summary = format_graph_summary(graph, out_path)
     if out_path is None:
@@ -1430,7 +1449,7 @@ def graph_sources_fingerprint(
 
 
 def read_serve_stamp(path: Path | None = None) -> dict[str, Any] | None:
-    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    stamp_path = path or default_graph_serve_stamp()
     if not stamp_path.is_file():
         return None
     try:
@@ -1458,7 +1477,7 @@ def write_serve_stamp(
     jsonl_paths: Sequence[Path],
     path: Path | None = None,
 ) -> Path:
-    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    stamp_path = path or default_graph_serve_stamp()
     stamp_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "pid": os.getpid(),
@@ -1471,7 +1490,7 @@ def write_serve_stamp(
 
 
 def clear_serve_stamp(path: Path | None = None) -> None:
-    stamp_path = path or DEFAULT_GRAPH_SERVE_STAMP
+    stamp_path = path or default_graph_serve_stamp()
     try:
         data = json.loads(stamp_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1674,7 +1693,7 @@ def notify_running_server(
 
 def reload_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ao3kit tags graph reload")
-    parser.add_argument("--stamp", type=Path, default=DEFAULT_GRAPH_SERVE_STAMP)
+    parser.add_argument("--stamp", type=Path, default=None)
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args(list(argv or []))
     url = notify_running_server(stamp_path=args.stamp, timeout=args.timeout)
@@ -1701,7 +1720,7 @@ def serve_main(argv: list[str] | None = None) -> int:
         "--jsonl",
         action="append",
         default=[],
-        help=f"Work JSONL (default: {DEFAULT_GRAPH_JSONL})",
+        help="Work JSONL (default: XDG cache dir / wranglekit / tag_graph_works.jsonl)",
     )
     parser.add_argument("--names-file", action="append", default=[])
     parser.add_argument(
@@ -1709,14 +1728,14 @@ def serve_main(argv: list[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("AO3KIT_GRAPH_PORT") or DEFAULT_GRAPH_PORT),
     )
-    parser.add_argument("--cache", type=Path, default=DEFAULT_TAG_CACHE_PATH)
+    parser.add_argument("--cache", type=Path, default=None)
     parser.add_argument("--cache-ttl-days", type=float, default=None)
     parser.add_argument("--synonyms", choices=("seed", "all", "none"), default="seed")
     parser.add_argument("--no-metatags", action="store_true")
     parser.add_argument(
         "--stamp",
         type=Path,
-        default=DEFAULT_GRAPH_SERVE_STAMP,
+        default=None,
         help="PID/URL stamp so Calibre Tag graph can refresh this viewer",
     )
     parser.add_argument(
@@ -1741,9 +1760,9 @@ def serve_main(argv: list[str] | None = None) -> int:
         if args.cache_ttl_days is not None
         else float(user_cfg.settings.tag_cache_ttl_days)
     )
-    jsonl_paths = [Path(item) for item in args.jsonl] or [DEFAULT_GRAPH_JSONL]
+    jsonl_paths = [Path(item) for item in args.jsonl] or [default_graph_jsonl()]
     names_files = [Path(item) for item in args.names_file]
-    cache_path = Path(args.cache)
+    cache_path = Path(args.cache) if args.cache else default_tag_cache_path()
     existing = read_serve_stamp(args.stamp)
     if existing:
         url = str(existing.get("url") or "")
@@ -1785,8 +1804,9 @@ def serve_main(argv: list[str] | None = None) -> int:
                 payload = live.graph_payload(graph)
             state["payload"] = payload
             state["fingerprint"] = mark
-            DEFAULT_GRAPH_JSON.parent.mkdir(parents=True, exist_ok=True)
-            DEFAULT_GRAPH_JSON.write_text(
+            out_json = default_graph_json()
+            out_json.parent.mkdir(parents=True, exist_ok=True)
+            out_json.write_text(
                 json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8"
             )
             return payload
@@ -1906,7 +1926,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     if missing:
         print(
             "No dump yet — in Calibre use Tag graph… to write "
-            f"{DEFAULT_GRAPH_JSONL.name}, then Reload data.",
+            f"{default_graph_jsonl().name}, then Reload data.",
             file=sys.stderr,
         )
     print("Refresh the page after viewer edits. POST /rebuild after a Calibre dump.", file=sys.stderr)

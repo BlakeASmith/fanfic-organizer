@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Compatibility shim — prefer: from ao3kit.epubs import ... / python -m ao3kit download"""
+"""Compatibility shim — tests and new code should import ao3kit.epubs.
+
+Prefer: ``from ao3kit.epubs import ...`` / ``python -m ao3kit download``.
+"""
 
 from ao3kit import epubs as _epubs
 import sys

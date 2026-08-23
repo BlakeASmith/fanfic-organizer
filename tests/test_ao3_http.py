@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import requests
 
-from ao3_http import (
+from ao3kit.http import (
     CloudflareError,
     LoginError,
     Ao3HttpError,
@@ -99,7 +99,7 @@ def test_is_cloudflare_response_detects_challenge():
 
 
 def test_request_retries_cloudflare_then_succeeds(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [
             FakeResponse(text='<html> Just a moment... </html>'),
@@ -112,7 +112,7 @@ def test_request_retries_cloudflare_then_succeeds(monkeypatch: pytest.MonkeyPatc
 
 
 def test_request_raises_after_cloudflare_retries(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [FakeResponse(text='id="cf-wrapper" challenge')] * 3
     )
@@ -127,7 +127,7 @@ def test_request_raises_after_cloudflare_retries(monkeypatch: pytest.MonkeyPatch
 
 def test_request_honors_retry_after_on_429(monkeypatch: pytest.MonkeyPatch):
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_http.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda s: sleeps.append(s))
     session = FakeSession(
         [
             FakeResponse(status_code=429, headers={"Retry-After": "7", "Content-Type": "text/html"}),
@@ -148,7 +148,7 @@ def test_request_honors_retry_after_on_429(monkeypatch: pytest.MonkeyPatch):
 
 def test_tag_429_without_header_uses_short_pause(monkeypatch: pytest.MonkeyPatch):
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_http.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda s: sleeps.append(s))
     session = FakeSession(
         [
             FakeResponse(status_code=429, headers={"Content-Type": "text/html"}),
@@ -168,7 +168,7 @@ def test_tag_429_with_retry_after_pauses_whole_host(
     monkeypatch: pytest.MonkeyPatch,
 ):
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_http.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda s: sleeps.append(s))
     session = FakeSession(
         [
             FakeResponse(
@@ -192,7 +192,7 @@ def test_tag_429_with_retry_after_pauses_whole_host(
 
 
 def test_request_raises_after_too_many_429s(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [
             FakeResponse(
@@ -212,7 +212,7 @@ def test_request_raises_after_too_many_429s(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_request_adds_view_adult(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession([FakeResponse(text="ok")])
     request(
         session,
@@ -287,7 +287,7 @@ def test_verify_login_skips_session_cache(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_get_relogs_when_saved_session_expired(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [
             FakeResponse(text='<html><body class="logged-out">anon</body></html>'),
@@ -407,7 +407,7 @@ _LOGIN_FORM = (
 
 
 def test_login_to_ao3_success(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [
             FakeResponse(text=_LOGIN_FORM),
@@ -418,13 +418,13 @@ def test_login_to_ao3_success(monkeypatch: pytest.MonkeyPatch):
     assert session.calls[0][0] == "GET"
     assert session.calls[1] == ("POST", "https://archiveofourown.org/users/login")
     assert session._ao3_logged_in is True
-    from ao3_http import LOGIN_REQUEST_TIMEOUT
+    from ao3kit.http import LOGIN_REQUEST_TIMEOUT
 
     assert session.timeouts == [LOGIN_REQUEST_TIMEOUT, LOGIN_REQUEST_TIMEOUT]
 
 
 def test_login_to_ao3_rejects_bad_password(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ao3_http.time.sleep", lambda _s: None)
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(
         [
             FakeResponse(text=_LOGIN_FORM),
@@ -452,13 +452,13 @@ def test_verify_login_returns_username(monkeypatch: pytest.MonkeyPatch):
             self.closed = True
 
     session = Session()
-    monkeypatch.setattr("ao3_http.create_session", lambda *a, **k: session)
+    monkeypatch.setattr("ao3kit.http.create_session", lambda *a, **k: session)
     assert verify_login("emily", "secret") == "emily"
     assert session.closed is True
 
 
 def test_login_main_success(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
-    monkeypatch.setattr("ao3_http.verify_login", lambda *a, **k: "emily")
+    monkeypatch.setattr("ao3kit.http.verify_login", lambda *a, **k: "emily")
     assert login_main(["--username", "emily", "--password", "x"]) == 0
     assert "emily" in capsys.readouterr().out
 
@@ -467,6 +467,6 @@ def test_login_main_fails(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
     def boom(*_a, **_k):
         raise LoginError("AO3 login failed: invalid username or password")
 
-    monkeypatch.setattr("ao3_http.verify_login", boom)
+    monkeypatch.setattr("ao3kit.http.verify_login", boom)
     assert login_main(["--username", "emily", "--password", "bad"]) == 1
     assert "invalid" in capsys.readouterr().err

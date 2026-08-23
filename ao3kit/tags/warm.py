@@ -1,6 +1,6 @@
 """Background tag-cache warmer.
 
-Fills ``.cache/ao3_tag_cache.sqlite`` by resolving uncached names through
+Fills the XDG tag-cache SQLite file by resolving uncached names through
 ``TagResolver`` (same AO3 fetch path as ``tags enrich``). Extra sleep between
 fetches keeps this process from hogging the host-wide rate limiter, so Search /
 Download / Simplify can still run.
@@ -43,7 +43,7 @@ from ao3kit.proc import (
     utc_now,
     write_pid,
 )
-from ao3kit.tags.cache import DEFAULT_TAG_CACHE_PATH, TagCache
+from ao3kit.tags.cache import TagCache, default_tag_cache_path
 from ao3kit.tags.clean import collect_unique_tag_names
 
 StatusCallback = Callable[[str], None]
@@ -68,7 +68,7 @@ class _Resolver(Protocol):
 
 def default_warm_paths(cache_path: Path | None = None) -> dict[str, Path]:
     """Pid / status / log / job files live beside the tag cache."""
-    base = (cache_path or DEFAULT_TAG_CACHE_PATH).expanduser().resolve().parent
+    base = (cache_path or default_tag_cache_path()).expanduser().resolve().parent
     return {
         "pid": base / "tag_warm.pid",
         "status": base / "tag_warm.status.json",
@@ -559,7 +559,7 @@ def _add_path_args(parser: argparse.ArgumentParser) -> None:
         "--cache",
         type=Path,
         default=None,
-        help=f"Tag cache SQLite path (default: {DEFAULT_TAG_CACHE_PATH})",
+        help="Tag cache SQLite path (default: XDG cache dir / wranglekit)",
     )
     parser.add_argument("--pid-file", type=Path, default=None)
     parser.add_argument("--status-file", type=Path, default=None)
@@ -572,7 +572,7 @@ def _add_path_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _paths_from_args(args: argparse.Namespace) -> dict[str, Path]:
-    cache = Path(args.cache) if args.cache else DEFAULT_TAG_CACHE_PATH
+    cache = Path(args.cache) if args.cache else default_tag_cache_path()
     defaults = default_warm_paths(cache)
     return {
         "cache": cache,
@@ -628,7 +628,7 @@ def job_from_args(args: argparse.Namespace, paths: dict[str, Path]) -> WarmJob:
 def _make_resolver(job: WarmJob, args: argparse.Namespace, on_status: StatusCallback | None):
     from ao3kit.tags.metadata import TagResolver
 
-    cache_path = Path(job.cache) if job.cache else DEFAULT_TAG_CACHE_PATH
+    cache_path = Path(job.cache) if job.cache else default_tag_cache_path()
     return TagResolver(
         username=getattr(args, "username", None),
         password=getattr(args, "password", None),

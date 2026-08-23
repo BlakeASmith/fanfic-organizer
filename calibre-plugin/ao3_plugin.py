@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt5.Qt import QIcon, QMenu, QPixmap, QToolButton
 
-from calibre.gui2 import error_dialog, info_dialog, question_dialog
+from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
 
 from calibre_plugins.wranglekit.dialogs import (
@@ -134,17 +134,22 @@ class WranglekitPlugin(InterfaceAction):
             selected_label = f'Selected books ({n})'
         selected = self.menu.addMenu(selected_label)
         selected.setEnabled(has_selection)
-        selected.addAction('Complete selected...', self.complete_selected_books)
-        selected.addSeparator()
-        selected.addAction('Download EPUB...', self.download_selected_epubs)
-        selected.addAction('Generate covers...', self.generate_covers_for_selected)
-        selected.addAction(
-            'Import rest of series...', self.import_series_for_selected
+        complete = selected.addAction(
+            'Complete selected', self.complete_selected_books
         )
-        selected.addAction('Fill series...', self.fill_series_for_selected)
+        complete.setStatusTip(
+            'Fill series, import missing parts, download EPUBs, and simplify tags'
+        )
+        selected.addSeparator()
+        selected.addAction('Download EPUB', self.download_selected_epubs)
+        selected.addAction('Generate covers', self.generate_covers_for_selected)
+        selected.addAction(
+            'Import rest of series', self.import_series_for_selected
+        )
+        selected.addAction('Fill series', self.fill_series_for_selected)
         selected.addSeparator()
         selected.addAction(
-            'Simplify tags, fandoms & relationships...',
+            'Simplify tags, fandoms & relationships',
             self.simplify_selected_books,
         )
         selected.addSeparator()
@@ -152,7 +157,7 @@ class WranglekitPlugin(InterfaceAction):
             'Edit collections...', self.edit_collections_of_selected
         )
         selected.addAction(
-            'Recompute collections...',
+            'Recompute collections',
             self.recompute_collections_for_selected,
         )
         selected.addAction(
@@ -168,12 +173,12 @@ class WranglekitPlugin(InterfaceAction):
         tags.addAction(
             'Collections & tag rules...', self.show_tag_mappings_dialog
         )
-        tags.addAction('Tag graph...', self.show_tag_graph)
+        tags.addAction('Tag graph', self.show_tag_graph)
         tags.addAction('Tag purge...', self.show_tag_purge_dialog)
         tags.addSeparator()
-        tags.addAction('Warm tag cache...', self.warm_tag_cache)
+        tags.addAction('Warm tag cache', self.warm_tag_cache)
         tags.addAction('Tag cache log...', self.show_tag_cache_log)
-        tags.addAction('Stop tag cache...', self.stop_tag_cache_warm)
+        tags.addAction('Stop tag cache', self.stop_tag_cache_warm)
 
         self.menu.addSeparator()
         self.menu.addAction('Plugin settings...', self.show_configuration)
@@ -354,25 +359,6 @@ class WranglekitPlugin(InterfaceAction):
             )
             return
 
-        skip_bits = []
-        if already:
-            skip_bits.append(f'{len(already)} already have an EPUB')
-        if no_id:
-            skip_bits.append(f'{len(no_id)} have no AO3 URL / work id')
-        skip_note = f'\n\nSkipping {", ".join(skip_bits)}.' if skip_bits else ''
-        noun = 'book' if len(ready) == 1 else 'books'
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Download the native AO3 EPUB for {len(ready)} selected {noun} '
-                f'that do not already have one?{skip_note}\n\n'
-                'Uses each book\'s AO3 URL / work id. Existing EPUB files are '
-                'left unchanged.'
-            ),
-        ):
-            return
-
         from calibre_plugins.wranglekit.job_plans import plan_download_selected
 
         job_dir = self.jobs().prepare_job_dir('download')
@@ -415,29 +401,6 @@ class WranglekitPlugin(InterfaceAction):
                 show=True,
             )
             return
-        with_epub = sum(1 for item in ready if item.get('has_epub'))
-        without = len(ready) - with_epub
-        noun = 'book' if len(ready) == 1 else 'books'
-        extras = []
-        if with_epub:
-            extras.append(f'{with_epub} EPUB file(s) will be restamped.')
-        if without:
-            extras.append(
-                f'{without} without an EPUB will only get a Calibre cover.'
-            )
-        if skipped:
-            extras.append(f'Skipping {len(skipped)} with no title.')
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Generate covers for {len(ready)} selected {noun}?\n\n'
-                'Uses title, author, word count, and quality score from the library. Style is '
-                'set in Plugin settings → Cover style.\n\n'
-                + '\n'.join(extras)
-            ),
-        ):
-            return
 
         job_dir = self.jobs().prepare_job_dir('cover')
         if job_dir is None:
@@ -467,24 +430,6 @@ class WranglekitPlugin(InterfaceAction):
                 'Select one or more books in the library first.',
                 show=True,
             )
-            return
-
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Complete the {len(book_ids)} selected {noun}?\n\n'
-                'This looks up each book on AO3 and then:\n'
-                '• fills Calibre’s Series column\n'
-                '• imports any other parts of those series\n'
-                '• downloads native EPUBs that are missing\n'
-                '• simplifies tags, fandoms, and relationships\n'
-                '• recomputes collections from your rules\n\n'
-                'Existing EPUBs are left unchanged. This can take a while; '
-                'it runs in the background.'
-            ),
-        ):
             return
 
         from pathlib import Path
@@ -533,31 +478,6 @@ class WranglekitPlugin(InterfaceAction):
             )
             return
 
-        download = bool(prefs.get('download_epubs', True))
-        simplify = bool(prefs.get('simplify_tags', False))
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        extras = []
-        extras.append(
-            'Native EPUBs will be downloaded for missing parts.'
-            if download
-            else 'Metadata only (EPUB download is off in plugin settings).'
-        )
-        if simplify:
-            extras.append('Tags will be simplified after lookup.')
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Import other works in the same AO3 series as the '
-                f'{len(book_ids)} selected {noun}?\n\n'
-                'Looks up each book\'s series from stored metadata or AO3, '
-                'then imports every part. Books already in this library are '
-                'updated (series column) and existing EPUBs are left unchanged.\n\n'
-                + '\n'.join(extras)
-            ),
-        ):
-            return
-
         from calibre_plugins.wranglekit.job_plans import plan_import_series
         from calibre_plugins.wranglekit.selected import load_selected_records
 
@@ -599,22 +519,6 @@ class WranglekitPlugin(InterfaceAction):
             )
             return
 
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Fill Calibre\'s Series column for the {len(book_ids)} '
-                f'selected {noun}?\n\n'
-                'Looks up each book\'s AO3 series from the work page and '
-                'writes Series, series index, and the ao3series identifier. '
-                'Does not import other parts of the series. Tags and EPUBs '
-                'are left unchanged. Books that are not in a series stay as '
-                'they are.'
-            ),
-        ):
-            return
-
         from calibre_plugins.wranglekit.job_plans import plan_fill_series
         from calibre_plugins.wranglekit.selected import load_selected_records
 
@@ -649,21 +553,6 @@ class WranglekitPlugin(InterfaceAction):
             )
             return
 
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Simplify tags, fandoms, and relationships for {len(book_ids)} '
-                f'selected book(s) in the currently open library?\n\n'
-                'Uses each book\'s AO3 URL / work id, Original Tags, Fandom, '
-                'and Relationships (if present), runs AO3 cleanup + collection '
-                'rules + tag rules + your .ao3kit Python rules, then writes '
-                'Fandom, Relationships, Collections, word count, Original Tags, '
-                'and Tags.'
-            ),
-        ):
-            return
-
         from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
         from calibre_plugins.wranglekit.selected import load_selected_records
 
@@ -687,7 +576,7 @@ class WranglekitPlugin(InterfaceAction):
         )
         self.jobs().start_prepared(job_dir)
 
-    def recompute_collections_for_selected(self, *args, confirm=True):
+    def recompute_collections_for_selected(self, *args):
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -696,22 +585,6 @@ class WranglekitPlugin(InterfaceAction):
                 'Select one or more books in the library first.',
                 show=True,
             )
-            return
-
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        if confirm and not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Recompute collections for {len(book_ids)} selected {noun} '
-                f'in the currently open library?\n\n'
-                'Replaces the Collections column from your collection rules. '
-                'Does not fetch AO3 or change tags. Collections you added by '
-                'hand on a book are saved as a per-work rule so they come back. '
-                'To keep a book out of a collection, add a Never rule — '
-                'removing it in Calibre alone does not stick.'
-            ),
-        ):
             return
 
         from calibre_plugins.wranglekit.job_plans import plan_simplify_selected
@@ -756,10 +629,10 @@ class WranglekitPlugin(InterfaceAction):
         dialog = EditSelectedCollectionsDialog(self.gui, book_ids)
         dialog.exec_()
 
-    def apply_collection_rules_to_selected(self, *args, confirm=True):
-        self.recompute_collections_for_selected(*args, confirm=confirm)
+    def apply_collection_rules_to_selected(self, *args):
+        self.recompute_collections_for_selected(*args)
 
-    def add_selected_books_to_collection(self, *args, collection_name='', confirm=True):
+    def add_selected_books_to_collection(self, *args, collection_name=''):
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
             error_dialog(
@@ -794,18 +667,6 @@ class WranglekitPlugin(InterfaceAction):
                 'Type a collection name first.',
                 show=True,
             )
-            return
-
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        if confirm and not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Add {len(book_ids)} selected {noun} to “{name}”?\n\n'
-                'This saves a per-work rule, then updates Collections from '
-                'your rules. Tags are left as they are (no AO3 tag lookup).'
-            ),
-        ):
             return
 
         from calibre_plugins.wranglekit.collection_rules import (
@@ -861,29 +722,13 @@ class WranglekitPlugin(InterfaceAction):
         finally:
             QApplication.restoreOverrideCursor()
 
-        self.recompute_collections_for_selected(confirm=False)
+        self.recompute_collections_for_selected()
 
     def warm_tag_cache(self):
         db = self.gui.current_db
         from calibre_plugins.wranglekit.tag_purge import scope_book_ids
 
         book_ids = scope_book_ids(db, '')
-        noun = 'book' if len(book_ids) == 1 else 'books'
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Collect tags from all {len(book_ids)} {noun} in the open '
-                'library and fetch uncached AO3 mappings in the background?\n\n'
-                'This does not change the library. It only fills ao3kit\'s '
-                'tag cache so Simplify / import later skip the slow AO3 '
-                'lookups.\n\n'
-                'Pace is slow so Search and Download can still use AO3. '
-                'Stop it from Tags and collections → Stop tag cache when you want.'
-            ),
-        ):
-            return
-
         from PyQt5.Qt import QApplication, Qt
 
         from calibre_plugins.wranglekit.enrich import (
@@ -897,10 +742,10 @@ class WranglekitPlugin(InterfaceAction):
         )
         from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
         from calibre_plugins.wranglekit.tag_warm import (
-            format_warm_started_text,
             parse_warm_status_json,
             unique_tag_names_from_records,
             write_names_file,
+            warm_names_path,
         )
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -928,7 +773,7 @@ class WranglekitPlugin(InterfaceAction):
                 )
                 return
 
-            seed = project / '.cache' / 'tag_warm_names.txt'
+            seed = warm_names_path(project)
             write_names_file(seed, names)
             argv = build_warm_start_argv(
                 str(seed),
@@ -952,32 +797,10 @@ class WranglekitPlugin(InterfaceAction):
             )
             return
 
-        info_dialog(
-            self.gui,
-            'Wranglekit',
-            format_warm_started_text(
-                status,
-                book_count=len(book_ids),
-                name_count=len(names),
-                already=already,
-            ),
-            show=True,
-        )
         if status.get('running') or already:
             self.jobs().attach('warm')
 
     def stop_tag_cache_warm(self):
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                'Stop the background tag-cache process?\n\n'
-                'Already-fetched mappings stay in the cache. You can start '
-                'it again later from Tags and collections → Warm tag cache.'
-            ),
-        ):
-            return
-
         from calibre_plugins.wranglekit.enrich import EnrichCancelled, run_ao3kit
         from calibre_plugins.wranglekit.scrape_run import build_warm_stop_argv
         from calibre_plugins.wranglekit.tag_warm import (
@@ -1036,26 +859,10 @@ class WranglekitPlugin(InterfaceAction):
             selected=selected,
             library_ids=scope_book_ids(db, ''),
         )
-        noun = 'book' if len(book_ids) == 1 else 'books'
         if scope == 'selected':
-            where = f'the {len(book_ids)} selected {noun}'
             empty_error = 'No tags or fandoms found on the selected books.'
         else:
-            where = f'all {len(book_ids)} {noun} in this library'
             empty_error = 'No tags or fandoms found on books in this library.'
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            (
-                f'Graph {where} as work nodes linked to all of their tags '
-                '(plus synonym and metatag links), then open the live viewer?\n\n'
-                'Find similar from a work or a tag searches AO3 and imports matches. '
-                'Uncached tags show as missing — warm the tag cache first '
-                'for a fuller graph.'
-            ),
-        ):
-            return
-
         from PyQt5.Qt import QApplication, Qt
 
         from calibre_plugins.wranglekit.enrich import (
@@ -1068,6 +875,10 @@ class WranglekitPlugin(InterfaceAction):
             live_graph_reload_argv,
         )
         from calibre_plugins.wranglekit.selected import load_records_for_tag_warm
+        from calibre_plugins.wranglekit.graph_live import (
+            graph_html_path,
+            graph_jsonl_path,
+        )
         from calibre_plugins.wranglekit.tag_warm import write_graph_jsonl
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1094,8 +905,8 @@ class WranglekitPlugin(InterfaceAction):
                 )
                 return
 
-            jsonl = project / '.cache' / 'tag_graph_works.jsonl'
-            output = project / '.cache' / 'tag-graph.html'
+            jsonl = graph_jsonl_path(project)
+            output = graph_html_path(project)
             write_graph_jsonl(jsonl, records)
             url = self.jobs().ensure_graph_server()
             live_code, live_out, live_err = (1, '', '')
@@ -1117,15 +928,6 @@ class WranglekitPlugin(InterfaceAction):
 
                 open_url = url.rstrip('/') + f'/?t={int(time())}'
                 QDesktopServices.openUrl(QUrl(open_url))
-                info_dialog(
-                    self.gui,
-                    'Wranglekit',
-                    'Opened the live tag graph.\n\n'
-                    'Find similar on a work or tag to search AO3; new imports appear '
-                    'in the graph as they land in the library. The viewer job '
-                    'is listed under Running jobs…',
-                    show=True,
-                )
                 return
             argv = build_tag_graph_argv(
                 None, str(output), jsonl=str(jsonl), open_browser=False
@@ -1150,12 +952,6 @@ class WranglekitPlugin(InterfaceAction):
             from PyQt5.Qt import QDesktopServices, QUrl
 
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
-        info_dialog(
-            self.gui,
-            'Wranglekit',
-            summary or f'Wrote {output}',
-            show=True,
-        )
 
     def show_tag_mappings_dialog(self, *args):
         dialog = TagMappingsDialog(self.gui)
@@ -1165,10 +961,10 @@ class WranglekitPlugin(InterfaceAction):
             self.edit_collections_of_selected()
         elif pin_name:
             self.add_selected_books_to_collection(
-                collection_name=pin_name, confirm=False
+                collection_name=pin_name
             )
         elif getattr(dialog, 'apply_selection', False):
-            self.recompute_collections_for_selected(confirm=False)
+            self.recompute_collections_for_selected()
 
     def show_tag_purge_dialog(self, *args):
         book_ids = []

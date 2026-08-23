@@ -5,6 +5,7 @@ from calibre_dev.calibre import (
     RestartLocked,
     default_lock_path,
     is_calibre_gui_command,
+    write_dev_project_stamp,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "RestartLocked",
     "default_lock_path",
     "is_calibre_gui_command",
+    "write_dev_project_stamp",
 ]

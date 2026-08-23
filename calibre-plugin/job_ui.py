@@ -28,6 +28,7 @@ from calibre_plugins.wranglekit.jobs import (
     job_clear_bucket,
     job_is_deletable,
     job_is_retryable,
+    job_watch_phase,
     progress_from_message,
     read_json,
     read_log_tail,
@@ -40,8 +41,26 @@ _RETRY_TIP = (
 )
 
 
+_PHASE_WINDOW = {
+    'starting': 'Wranglekit',
+    'running': 'Wranglekit',
+    'saving': 'Saving to your library',
+    'done': 'Done',
+    'failed': "Couldn't finish",
+    'stopped': 'Stopped',
+}
+_PHASE_BANNER = {
+    'starting': 'Starting…',
+    'running': 'Working…',
+    'saving': 'Saving to your library…',
+    'done': 'Done',
+    'failed': "Couldn't finish",
+    'stopped': 'Stopped',
+}
+
+
 class JobLogDialog(QDialog):
-    """Live tail of a detached job. Close / Background detaches; Cancel stops."""
+    """Live tail of a detached job. Hide keeps it running; Close after it finishes."""
 
     def __init__(
         self,
@@ -56,19 +75,26 @@ class JobLogDialog(QDialog):
         super().__init__(gui)
         self.gui = gui
         self.job_id = job_id
+        self._title = title or 'Job'
         self._log_path = Path(log_path)
         self._status_path = Path(status_path)
         self._supervisor = supervisor
         self._closing = False
         self._finished = False
-        self.setWindowTitle(title or 'Wranglekit — Job')
+        self._last_summary = ''
+        self.setWindowTitle(f'Wranglekit — {self._title}')
         self.setMinimumSize(640, 420)
         self.resize(760, 520)
         self.setWindowModality(Qt.NonModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
 
         layout = QVBoxLayout(self)
-        self.headline = QLabel('Starting…')
+        self.banner = QLabel('Starting…')
+        self.banner.setWordWrap(True)
+        self.banner.setStyleSheet('font-size: 18px; font-weight: 600;')
+        layout.addWidget(self.banner)
+
+        self.headline = QLabel('')
         self.headline.setWordWrap(True)
         layout.addWidget(self.headline)
 
@@ -89,31 +115,29 @@ class JobLogDialog(QDialog):
         # Explicit QPushButtons: QDialogButtonBox ActionRole is often invisible
         # on macOS / Calibre's Qt style.
         row = QHBoxLayout()
-        self.background_btn = QPushButton('Move to background')
+        self.background_btn = QPushButton('Hide window')
         self.background_btn.setToolTip(
-            'Hide this window. The job keeps running; reopen the log from '
-            'Running jobs…'
+            'Hide this window. Work keeps going — reopen it from Running jobs…'
         )
         self.background_btn.clicked.connect(self._on_background)
         self.cancel_btn = QPushButton('Cancel')
+        self.cancel_btn.setToolTip('Stop this job.')
         self.cancel_btn.clicked.connect(self._on_cancel)
-        self.retry_btn = QPushButton('Retry')
+        self.retry_btn = QPushButton('Try again')
         self.retry_btn.setToolTip(_RETRY_TIP)
         self.retry_btn.clicked.connect(self._on_retry)
         self.retry_btn.setVisible(False)
-        self.remove_btn = QPushButton('Remove')
-        self.remove_btn.setToolTip(
-            'Delete this job from the list. Books already in Calibre stay.'
-        )
-        self.remove_btn.clicked.connect(self._on_remove)
-        self.remove_btn.setVisible(False)
         self.close_btn = QPushButton('Close')
         self.close_btn.clicked.connect(self.accept)
         self.close_btn.setVisible(False)
+        self.close_btn.setDefault(False)
+        self.close_btn.setAutoDefault(False)
+        self.background_btn.setAutoDefault(False)
+        self.cancel_btn.setAutoDefault(False)
+        self.retry_btn.setAutoDefault(False)
         row.addWidget(self.background_btn)
         row.addStretch(1)
         row.addWidget(self.retry_btn)
-        row.addWidget(self.remove_btn)
         row.addWidget(self.cancel_btn)
         row.addWidget(self.close_btn)
         layout.addLayout(row)
@@ -126,81 +150,117 @@ class JobLogDialog(QDialog):
 
     def reload(self) -> None:
         status = read_json(self._status_path) or {}
-        self.headline.setText(format_job_header(status, self._log_path))
+        status.setdefault('id', self.job_id)
+        phase = job_watch_phase(status)
+        self._apply_phase_chrome(phase, status)
         parsed = progress_from_message(str(status.get('message') or ''))
-        if parsed is not None:
+        if parsed is not None and phase in ('running', 'starting', 'saving'):
             _apply_progress_bar(self.bar, parsed[0], parsed[1])
-        elif status.get('running'):
+        elif phase in ('running', 'starting', 'saving'):
             self.bar.setMaximum(0)
-            self.bar.setFormat('Working…')
+            self.bar.setFormat(
+                'Saving…' if phase == 'saving' else 'Working…'
+            )
         text = read_log_tail(self._log_path)
         if not text:
-            text = f'Waiting for log…\n{self._log_path}'
+            text = 'Waiting for the job to start…'
         bar = self.log.verticalScrollBar()
         follow = bar.value() >= bar.maximum() - 8
         self.log.setPlainText(text)
         if follow:
             bar.setValue(bar.maximum())
 
-        running = bool(status.get('running'))
-        ingest = str(status.get('ingest') or 'none')
         if self._finished:
             return
-        if running:
-            return
-        if ingest == 'pending':
-            self.bar.setMaximum(0)
-            self.bar.setFormat('Writing into Calibre…')
-            return
-        if self.job_id == 'warm' and status:
-            message = str(status.get('message') or 'Background tag cache stopped.')
-            self.mark_finished(message, ok=True)
+        if phase in ('done', 'failed', 'stopped'):
+            summary = (
+                first_line(status.get('result'), 200)
+                or first_line(status.get('message'), 200)
+                or (
+                    'Stopped.'
+                    if phase == 'stopped'
+                    else ("Couldn't finish." if phase == 'failed' else 'Done.')
+                )
+            )
+            self.mark_finished(summary, ok=(phase == 'done'), detail='')
+
+    def _apply_phase_chrome(self, phase: str, status: dict) -> None:
+        self.setWindowTitle(
+            f'{_PHASE_WINDOW.get(phase, "Wranglekit")} — {self._title}'
+        )
+        self.banner.setText(_PHASE_BANNER.get(phase, 'Working…'))
+        self.headline.setText(format_job_header(status, self._log_path))
+        if phase in ('done', 'failed', 'stopped'):
+            self.background_btn.setVisible(False)
+            self.cancel_btn.setVisible(False)
+            self.close_btn.setVisible(True)
+            self.close_btn.setEnabled(True)
+            self.close_btn.setDefault(True)
+            self.close_btn.setFocus()
+            self.retry_btn.setVisible(job_is_retryable(status))
+            self.retry_btn.setEnabled(True)
+            self.bar.setMaximum(1)
+            self.bar.setValue(0 if phase == 'failed' else 1)
+            self.bar.setFormat('Done' if phase != 'failed' else 'Failed')
+        else:
+            self.background_btn.setVisible(True)
+            self.background_btn.setEnabled(True)
+            self.cancel_btn.setVisible(True)
+            self.cancel_btn.setEnabled(phase != 'saving')
+            self.close_btn.setVisible(False)
+            self.close_btn.setDefault(False)
+            self.retry_btn.setVisible(False)
 
     def mark_finished(self, summary: str, *, ok: bool = True, detail: str = '') -> None:
+        already = self._finished
         self._finished = True
         self._timer.stop()
-        self.reload()
-        first = first_line(summary, 200) if summary else 'Done.'
-        self.headline.setText(first[:200])
-        if summary:
-            self._append(summary)
-        if detail:
-            self._append(detail)
-        self.bar.setMaximum(1)
-        self.bar.setValue(1 if ok else 0)
-        self.background_btn.setVisible(False)
-        self.cancel_btn.setVisible(False)
-        self.close_btn.setVisible(True)
-        self.close_btn.setEnabled(True)
         status = read_json(self._status_path) or {}
         status.setdefault('id', self.job_id)
-        self.retry_btn.setVisible(job_is_retryable(status))
-        self.retry_btn.setEnabled(True)
-        self.remove_btn.setVisible(job_is_deletable(status))
-        self.remove_btn.setEnabled(True)
+        if summary and not status.get('result'):
+            status['result'] = first_line(summary, 200)
+        phase = job_watch_phase(status)
+        if not ok:
+            phase = 'failed'
+        elif phase not in ('done', 'failed', 'stopped'):
+            phase = 'done' if ok else 'failed'
+        self._apply_phase_chrome(phase, status)
+        if summary and summary != self._last_summary:
+            if not already:
+                self._append(summary)
+            else:
+                self.headline.setText(summary[:400])
+            self._last_summary = summary
+        if detail and detail.strip() and detail.strip() != (summary or '').strip():
+            self._append(detail)
+        self.close_btn.setFocus()
 
     def mark_retrying(self) -> None:
         self._finished = False
         self._closing = False
-        self.retry_btn.setVisible(False)
-        self.remove_btn.setVisible(False)
+        self._last_summary = ''
         self.close_btn.setVisible(False)
+        self.retry_btn.setVisible(False)
         self.background_btn.setVisible(True)
         self.background_btn.setEnabled(True)
         self.cancel_btn.setVisible(True)
         self.cancel_btn.setEnabled(True)
         self.bar.setMaximum(0)
         self.bar.setFormat('Working…')
-        self.headline.setText('Retrying…')
-        self._append('Retrying from the start (existing EPUBs and cached tags are skipped)…')
+        self.banner.setText('Working…')
+        self.headline.setText('Trying again…')
+        self.setWindowTitle(f'Wranglekit — {self._title}')
+        self._append('Trying again from the start (existing EPUBs and cached tags are skipped)…')
         self._timer.start()
         self.reload()
 
     def mark_working(self, message: str) -> None:
         visible = _user_status_line(message) or message
+        self.banner.setText('Saving to your library…')
         self.headline.setText(visible[:200])
         self._append(visible)
         self.bar.setMaximum(0)
+        self.bar.setFormat('Saving…')
         self.cancel_btn.setEnabled(False)
 
     def _append(self, message: str) -> None:
@@ -220,6 +280,7 @@ class JobLogDialog(QDialog):
         if self._finished or self._closing:
             self.accept()
             return
+        self.banner.setText('Stopping…')
         self.headline.setText('Stopping…')
         self._append('Stop requested…')
         self.cancel_btn.setEnabled(False)
@@ -232,19 +293,6 @@ class JobLogDialog(QDialog):
         self.retry_btn.setEnabled(False)
         if self._supervisor.retry(self.job_id, attach=True) is None:
             self.retry_btn.setEnabled(True)
-
-    def _on_remove(self) -> None:
-        if not job_is_deletable(read_json(self._status_path) or {'id': self.job_id}):
-            return
-        if not question_dialog(
-            self.gui,
-            'Wranglekit',
-            'Remove this job from the list? Books already in Calibre stay.',
-        ):
-            return
-        if self._supervisor.delete_jobs([self.job_id]):
-            self._closing = True
-            self.accept()
 
     def closeEvent(self, event) -> None:
         if self._finished or self._closing:
@@ -266,16 +314,15 @@ class JobsListDialog(QDialog):
         self.setWindowModality(Qt.NonModal)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(
-                'Jobs keep running if you close their log window. '
-                'Background on a log window detaches; Cancel / Stop ends the process. '
-                'Retry re-runs a failed or stopped job from the start; existing '
-                'EPUBs and cached tags are skipped. Delete / Clear remove jobs '
-                'from this list only — the Calibre library is unchanged. '
-                'Shift-click or ⌘-click to select several jobs, then Delete.'
-            )
+        hint = QLabel(
+            'Work keeps going if you hide the log window. '
+            'Hide window tucks it away; Cancel stops it. '
+            'When it is done, Close dismisses the log. '
+            'Try again re-runs a failed or stopped job from the start. '
+            'Delete / Clear only remove rows from this list — your books stay.'
         )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(['Job', 'State', 'Result', 'Message', 'Id'])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -536,7 +583,7 @@ class JobNotifyDialog(QDialog):
     ):
         super().__init__(gui)
         self.should_retry = False
-        self.setWindowTitle('Wranglekit')
+        self.setWindowTitle('Done' if ok else "Couldn't finish")
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         label = QLabel(summary or ('Done.' if ok else 'Job failed.'))

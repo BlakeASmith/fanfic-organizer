@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 import threading
@@ -11,14 +12,82 @@ import pytest
 
 from calibre_dev.calibre import (
     CalibreCtl,
+    apply_wranglekit_gui_names,
     is_calibre_gui_command,
     list_calibre_gui_pids,
     parse_ps_line,
+    write_dev_project_stamp,
 )
 from calibre_dev.lock import RestartLocked, hold_restart_lock, lock_snapshot
 import makeplugin
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_write_dev_project_stamp(tmp_path: Path):
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    stamp = write_dev_project_stamp(plugin_dir, project_root=ROOT)
+    data = json.loads(stamp.read_text(encoding="utf-8"))
+    assert Path(data["project"]) == ROOT
+
+
+def test_install_writes_dev_project_stamp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    ctl = CalibreCtl(lock_path=tmp_path / "lock", plugin_dir=plugin_dir)
+    monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
+    monkeypatch.setattr("calibre_dev.calibre._run_checked", lambda *a, **k: None)
+    monkeypatch.setattr("calibre_dev.calibre.apply_wranglekit_gui_names", lambda: False)
+    ctl._install()
+    data = json.loads((plugin_dir / "dev_project.json").read_text(encoding="utf-8"))
+    assert Path(data["project"]) == ROOT
+
+
+def test_install_removes_legacy_plugin_then_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    ctl = CalibreCtl(lock_path=tmp_path / "lock", plugin_dir=plugin_dir)
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+
+    monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
+    monkeypatch.setattr("calibre_dev.calibre._run_checked", fake_run)
+    monkeypatch.setattr("calibre_dev.calibre.apply_wranglekit_gui_names", lambda: True)
+    ctl._install()
+    assert calls[0] == ["/fake/calibre-customize", "-r", "AO3 Scraper"]
+    assert calls[1] == ["/fake/calibre-customize", "-b", str(plugin_dir)]
+
+
+def test_apply_wranglekit_gui_names_replaces_ao3_scraper(tmp_path: Path):
+    gui = tmp_path / "gui.json"
+    gui.write_text(
+        json.dumps(
+            {
+                "action-layout-toolbar": [
+                    "FanFicFare",
+                    "AO3 Scraper",
+                    "Wranglekit",
+                ],
+                "action-layout-toolbar-device": ["AO3 Scraper", "Save To Disk"],
+                "geometry-of-plugin config dialog:User interface action:AO3 Scraper": {
+                    "w": 1
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert apply_wranglekit_gui_names(tmp_path) is True
+    data = json.loads(gui.read_text(encoding="utf-8"))
+    assert data["action-layout-toolbar"] == ["FanFicFare", "Wranglekit"]
+    assert data["action-layout-toolbar-device"] == ["Wranglekit", "Save To Disk"]
+    assert "geometry-of-plugin config dialog:User interface action:Wranglekit" in data
+    assert apply_wranglekit_gui_names(tmp_path) is False
 
 
 def test_is_calibre_gui_command_matches_app_binary_only():
@@ -106,7 +175,7 @@ def test_install_with_restart_shuts_down_and_starts(tmp_path: Path):
     assert result["ok"] is True
     assert result["installed"] is True
     assert result["restarted"] is True
-    assert ctl.actions == ["install", "shutdown", "start"]
+    assert ctl.actions == ["shutdown", "install", "start"]
     assert ctl.pids == [99]
 
 

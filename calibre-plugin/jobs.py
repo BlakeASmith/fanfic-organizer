@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +19,22 @@ _UNIQUE_TAGS_RE = re.compile(
 )
 
 
+def _user_dirs():
+    name = 'wranglekit_user_dirs'
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = Path(__file__).resolve().parent / 'user_dirs.py'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def jobs_root(project: Path) -> Path:
-    return Path(project) / '.cache' / 'jobs'
+    return _user_dirs().resolve_jobs_dir(Path(project))
 
 
 def new_job_id(kind: str = 'job') -> str:
@@ -127,26 +143,56 @@ def first_line(value: Any, limit: int = 120) -> str:
     return text.splitlines()[0][:limit]
 
 
-def format_job_header(status: dict[str, Any] | None, log_path: Path) -> str:
-    status = status or {}
-    title = status.get('title') or status.get('id') or 'Job'
-    if status.get('running'):
-        pid = status.get('pid')
-        state = f'Running (pid {pid})' if pid else 'Running'
-    elif status.get('exit_code') not in (None, 0):
-        state = f'Failed (exit {status.get("exit_code")})'
-    elif status.get('finished_at') or status.get('exit_code') == 0:
-        state = 'Finished'
-    else:
-        state = 'Not running'
-    message = first_line(status.get('message'), 200)
+def job_was_notified(status: dict[str, Any] | None) -> bool:
+    return bool((status or {}).get('notified'))
+
+
+def job_watch_phase(status: dict[str, Any] | None) -> str:
+    """Life cycle of the attached job window: starting/running/saving/done/failed/stopped."""
+    data = dict(status or {})
+    ingest = str(data.get('ingest') or '')
+    if data.get('running'):
+        return 'running'
+    if ingest == 'pending':
+        return 'saving'
+    finished = bool(data.get('finished_at')) or data.get('exit_code') is not None
+    if not finished and ingest not in ('done', 'cancelled', 'failed', 'skipped'):
+        return 'starting'
+    if ingest == 'cancelled':
+        return 'stopped'
+    if ingest in ('failed', 'skipped') or data.get('exit_code') not in (None, 0):
+        return 'failed'
+    return 'done'
+
+
+def format_job_header(status: dict[str, Any] | None, log_path: Path | None = None) -> str:
+    """Short, non-technical headline for the job window (log path is not shown)."""
+    del log_path
+    data = dict(status or {})
+    title = data.get('title') or data.get('id') or 'Job'
+    phase = job_watch_phase(data)
+    labels = {
+        'starting': 'Starting',
+        'running': 'Working',
+        'saving': 'Saving to your library',
+        'done': 'Done',
+        'failed': "Couldn't finish",
+        'stopped': 'Stopped',
+    }
+    state = labels.get(phase, 'Working')
+    message = first_line(data.get('message'), 200)
+    result = first_line(data.get('result'), 200)
     bits = [f'{title} — {state}']
-    if message:
+    if phase == 'saving':
+        bits.append('Adding books to Calibre. You can hide this window; work keeps going.')
+    elif phase == 'done':
+        bits.append(result or message or 'You can close this window.')
+    elif phase == 'failed':
+        bits.append(result or message or 'Something went wrong. You can try again.')
+    elif phase == 'stopped':
+        bits.append(result or message or 'Stopped before it finished. You can try again.')
+    elif message:
         bits.append(message)
-    result = first_line(status.get('result'), 200)
-    if result:
-        bits.append(result)
-    bits.append(f'Log: {log_path}')
     return '\n'.join(bits)
 
 

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -153,16 +155,34 @@ LOG_READ_MAX_BYTES = 2_000_000
 DEFAULT_LOG_LINES = 400
 
 
+def _user_dirs():
+    name = 'wranglekit_user_dirs'
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = Path(__file__).resolve().parent / 'user_dirs.py'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def warm_cache_dir(project: Path) -> Path:
-    return Path(project) / '.cache'
+    return _user_dirs().resolve_cache_dir(Path(project))
 
 
 def warm_log_path(project: Path) -> Path:
-    return warm_cache_dir(project) / 'tag_warm.log'
+    return _user_dirs().resolve_warm_log_file(Path(project))
 
 
 def warm_status_path(project: Path) -> Path:
-    return warm_cache_dir(project) / 'tag_warm.status.json'
+    return _user_dirs().resolve_warm_status_file(Path(project))
+
+
+def warm_names_path(project: Path) -> Path:
+    return _user_dirs().resolve_warm_names_file(Path(project))
 
 
 def read_log_tail(

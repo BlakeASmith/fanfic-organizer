@@ -4,7 +4,7 @@ Every long-running command can run as a child process with a log file.
 Attach (``job log --follow`` / the plugin log window) is just a tail;
 detaching does not stop the work.
 
-Layout (under ``.cache/jobs/<id>/``, override with ``AO3KIT_JOBS_DIR``)::
+Layout (under ``$XDG_STATE_HOME/wranglekit/jobs/<id>/``, override with ``AO3KIT_JOBS_DIR``)::
 
     spec.json      argv steps, title, result spec, plugin ingest hints
     status.json    pid, running, last log line, exit code, result
@@ -15,7 +15,7 @@ Layout (under ``.cache/jobs/<id>/``, override with ``AO3KIT_JOBS_DIR``)::
 CLI::
 
     python -m ao3kit job start --title "Search" --kind scrape -- scrape -o out.jsonl --verbose
-    python -m ao3kit job start --dir .cache/jobs/<id>
+    python -m ao3kit job start --dir $XDG_STATE_HOME/wranglekit/jobs/<id>
     python -m ao3kit job list
     python -m ao3kit job status [id]
     python -m ao3kit job log <id> [--follow]
@@ -91,7 +91,9 @@ def default_jobs_dir() -> Path:
     env = os.environ.get("AO3KIT_JOBS_DIR", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    return Path(__file__).resolve().parents[1] / ".cache" / "jobs"
+    from ao3kit.paths import jobs_dir
+
+    return jobs_dir()
 
 
 def new_job_id(kind: str = "job") -> str:
@@ -1249,7 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
         target.add_argument(
             "--jobs-dir",
             default=None,
-            help="Job store directory (default: .cache/jobs, or AO3KIT_JOBS_DIR)",
+            help="Job store directory (default: XDG state dir / jobs, or AO3KIT_JOBS_DIR)",
         )
 
     start_p = sub.add_parser("start", help="Start a detached job")

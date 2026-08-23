@@ -20,11 +20,13 @@ from ao3kit.htmlsoup import parse_html
 from ao3kit.http import AO3_BASE, attach_credentials, create_session, get_text
 from ao3kit.rate import configure_min_interval
 from ao3kit.tags.cache import (
-    DEFAULT_TAG_CACHE_PATH,
     DEFAULT_TAG_CACHE_TTL_DAYS,
     TAG_CACHE_VERSION,
     TagCache,
+    default_tag_cache_path,
 )
+
+_CACHE_UNSET = object()
 # AO3 path encoding for tag names (otwarchive Tag#to_param substitutions).
 _TAG_PATH_REPLACEMENTS = (
     ("/", "*s*"),
@@ -246,11 +248,13 @@ class TagResolver:
         delay: float = 2.0,
         on_status=None,
         owns_session: bool | None = None,
-        cache_path: Path | None = DEFAULT_TAG_CACHE_PATH,
+        cache_path: Path | None | object = _CACHE_UNSET,
         follow_canonical: bool = True,
         persist: bool = True,
         ttl_days: float | None = DEFAULT_TAG_CACHE_TTL_DAYS,
     ) -> None:
+        if cache_path is _CACHE_UNSET:
+            cache_path = default_tag_cache_path() if persist else None
         self._owns_session = session is None if owns_session is None else owns_session
         self._username = username
         self._password = password
@@ -1176,6 +1180,14 @@ def _print_json(data: Any) -> None:
     sys.stdout.write("\n")
 
 
+def _cache_path_from_args(args: argparse.Namespace, *, enabled: bool = True) -> Path | None:
+    if not enabled:
+        return None
+    if getattr(args, "cache", None) is not None:
+        return Path(args.cache)
+    return default_tag_cache_path()
+
+
 def _add_auth_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--username", help="AO3 username (optional)")
     parser.add_argument("--password", help="AO3 password (optional)")
@@ -1185,8 +1197,8 @@ def _add_cache_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cache",
         type=Path,
-        default=DEFAULT_TAG_CACHE_PATH,
-        help=f"Tag cache SQLite path (default: {DEFAULT_TAG_CACHE_PATH})",
+        default=None,
+        help="Tag cache SQLite path (default: XDG cache dir / wranglekit)",
     )
     parser.add_argument(
         "--no-cache",
@@ -1503,7 +1515,7 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.config import load_user_config
 
         on_status = (lambda msg: print(msg, file=sys.stderr)) if args.verbose else None
-        cache_path = None if args.no_cache else args.cache
+        cache_path = _cache_path_from_args(args, enabled=not args.no_cache)
         user_cfg = load_user_config(ensure=True)
         with TagResolver(
             username=args.username,
@@ -1611,7 +1623,7 @@ def main(argv: list[str] | None = None) -> int:
             else user_cfg.settings.follow_canonical
         )
         use_cache = (not args.no_cache) and user_cfg.settings.tag_cache_enabled
-        cache_path = None if not use_cache else args.cache
+        cache_path = _cache_path_from_args(args, enabled=use_cache)
 
         with TagResolver(
             username=args.username,
@@ -1731,7 +1743,7 @@ def main(argv: list[str] | None = None) -> int:
             else user_cfg.settings.follow_canonical
         )
         use_cache = (not args.no_cache) and user_cfg.settings.tag_cache_enabled
-        cache_path = None if not use_cache else args.cache
+        cache_path = _cache_path_from_args(args, enabled=use_cache)
 
         records: list[dict[str, Any]] = []
         for line in Path(args.jsonl).read_text(encoding="utf-8").splitlines():

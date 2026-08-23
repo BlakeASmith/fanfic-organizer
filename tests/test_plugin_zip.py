@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import makeplugin
+from ao3kit import __version__ as ao3kit_version
 
 
 def test_iter_zip_entries_includes_ao3kit_and_launcher():
@@ -22,6 +23,7 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
     assert "ao3kit/cli.py" in names
     assert "ao3kit/htmlsoup.py" in names
     assert not any(name.startswith("vendor/") for name in names)
+    assert "dev_project.json" not in names
 
 
 def test_build_zip_no_vendor(tmp_path: Path):
@@ -41,3 +43,30 @@ def test_makeplugin_zip_no_vendor(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(makeplugin, "OUTPUT", dest)
     assert makeplugin.main(["zip", "--no-vendor"]) == 0
     assert dest.is_file()
+
+
+def test_build_zip_excludes_dev_project_stamp(tmp_path: Path):
+    stamp = makeplugin.PLUGIN_DIR / "dev_project.json"
+    previous = stamp.read_text(encoding="utf-8") if stamp.is_file() else None
+    stamp.write_text('{"project": "/not/this/machine"}\n', encoding="utf-8")
+    try:
+        dest = tmp_path / "wranglekit.zip"
+        makeplugin.build_zip(dest, vendor=False)
+        with zipfile.ZipFile(dest) as zf:
+            assert "dev_project.json" not in zf.namelist()
+    finally:
+        if previous is None:
+            stamp.unlink(missing_ok=True)
+        else:
+            stamp.write_text(previous, encoding="utf-8")
+
+
+def test_plugin_version_matches_ao3kit():
+    text = (
+        Path(__file__).resolve().parents[1] / "calibre-plugin" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    marker = "__version__ = ("
+    start = text.index(marker) + len(marker)
+    end = text.index(")", start)
+    parts = tuple(int(p.strip()) for p in text[start:end].split(","))
+    assert ".".join(str(p) for p in parts) == ao3kit_version

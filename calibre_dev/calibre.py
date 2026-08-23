@@ -6,6 +6,7 @@ Calibre at the same time. Installing without restart does not take the lock.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -24,6 +25,9 @@ from calibre_dev.lock import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "calibre-plugin"
+DEV_PROJECT_STAMP = "dev_project.json"
+PLUGIN_NAME = "Wranglekit"
+LEGACY_PLUGIN_NAMES = ("AO3 Scraper",)
 MAC_CALIBRE_BIN = Path("/Applications/calibre.app/Contents/MacOS")
 SHUTDOWN_WAIT = 20.0
 TERM_WAIT = 5.0
@@ -119,10 +123,119 @@ def _run_checked(
     )
 
 
+def write_dev_project_stamp(
+    plugin_dir: Path,
+    project_root: Path | None = None,
+) -> Path:
+    """Record the git checkout so the installed plugin can find ao3kit."""
+    root = (project_root or ROOT).resolve()
+    path = plugin_dir / DEV_PROJECT_STAMP
+    path.write_text(
+        json.dumps({"project": str(root)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def calibre_config_dir() -> Path:
+    override = (os.environ.get("CALIBRE_CONFIG_DIRECTORY") or "").strip()
+    if override:
+        return Path(override)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Preferences" / "calibre"
+    if os.name == "nt":
+        appdata = (os.environ.get("APPDATA") or "").strip()
+        if appdata:
+            return Path(appdata) / "calibre"
+        return Path.home() / "AppData" / "Roaming" / "calibre"
+    xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg:
+        return Path(xdg) / "calibre"
+    return Path.home() / ".config" / "calibre"
+
+
+def _rename_legacy_plugin_value(
+    value: Any,
+    *,
+    legacy: tuple[str, ...],
+    current: str,
+) -> Any:
+    if isinstance(value, str):
+        return current if value in legacy else value
+    if isinstance(value, list):
+        out: list[Any] = []
+        seen_current = False
+        for item in value:
+            replaced = _rename_legacy_plugin_value(
+                item, legacy=legacy, current=current
+            )
+            if replaced == current:
+                if seen_current:
+                    continue
+                seen_current = True
+            out.append(replaced)
+        return out
+    if isinstance(value, dict):
+        renamed: dict[Any, Any] = {}
+        for key, item in value.items():
+            new_key = key
+            if isinstance(key, str):
+                for old in legacy:
+                    new_key = new_key.replace(old, current)
+            renamed[new_key] = _rename_legacy_plugin_value(
+                item, legacy=legacy, current=current
+            )
+        return renamed
+    return value
+
+
+def apply_wranglekit_gui_names(
+    config_dir: Path | None = None,
+    *,
+    name: str = PLUGIN_NAME,
+    legacy_names: tuple[str, ...] = LEGACY_PLUGIN_NAMES,
+) -> bool:
+    """Point leftover AO3 Scraper toolbar/menu entries at Wranglekit."""
+    path = (config_dir or calibre_config_dir()) / "gui.json"
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    updated = _rename_legacy_plugin_value(
+        data, legacy=legacy_names, current=name
+    )
+    if updated == data:
+        return False
+    path.write_text(
+        json.dumps(updated, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def remove_legacy_calibre_plugins(
+    customize: str,
+    names: tuple[str, ...] = LEGACY_PLUGIN_NAMES,
+) -> list[str]:
+    removed: list[str] = []
+    for name in names:
+        try:
+            _run_checked([customize, "-r", name], timeout=60)
+        except subprocess.CalledProcessError:
+            continue
+        removed.append(name)
+    return removed
+
+
 def install_plugin_zip(plugin_dir: Path | None = None) -> None:
     customize = find_calibre_customize()
     target = plugin_dir or PLUGIN_DIR
+    write_dev_project_stamp(target)
+    remove_legacy_calibre_plugins(customize)
     _run_checked([customize, "-b", str(target)], timeout=120)
+    apply_wranglekit_gui_names()
 
 
 def shutdown_calibre_gui(calibre_bin: str | None = None) -> None:
@@ -227,8 +340,11 @@ class CalibreCtl:
         return find_calibre_customize()
 
     def _install(self) -> None:
+        write_dev_project_stamp(self.plugin_dir)
         customize = self._find_customize()
+        remove_legacy_calibre_plugins(customize)
         _run_checked([customize, "-b", str(self.plugin_dir)], timeout=120)
+        apply_wranglekit_gui_names()
 
     def _shutdown(self) -> None:
         shutdown_calibre_gui(self._find_calibre())
@@ -289,14 +405,7 @@ class CalibreCtl:
             "lock": lock,
         }
 
-    def install(
-        self,
-        *,
-        restart: bool = False,
-        agent_id: str = "",
-        lock_timeout: float = 0.0,
-        holder: str = "makeplugin:install",
-    ) -> dict[str, Any]:
+    def _install_result(self) -> dict[str, Any]:
         try:
             self._install()
         except FileNotFoundError as exc:
@@ -308,30 +417,48 @@ class CalibreCtl:
                 "error": "install_failed",
                 "message": err or f"calibre-customize exited {exc.returncode}",
             }
+        return {
+            "ok": True,
+            "installed": True,
+            "restarted": False,
+            "message": (
+                "Plugin installed. Restart Calibre to load code changes "
+                "(or rerun with --restart / MCP restart=true when iterating)."
+            ),
+        }
+
+    def install(
+        self,
+        *,
+        restart: bool = False,
+        agent_id: str = "",
+        lock_timeout: float = 0.0,
+        holder: str = "makeplugin:install",
+    ) -> dict[str, Any]:
         if not restart:
-            return {
-                "ok": True,
-                "installed": True,
-                "restarted": False,
-                "message": (
-                    "Plugin installed. Restart Calibre to load code changes "
-                    "(or rerun with --restart / MCP restart=true when iterating)."
-                ),
-            }
-        result = self.restart(
-            agent_id=agent_id,
-            lock_timeout=lock_timeout,
-            holder=holder,
-        )
-        result["installed"] = True
-        if result.get("ok"):
-            result["message"] = "Plugin installed and Calibre restarted."
-        elif result.get("error") == "locked":
+            return self._install_result()
+        try:
+            with hold_restart_lock(
+                holder,
+                path=self.lock_path,
+                agent_id=agent_id,
+                action="restart",
+                timeout=lock_timeout,
+            ):
+                return self._restart_unlocked(install=True)
+        except RestartLocked as exc:
+            installed = self._install_result()
+            if not installed.get("ok"):
+                return installed
+            result = _locked_error(exc)
+            result["installed"] = True
             result["message"] = (
                 "Plugin installed. Calibre restart skipped: another agent "
                 "holds the lock."
             )
-        return result
+            return result
+        except FileNotFoundError as exc:
+            return {"ok": False, "error": "not_found", "message": str(exc)}
 
     def restart(
         self,
@@ -354,14 +481,14 @@ class CalibreCtl:
         except FileNotFoundError as exc:
             return {"ok": False, "error": "not_found", "message": str(exc)}
 
-    def _restart_unlocked(self) -> dict[str, Any]:
+    def _restart_unlocked(self, *, install: bool = False) -> dict[str, Any]:
         before = self._gui_pids()
         was_running = bool(before)
         self._shutdown()
         self._force_quit_leftovers()
         leftover = self._gui_pids()
         if leftover:
-            return {
+            result: dict[str, Any] = {
                 "ok": False,
                 "error": "still_running",
                 "message": f"Calibre did not quit (pids {leftover}).",
@@ -370,11 +497,29 @@ class CalibreCtl:
                 "pids_after": leftover,
                 "restarted": False,
             }
+            if install:
+                installed = self._install_result()
+                result["installed"] = bool(installed.get("ok"))
+                if not installed.get("ok"):
+                    result["message"] = installed.get("message") or result["message"]
+                    result["error"] = installed.get("error") or result["error"]
+            return result
+        if install:
+            installed = self._install_result()
+            if not installed.get("ok"):
+                self._start()
+                self._wait_gui(running=True, timeout=START_WAIT)
+                installed["restarted"] = False
+                installed["message"] = (
+                    f"{installed.get('message', 'Install failed')} "
+                    "Calibre was quit; trying to start it again."
+                )
+                return installed
         self._start()
         started = self._wait_gui(running=True, timeout=START_WAIT)
         after = self._gui_pids()
         if not started:
-            return {
+            result = {
                 "ok": False,
                 "error": "did_not_start",
                 "message": "Calibre quit but did not come back in time.",
@@ -383,7 +528,10 @@ class CalibreCtl:
                 "pids_after": after,
                 "restarted": False,
             }
-        return {
+            if install:
+                result["installed"] = True
+            return result
+        result = {
             "ok": True,
             "restarted": True,
             "was_running": was_running,
@@ -391,9 +539,16 @@ class CalibreCtl:
             "pids_after": after,
             "message": "Calibre restarted." if was_running else "Calibre started.",
         }
+        if install:
+            result["installed"] = True
+            result["message"] = "Plugin installed and Calibre restarted."
+        return result
 
 
 __all__ = [
+    "PLUGIN_NAME",
+    "apply_wranglekit_gui_names",
+    "write_dev_project_stamp",
     "CalibreCtl",
     "RestartLocked",
     "default_lock_path",
@@ -403,4 +558,5 @@ __all__ = [
     "is_calibre_gui_command",
     "list_calibre_gui_pids",
     "parse_ps_line",
+    "remove_legacy_calibre_plugins",
 ]

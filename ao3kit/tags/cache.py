@@ -20,13 +20,17 @@ if TYPE_CHECKING:
 TAG_CACHE_VERSION = 3
 DEFAULT_TAG_CACHE_TTL_DAYS = 90.0
 
-DEFAULT_TAG_CACHE_PATH = (
-    Path(__file__).resolve().parents[2] / ".cache" / "ao3_tag_cache.sqlite"
-)
 
-_LEGACY_JSON_PATH = (
-    Path(__file__).resolve().parents[2] / ".cache" / "ao3_tag_cache.json"
-)
+def default_tag_cache_path() -> Path:
+    from ao3kit.paths import tag_cache_file
+
+    return tag_cache_file()
+
+
+def _legacy_json_path() -> Path:
+    from ao3kit.paths import tag_cache_legacy_json
+
+    return tag_cache_legacy_json()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -225,8 +229,8 @@ class TagCache:
         candidates: list[Path] = []
         json_sibling = self.path.with_suffix(".json")
         candidates.append(json_sibling)
-        if self.path.resolve() == DEFAULT_TAG_CACHE_PATH.resolve():
-            candidates.append(_LEGACY_JSON_PATH)
+        if self.path.resolve() == default_tag_cache_path().resolve():
+            candidates.append(_legacy_json_path())
 
         for json_path in candidates:
             if not json_path.is_file():

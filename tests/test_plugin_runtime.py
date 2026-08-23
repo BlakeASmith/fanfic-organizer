@@ -38,24 +38,19 @@ def test_zip_has_bundled_ao3kit(tmp_path: Path):
     assert not runtime.zip_has_bundled_ao3kit(thin)
 
 
-def test_extract_keeps_user_cache(tmp_path: Path):
+def test_extract_leaves_unrelated_files(tmp_path: Path):
     runtime = load_runtime()
     zip_path = tmp_path / "wranglekit.zip"
     _write_bundle_zip(zip_path)
     dest = tmp_path / "runtime"
     dest.mkdir()
-    (dest / ".ao3kit").mkdir()
-    (dest / ".ao3kit" / "config.yaml").write_text("request_delay: 2\n", encoding="utf-8")
-    (dest / ".cache").mkdir()
-    (dest / ".cache" / "keep.txt").write_text("yes\n", encoding="utf-8")
+    leftover = dest / "keep.txt"
+    leftover.write_text("yes\n", encoding="utf-8")
     runtime.extract_bundled_runtime(zip_path, dest, version="0.25.0")
     assert (dest / "ao3kit" / "__init__.py").is_file()
     assert (dest / "vendor" / "requests" / "__init__.py").is_file()
     assert (dest / "run_ao3kit.py").is_file()
-    assert (dest / ".ao3kit" / "config.yaml").read_text(encoding="utf-8") == (
-        "request_delay: 2\n"
-    )
-    assert (dest / ".cache" / "keep.txt").read_text(encoding="utf-8") == "yes\n"
+    assert leftover.read_text(encoding="utf-8") == "yes\n"
 
 
 def test_extract_skips_when_stamp_matches(tmp_path: Path):

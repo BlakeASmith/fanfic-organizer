@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -25,16 +27,34 @@ GRAPH_RECORD_KEYS = (
 )
 
 
+def _user_dirs():
+    name = 'wranglekit_user_dirs'
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = Path(__file__).resolve().parent / 'user_dirs.py'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def graph_inbox_dir(project: Path) -> Path:
-    return Path(project) / '.cache' / GRAPH_INBOX_NAME
+    return _user_dirs().resolve_graph_inbox_dir(Path(project))
 
 
 def graph_jsonl_path(project: Path) -> Path:
-    return Path(project) / '.cache' / GRAPH_JSONL_NAME
+    return _user_dirs().resolve_graph_jsonl_file(Path(project))
+
+
+def graph_html_path(project: Path) -> Path:
+    return _user_dirs().resolve_graph_html_file(Path(project))
 
 
 def graph_serve_stamp_path(project: Path) -> Path:
-    return Path(project) / '.cache' / GRAPH_SERVE_STAMP_NAME
+    return _user_dirs().resolve_graph_serve_stamp_file(Path(project))
 
 
 def read_serve_url(project: Path) -> str | None:

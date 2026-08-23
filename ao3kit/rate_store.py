@@ -1,9 +1,9 @@
 """Host-wide AO3 rate-limit coordination (SQLite).
 
-All ao3kit interfaces (CLI, Calibre plugin subprocess, and the frozen web UI / REST API) share
+CLI and the Calibre plugin subprocess share
 one on-disk limiter so concurrent processes pace requests together.
 
-Override path with ``AO3KIT_RATE_DB``. Default: ``<project>/.cache/ao3_rate.sqlite``.
+Override path with ``AO3KIT_RATE_DB``. Default: ``$XDG_STATE_HOME/wranglekit/ao3_rate.sqlite``.
 
 The same file stores:
 
@@ -22,9 +22,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_RATE_DB_PATH = (
-    Path(__file__).resolve().parents[1] / ".cache" / "ao3_rate.sqlite"
-)
 
 EVENT_TTL_SECONDS = 30 * 24 * 3600
 EVENT_MAX_ROWS = 50_000
@@ -100,7 +97,9 @@ def default_rate_db_path() -> Path:
     override = os.environ.get("AO3KIT_RATE_DB", "").strip()
     if override:
         return Path(override).expanduser()
-    return DEFAULT_RATE_DB_PATH
+    from ao3kit.paths import rate_db_file
+
+    return rate_db_file()
 
 
 def hour_bucket(ts: float) -> int:

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import ao3_rate
-from ao3_rate import (
+from ao3kit import rate as ao3_rate
+from ao3kit.rate import (
     DEFAULT_MIN_INTERVAL,
     configure_min_interval,
     interval_for_url,
@@ -86,7 +86,7 @@ def test_apply_request_delay_none_uses_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     from ao3kit.config import init_user_config
-    from ao3_rate import apply_request_delay
+    from ao3kit.rate import apply_request_delay
 
     home = tmp_path / "home"
     monkeypatch.setenv("AO3KIT_HOME", str(home))
@@ -108,17 +108,17 @@ def test_note_request_success_speeds_tag_lane():
 
 def test_wait_for_request_spaces_calls(monkeypatch: pytest.MonkeyPatch):
     ao3_rate._STATE.skip_wait = False
-    monkeypatch.setattr("ao3_rate.random.uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
     clock = [1000.0]
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
     monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
 
     def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
         clock[0] += seconds
 
-    monkeypatch.setattr("ao3_rate.time.sleep", fake_sleep)
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
 
     # Seed next_allowed so first call does not wait.
     ao3_rate._STATE.store.update(
@@ -167,17 +167,17 @@ def test_note_retry_after_tag_url_pauses_whole_host():
 
 def test_wait_for_request_login_caps_leftover(monkeypatch: pytest.MonkeyPatch):
     ao3_rate._STATE.skip_wait = False
-    monkeypatch.setattr("ao3_rate.random.uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
     clock = [1000.0]
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
     monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
 
     def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
         clock[0] += seconds
 
-    monkeypatch.setattr("ao3_rate.time.sleep", fake_sleep)
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
     ao3_rate._STATE.store.update(
         lambda snap: type(snap)(
             next_allowed_at=clock[0] + 54.0,
@@ -196,17 +196,17 @@ def test_wait_for_request_login_caps_leftover(monkeypatch: pytest.MonkeyPatch):
 
 def test_wait_for_request_stale_lock_rewinds(monkeypatch: pytest.MonkeyPatch):
     ao3_rate._STATE.skip_wait = False
-    monkeypatch.setattr("ao3_rate.random.uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
     clock = [1000.0]
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
     monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
 
     def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
         clock[0] += seconds
 
-    monkeypatch.setattr("ao3_rate.time.sleep", fake_sleep)
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
     ao3_rate._STATE.store.update(
         lambda snap: type(snap)(
             next_allowed_at=clock[0] + 400.0,
@@ -227,17 +227,17 @@ def test_wait_for_request_honors_retry_after_cooldown(
 ):
     """Cloudflare ~3 min Retry-After must not be treated as a stale lock."""
     ao3_rate._STATE.skip_wait = False
-    monkeypatch.setattr("ao3_rate.random.uniform", lambda _a, _b: 1.0)
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
     clock = [1000.0]
     sleeps: list[float] = []
-    monkeypatch.setattr("ao3_rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
     monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
 
     def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
         clock[0] += seconds
 
-    monkeypatch.setattr("ao3_rate.time.sleep", fake_sleep)
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
     ao3_rate._STATE.store.update(
         lambda snap: type(snap)(
             next_allowed_at=clock[0] + 178.0,

@@ -149,7 +149,7 @@ class ConfigWidget(QWidget):
             'metatags to the Fandom column (e.g. Marvel for Spider-Man). Extra '
             'collection rules are under Tags and collections → '
             'Collections & tag rules in the plugin menu '
-            '(.ao3kit/collections.yaml). Tag keep / rename / '
+            '(XDG config dir / wranglekit / collections.yaml). Tag keep / rename / '
             'drop lives in mappings.yaml.'
         )
         defaults_form.addRow(self.simplify_tags)
@@ -180,7 +180,7 @@ class ConfigWidget(QWidget):
             'If you add a book to a collection in Calibre, the next recompute '
             'saves that as a rule for that work so it stays. Turn off to treat '
             'the Collections column as a computed view only. Stored in '
-            '.ao3kit/config.yaml (collections_remember_manual_adds).'
+            'XDG config (collections_remember_manual_adds).'
         )
         defaults_form.addRow(self.remember_collection_adds)
         layout.addWidget(defaults)
@@ -194,7 +194,7 @@ class ConfigWidget(QWidget):
         self.generate_covers.setChecked(bool(cover.get('enabled', True)))
         self.generate_covers.setToolTip(
             'Stamps a title/author cover into each downloaded EPUB (same idea '
-            'as the AO3 cover tool). Style is stored in .ao3kit/config.yaml. '
+            'as the AO3 cover tool). Style is stored in XDG config. '
             'Selected books → Generate covers restamps library files.'
         )
         self.replace_covers = QCheckBox('Replace a cover already in the EPUB')
@@ -228,12 +228,16 @@ class ConfigWidget(QWidget):
         runtime_form = QFormLayout(runtime)
         self.ao3kit_project = QLineEdit()
         self.ao3kit_project.setText(prefs.get('ao3kit_project') or '')
-        self.ao3kit_project.setPlaceholderText('leave blank to use the bundled toolkit')
+        self.ao3kit_project.setPlaceholderText(
+            'leave blank to use makeplugin install or the bundled zip'
+        )
         runtime_form.addRow('Project path', self.ao3kit_project)
         runtime_form.addRow(
             _hint(
-                'Leave blank unless you are developing from a git checkout. '
-                'The GitHub plugin zip already includes ao3kit.'
+                'Leave blank unless you need to override. '
+                '`python makeplugin.py install` records this checkout; the '
+                'GitHub plugin zip already includes ao3kit. You can also set '
+                'AO3KIT_PROJECT.'
             )
         )
         self.ao3kit_python = QLineEdit()

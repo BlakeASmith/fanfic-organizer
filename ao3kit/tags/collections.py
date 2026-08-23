@@ -5,7 +5,8 @@ Recompute anytime. A collection the user adds by hand on one work becomes a
 pin rule for that work, so the next recompute puts it back.
 
 Tag-transform mappings (keep / rename / drop) stay in ``mappings.yaml``.
-Collection rules live in ``.ao3kit/collections.yaml``. Mapping rows that still
+Collection rules live in ``collections.yaml`` under the XDG config dir.
+Mapping rows that still
 list collections keep working through the tag engine; this module overlays
 YAML rules (including pins and excludes) on top.
 """

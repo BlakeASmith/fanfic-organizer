@@ -369,15 +369,6 @@ class ScrapeSearchDialog(QDialog):
             finally:
                 self._filling = False
             self._use_form_criteria = False
-            info_dialog(
-                self,
-                'Wranglekit',
-                (
-                    f'That is AO3 series {series_id}. Search and import will '
-                    'fetch every work listed on the series page.'
-                ),
-                show=True,
-            )
             return
         criteria = payload.get('criteria') or {}
         self._filling = True

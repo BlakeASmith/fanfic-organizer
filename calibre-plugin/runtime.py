@@ -112,8 +112,6 @@ def installed_plugin_zip() -> Path | None:
         from calibre.customize.ui import find_plugin
 
         plugin = find_plugin(PLUGIN_NAME)
-        if plugin is None:
-            plugin = find_plugin('AO3 Scraper')
         path = getattr(plugin, 'plugin_path', None) if plugin else None
         if path:
             candidate = Path(path)
@@ -128,8 +126,6 @@ def installed_plugin_zip() -> Path | None:
         for name in (
             f'{PLUGIN_NAME}.zip',
             'wranglekit.zip',
-            'AO3Scraper.zip',
-            'AO3 Scraper.zip',
         ):
             candidate = plugins / name
             if candidate.is_file():
@@ -171,7 +167,7 @@ def extract_bundled_runtime(
     *,
     version: str,
 ) -> Path:
-    """Unpack ao3kit + vendor into ``dest``, keeping ``.ao3kit`` / ``.cache``."""
+    """Unpack ao3kit + vendor into ``dest``; leave unrelated files in place."""
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     stamp_path = dest / 'PLUGIN_STAMP'

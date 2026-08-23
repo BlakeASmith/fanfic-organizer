@@ -1,7 +1,7 @@
 """Live tag-graph commands: queue similar searches for the Calibre plugin.
 
 The viewer POSTs here via ``tags graph serve``. The plugin job supervisor
-drains ``.cache/graph-inbox/`` and starts a normal scrape/import job.
+drains the XDG graph inbox and starts a normal scrape/import job.
 Does not fetch AO3 or write Calibre itself.
 """
 
@@ -17,8 +17,10 @@ from ao3kit.tags.warm import load_jsonl_records
 
 _FACET_KEYS = ("fandoms", "authors", "relationships", "characters", "tags")
 
-_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
-DEFAULT_GRAPH_INBOX = _CACHE_DIR / "graph-inbox"
+def default_graph_inbox() -> Path:
+    from ao3kit.paths import graph_inbox_dir
+
+    return graph_inbox_dir()
 GRAPH_JOB_ID = "graph"
 
 _INCLUDE_KINDS = frozenset(
@@ -309,7 +311,7 @@ def queue_graph_command(
     *,
     inbox: Path | None = None,
 ) -> Path:
-    directory = Path(inbox or DEFAULT_GRAPH_INBOX)
+    directory = Path(inbox or default_graph_inbox())
     directory.mkdir(parents=True, exist_ok=True)
     cmd_id = str(payload.get("id") or uuid.uuid4().hex[:12])
     body = dict(payload)
@@ -383,7 +385,7 @@ def queue_similar_command(
 
 
 def pending_inbox_count(inbox: Path | None = None) -> int:
-    directory = Path(inbox or DEFAULT_GRAPH_INBOX)
+    directory = Path(inbox or default_graph_inbox())
     if not directory.is_dir():
         return 0
     return sum(1 for path in directory.glob("*.json") if path.is_file())

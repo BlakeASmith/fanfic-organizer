@@ -572,9 +572,9 @@ def create_session(
     until a page returns a login wall (tag lookups), unless a saved session
     for this username is restored.
 
-    ``use_session_cache`` reuses cookies from ``.ao3kit/ao3_session.json`` so
-    plugin/CLI subprocesses skip the login GET+POST. ``verify_login`` turns
-    this off so Test login always hits AO3.
+    ``use_session_cache`` reuses cookies from the XDG state session file
+    so plugin/CLI subprocesses skip the login GET+POST. ``verify_login``
+    turns this off so Test login always hits AO3.
     """
     session = requests.Session()
     session.headers.update(headers or DEFAULT_HEADERS)

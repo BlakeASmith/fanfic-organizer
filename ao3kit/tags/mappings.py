@@ -1,7 +1,7 @@
 """Declarative tag mappings layered on AO3 canonical resolution.
 
 User-facing keep / rename / drop / collect rows live in
-``.ao3kit/mappings.yaml`` (CLI / ``python -m ao3kit config``). They compile to the same
+``mappings.yaml`` in the XDG config dir (CLI / ``python -m ao3kit config``). They compile to the same
 ``TagRule`` built-ins as Python/YAML rule modules and are prepended so they
 run first (default priority 1000).
 """

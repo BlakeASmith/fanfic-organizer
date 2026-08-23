@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ao3kit"
+dynamic = ["version"]
+description = "Scrape AO3, wrangle tags, download EPUBs, and import into Calibre (Wranglekit plugin)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Wranglekit contributors" }]
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "fastmcp>=2.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/BlakeASmith/wranglekit"
+Issues = "https://github.com/BlakeASmith/wranglekit/issues"
+
+[project.scripts]
+ao3kit = "ao3kit.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ao3kit*", "calibre_dev*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ao3kit.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

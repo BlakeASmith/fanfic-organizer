@@ -29,3 +29,9 @@ AO3Scraper.zip
 wranglekit.zip
 .cache/
 .ao3kit/
+
+# Checkout path stamped by `python makeplugin.py install` (not for release zips)
+calibre-plugin/dev_project.json
+
+# Leftover local clone; FanFicFare is not part of this repo
+fanficfare/

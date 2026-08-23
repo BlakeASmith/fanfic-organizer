@@ -19,6 +19,9 @@ jobs:
           python-version: "3.12"
       - name: Build wranglekit.zip
         run: python makeplugin.py zip
+      - name: Changelog notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python makeplugin.py changelog "${GITHUB_REF_NAME#v}" > /tmp/release-notes.md
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -29,4 +32,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: wranglekit.zip
-          generate_release_notes: true
+          body_path: /tmp/release-notes.md
+          generate_release_notes: false

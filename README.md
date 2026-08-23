@@ -1,10 +1,14 @@
 # wranglekit
 
-Toolkit for scraping AO3 search results, wrangling tags, downloading native EPUBs, and cleaning metadata for Calibre import. The CLI is `python -m ao3kit`; the Calibre plugin is **Wranglekit**.
+A **Calibre plugin** for scraping AO3 search results, wrangling tags, downloading native EPUBs, and cleaning metadata. **`ao3kit`** is the Python library the plugin runs.
 
-Supported surfaces are the **CLI** and the **Calibre plugin** (shared library core + aligned capabilities). See [AGENTS.md](AGENTS.md#interface-parity). The web UI and REST API are **deprecated and frozen**.
+## Pre-1.0
 
-## Calibre plugin (GitHub Releases)
+This project will stay below 1.0 for a long time. **0.x releases are not rigorously tested.** It is open source and maintained part-time, so there is no capacity to fully test each release. Bugs are expected.
+
+Prefer a release marked **Stable** — that label is added after the fact when no problems have been reported. If you use any other 0.x build, you should be OK with some bugs. If a specific version will not run, try an older or newer release.
+
+## Install
 
 Download **wranglekit.zip** from [Releases](https://github.com/BlakeASmith/wranglekit/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
 
@@ -12,84 +16,24 @@ Download **wranglekit.zip** from [Releases](https://github.com/BlakeASmith/wrang
 2. Restart Calibre.
 3. Open a **new** fanfic library (or one you are happy to write). Plugin settings → optional AO3 login.
 
-To build that zip from this repo: `python makeplugin.py zip`.
+### What you can do
 
-## Interfaces
+- Search AO3, search similar, import JSONL / `ao3-import.zip`
+- **Selected books:** complete selected (series + missing EPUBs + simplify tags), series, missing EPUBs, generate covers, simplify tags, collections
+- **Tags and collections:** rules, graph, purge, tag cache
+- **Running jobs…** to attach logs or stop work
+- Plugin settings: AO3 login, cover style, import defaults
 
-| Interface | How to use |
-|---|---|
-| **CLI** | `python -m ao3kit scrape\|tags\|download\|cover\|job\|config\|login\|rate …` |
-| **Calibre plugin** | GitHub **wranglekit.zip** (Preferences → Plugins → Load plugin from file), or `python makeplugin.py install` from this checkout. Search AO3, search similar, import JSONL / `ao3-import.zip`. **Selected books**: **Complete selected** (series + missing EPUBs + simplify tags), series, missing EPUBs, generate covers, simplify tags, collections. **Tags and collections**: rules, graph, purge, tag cache. **Running jobs…** to attach logs / stop. AO3 login, cover style, and import defaults live in plugin settings. |
-| **Web UI** (deprecated) | `python -m ao3kit serve` → http://127.0.0.1:8000 — frozen, not updated |
-| **REST API** (deprecated) | Same server → http://127.0.0.1:8000/api/v1/docs — frozen, not updated |
+Checkout development (install from this repo, cut a release) is in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-## Setup
+## CLI (optional)
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env   # optional: AO3_USERNAME / AO3_PASSWORD
-python -m ao3kit config init
-python makeplugin.py install   # Calibre plugin from this checkout; add --restart only when iterating on plugin UI
-python makeplugin.py zip       # Self-contained wranglekit.zip for GitHub Releases
-```
-
-## Quick start
-
-```bash
-# Scrape search results to JSONL
-python -m ao3kit scrape --url "https://archiveofourown.org/works?..." -o results.jsonl
-python -m ao3kit scrape --url "https://archiveofourown.org/works?..." -o results.jsonl --download
-python -m ao3kit scrape --url "https://archiveofourown.org/series/6133236" -o series.jsonl
-python -m ao3kit scrape --include-series --url "https://archiveofourown.org/works?..." -o results.jsonl
-python -m ao3kit scrape --fill-series-from results.jsonl -o filled.jsonl
-python -m ao3kit scrape --parse-similar --similar-from results.jsonl
-
-# Tag cleanup
-python -m ao3kit tags resolve --jsonl results.jsonl --work-id 50448730 --verbose
-python -m ao3kit config collections add --match mentions --values "River Song" --collection "River Song"
-python -m ao3kit config collections pin --work-id 50448730 --collection Jegulus
-python -m ao3kit config collections unpin --work-id 50448730 --collection Jegulus
-python -m ao3kit tags collections --jsonl results.jsonl -o cleaned.jsonl
-python -m ao3kit tags collections --jsonl results.jsonl -o explain.json --explain
-python -m ao3kit tags apply "Jegulus" "Fluff"
-python -m ao3kit tags apply --collections-only --jsonl results.jsonl
-python -m ao3kit tags warm start --jsonl results.jsonl
-python -m ao3kit tags warm status
-python -m ao3kit tags warm log
-python -m ao3kit tags warm log --follow
-python -m ao3kit tags warm stop
-python -m ao3kit tags graph --names-file tags.txt -o tag-graph.html --open
-python -m ao3kit tags graph serve
-python -m ao3kit tags graph reload
-python -m ao3kit job start -- scrape -o results.jsonl --verbose
-python -m ao3kit job list
-python -m ao3kit job log <id> --follow
-python -m ao3kit job stop <id>
-python -m ao3kit job retry <id>
-python -m ao3kit job delete <id>
-python -m ao3kit job clear --finished
-python -m ao3kit config mappings add --values Jegulus --action keep_separate --stop
-
-# Test AO3 login (or AO3_USERNAME / AO3_PASSWORD in .env)
-python -m ao3kit login
-
-# EPUB download
-python -m ao3kit download -i results.jsonl -o epubs/
-python -m ao3kit download -i results.jsonl -o epubs/ --no-cover
-python -m ao3kit cover --dir epubs/
-python -m ao3kit cover preview --title "Ship Happens" --author "Ann Thology" --fandom "Star Wars" -o cover.png
-python -m ao3kit config set cover.fields title,author,wordcount,score,fandom
-
-# Rate-limit snapshot + long-term request log (429 / Retry-After / hourly rollups)
-python -m ao3kit rate
-python -m ao3kit rate --hours 24
-python -m ao3kit rate export --hourly --days 30 -o rate-hourly.jsonl
-```
+There is a scripting CLI over the same library: `python -m ao3kit --help`. The plugin is the product; the CLI is for enthusiasts who want to script.
 
 ## Docs
 
-Full project notes (layout, tag rules, CLI, plugin): **[AGENTS.md](AGENTS.md)**.
-
-The web UI and REST API still start with `python -m ao3kit serve` but are frozen; new work belongs on the CLI or Calibre plugin.
+- **[CHANGELOG.md](CHANGELOG.md)** — user-facing history; [Unreleased] plus the pre-1.0 disclaimer become the next GitHub release notes
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — clone, pytest, plugin install, changelog/release rules
+- **[AGENTS.md](AGENTS.md)** — layout and plugin behavior
 
 Related tools: [ao3downloader](https://github.com/nianeyna/ao3downloader), [FanFicFare](https://github.com/jimmxinu/fanficfare).

@@ -1,6 +1,6 @@
 """Persist AO3 session cookies across CLI / plugin / web processes.
 
-Does not store the password. The cookie file is gitignored under ``.ao3kit/``.
+Does not store the password. The cookie jar follows XDG state (``ao3_session.json``).
 Disable with ``AO3KIT_SESSION_CACHE=0``; override path with ``AO3KIT_SESSION_FILE``.
 """
 
@@ -34,9 +34,9 @@ def default_session_cache_path() -> Path:
     env = os.environ.get("AO3KIT_SESSION_FILE", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    from ao3kit.config import default_home
+    from ao3kit.paths import session_file
 
-    return default_home() / SESSION_FILENAME
+    return session_file()
 
 
 def clear_session_cache(path: Path | None = None) -> None:
