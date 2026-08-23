@@ -14,6 +14,8 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-08-23
+
 ### Breaking Changes
 
 - Store settings, cache, jobs, and the AO3 session outside the Calibre library, following the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/wranglekit`, `~/.cache/wranglekit`, `~/.local/state/wranglekit`). Checkout `.ao3kit` / `.cache` trees are no longer read. Override with `AO3KIT_HOME` / `AO3KIT_CONFIG_DIR` / `AO3KIT_CACHE_DIR` / `AO3KIT_STATE_DIR`.

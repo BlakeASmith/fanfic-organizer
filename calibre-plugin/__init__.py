@@ -2,9 +2,7 @@
 
 from calibre.customize import InterfaceActionBase
 
-__version__ = (0, 26, 0)
-
-
+__version__ = (0, 26, 1)
 class WranglekitBase(InterfaceActionBase):
     name = 'Wranglekit'
     description = (
