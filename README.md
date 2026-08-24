@@ -49,7 +49,15 @@ On first import into an empty library (or via plugin settings), creates and fill
 
 ## Install
 
-Download **fanfic-organizer.zip** from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
+**One-line install** (downloads the latest GitHub release, installs into Calibre, starts Calibre if it is not already running):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BlakeASmith/fanfic-organizer/main/scripts/install.sh | bash
+```
+
+If Calibre is already open, quit it completely and reopen so the plugin loads.
+
+**Manual install:** download **fanfic-organizer.zip** from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
 
 1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `fanfic-organizer.zip`.
 2. Restart Calibre.
