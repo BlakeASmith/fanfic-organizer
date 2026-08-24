@@ -24,7 +24,14 @@ from calibre_plugins.fanfic_organizer.runtime import (
 
 GITHUB_OWNER = "BlakeASmith"
 GITHUB_REPO = "fanfic-organizer"
-GITHUB_API = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
+_DEFAULT_GITHUB_API = (
+    f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
+)
+
+
+def github_releases_api() -> str:
+    override = (os.environ.get("AO3KIT_UPDATE_API") or "").strip()
+    return override or _DEFAULT_GITHUB_API
 ZIP_ASSET_NAME = "fanfic-organizer.zip"
 LEGACY_PLUGIN_NAMES = ("AO3 Scraper", "Wranglekit")
 VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
@@ -131,7 +138,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
 
 
 def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
-    url = f"{GITHUB_API}?per_page={max(1, min(per_page, 100))}"
+    url = f"{github_releases_api()}?per_page={max(1, min(per_page, 100))}"
     payload = _github_request(url)
     if not isinstance(payload, list):
         raise UpdateError("Unexpected GitHub releases response")
@@ -318,13 +325,22 @@ def install_plugin_zip(zip_path: Path) -> None:
     apply_fanfic_organizer_gui_names()
 
 
+def _restart_env_prefix() -> str:
+    demo_api = (os.environ.get("AO3KIT_UPDATE_API") or "").strip()
+    if not demo_api:
+        return ""
+    escaped = demo_api.replace('"', '\\"')
+    return f'AO3KIT_UPDATE_API="{escaped}" '
+
+
 def _restart_shell_command(calibre_bin: str) -> list[str]:
+    env_prefix = _restart_env_prefix()
     if sys.platform == "darwin" and Path("/Applications/calibre.app").exists():
         script = (
             f'sleep {RESTART_DELAY_S}; '
             f'"{calibre_bin}" --shutdown-running-calibre; '
             f'sleep {START_WAIT_S}; '
-            f'open -a calibre'
+            f'{env_prefix}open -a calibre'
         )
         return ["sh", "-c", script]
     if os.name == "nt":
@@ -332,14 +348,14 @@ def _restart_shell_command(calibre_bin: str) -> list[str]:
             f'timeout /t {int(RESTART_DELAY_S)} /nobreak >nul & '
             f'"{calibre_bin}" --shutdown-running-calibre & '
             f'timeout /t {int(START_WAIT_S)} /nobreak >nul & '
-            f'start "" "{calibre_bin}"'
+            f'{env_prefix}start "" "{calibre_bin}"'
         )
         return ["cmd.exe", "/c", script]
     script = (
         f'sleep {RESTART_DELAY_S}; '
         f'"{calibre_bin}" --shutdown-running-calibre; '
         f'sleep {START_WAIT_S}; '
-        f'"{calibre_bin}"'
+        f'{env_prefix}"{calibre_bin}"'
     )
     return ["sh", "-c", script]
 
