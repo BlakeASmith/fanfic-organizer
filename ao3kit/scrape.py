@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -49,6 +50,7 @@ class QualityScoreConfig:
     """Quality score settings."""
 
     min_kudos_to_score: int = 50
+    max_raw_score: float = 22.0
 
 
 def calculate_word_based_score(kudos: int, hits: int, words: int) -> float | None:
@@ -61,14 +63,14 @@ def calculate_word_based_score(kudos: int, hits: int, words: int) -> float | Non
     return (100 * kudos) / adjusted_hits
 
 
-def calculate_quality_score(
+def calculate_quality_score_raw(
     kudos: int | None,
     hits: int | None,
     words: int | None,
     *,
     config: QualityScoreConfig | None = None,
 ) -> float | None:
-    """Return raw word-adjusted quality score."""
+    """Return raw word-adjusted quality score (one decimal)."""
     config = config or QualityScoreConfig()
 
     if kudos is None or hits is None or words is None or hits == 0 or words == 0:
@@ -81,6 +83,68 @@ def calculate_quality_score(
         return None
 
     return round(raw_score * 10) / 10
+
+
+def normalize_quality_score(
+    raw_score: float,
+    *,
+    config: QualityScoreConfig | None = None,
+) -> int:
+    """Scale a raw score to 0–100 (AO3 Reading Time & Quality Score userscript)."""
+    config = config or QualityScoreConfig()
+    baseline = config.max_raw_score
+    if baseline <= 0:
+        return 100
+    normalized = (raw_score / baseline) * 100
+    return min(100, math.ceil(normalized))
+
+
+def calculate_quality_score(
+    kudos: int | None,
+    hits: int | None,
+    words: int | None,
+    *,
+    config: QualityScoreConfig | None = None,
+) -> int | None:
+    """Return normalized quality score on a 0–100 scale."""
+    raw_score = calculate_quality_score_raw(kudos, hits, words, config=config)
+    if raw_score is None:
+        return None
+    return normalize_quality_score(raw_score, config=config)
+
+
+def resolve_quality_score(
+    *,
+    kudos: int | None = None,
+    hits: int | None = None,
+    words: int | None = None,
+    quality_score: float | int | None = None,
+    quality_score_raw: float | None = None,
+    config: QualityScoreConfig | None = None,
+) -> int | None:
+    """Resolve a user-facing 0–100 score from stored fields or live stats."""
+    config = config or QualityScoreConfig()
+    if quality_score_raw is not None:
+        try:
+            raw = float(quality_score_raw)
+        except (TypeError, ValueError):
+            raw = None
+        if raw is not None:
+            if quality_score is not None:
+                try:
+                    return int(round(float(quality_score)))
+                except (TypeError, ValueError):
+                    pass
+            return normalize_quality_score(raw, config=config)
+    if quality_score is not None:
+        try:
+            stored = float(quality_score)
+        except (TypeError, ValueError):
+            stored = None
+        if stored is not None:
+            # Legacy JSONL stored the raw score in quality_score.
+            return normalize_quality_score(stored, config=config)
+    return calculate_quality_score(kudos, hits, words, config=config)
 
 
 CHAPTERS_RE = re.compile(r"^(\d+)\s*/\s*(\d+|\?)$")
@@ -323,12 +387,18 @@ class WorkMetadata:
     bookmarks: int | None = None
     hits: int | None = None
 
-    def quality_score(self, config: QualityScoreConfig | None = None) -> float | None:
+    def quality_score_raw(self, config: QualityScoreConfig | None = None) -> float | None:
+        return calculate_quality_score_raw(
+            self.kudos, self.hits, self.words, config=config
+        )
+
+    def quality_score(self, config: QualityScoreConfig | None = None) -> int | None:
         return calculate_quality_score(
             self.kudos, self.hits, self.words, config=config
         )
 
     def to_dict(self, *, score_config: QualityScoreConfig | None = None) -> dict:
+        raw = self.quality_score_raw(score_config)
         return {
             "language": self.language,
             "words": self.words,
@@ -338,6 +408,7 @@ class WorkMetadata:
             "bookmarks": self.bookmarks,
             "hits": self.hits,
             "quality_score": self.quality_score(score_config),
+            "quality_score_raw": raw,
         }
 
 
@@ -989,7 +1060,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--min-score",
         type=float,
-        help="Minimum raw quality score",
+        help="Minimum normalized quality score (0–100)",
     )
     parser.add_argument("--min-kudos", type=int)
     parser.add_argument("--min-words", type=int)
