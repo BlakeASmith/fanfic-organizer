@@ -16,6 +16,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Features
 
+- Add **Check for updates…** in the plugin menu to compare the installed build with GitHub Releases, install `fanfic-organizer.zip` (upgrade or pick an older tag), and restart Calibre after confirmation.
 - Add a curl-based installer that downloads the latest `fanfic-organizer.zip` release, installs it with `calibre-customize`, starts Calibre when it is not running, and prompts for a restart otherwise.
 - Install Calibre automatically when it is missing (Linux: official isolated installer to `~/.local/opt/calibre`; macOS: Homebrew cask; Windows: winget).
 
