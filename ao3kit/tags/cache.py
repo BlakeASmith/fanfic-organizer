@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_root ON entries(root);
+CREATE INDEX IF NOT EXISTS idx_entries_canonical ON entries(canonical);
 CREATE INDEX IF NOT EXISTS idx_entries_fetched_at ON entries(fetched_at);
 """
 
@@ -170,6 +171,7 @@ class TagCache:
         cache = cls(path=path, ttl_days=ttl_days)
         cache._open()
         cache._maybe_migrate_legacy_json()
+        cache._maybe_import_bundled_seed()
         cache.purge_expired()
         return cache
 
@@ -204,6 +206,9 @@ class TagCache:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)").fetchall()}
         if "metatags" not in cols:
             conn.execute("ALTER TABLE entries ADD COLUMN metatags TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_canonical ON entries(canonical)"
+        )
         version_row = conn.execute(
             "SELECT value FROM meta WHERE key = 'version'"
         ).fetchone()
@@ -248,6 +253,30 @@ class TagCache:
             )
             self._conn.commit()
             return
+
+    def _maybe_import_bundled_seed(self) -> None:
+        """Merge the shipped seed into the user's default XDG tag cache."""
+        if self.path is None:
+            return
+        if self.path.resolve() != default_tag_cache_path().resolve():
+            return
+        try:
+            from ao3kit.tags.seed import bundled_seed_path, import_seed_file
+        except ImportError:
+            return
+        seed_path = bundled_seed_path()
+        if seed_path is None:
+            return
+        conn = self._open()
+        count = conn.execute("SELECT COUNT(*) AS n FROM entries").fetchone()
+        merge = bool(count and int(count["n"]) > 0)
+        result = import_seed_file(self, seed_path, merge=merge)
+        if result.get("inserted", 0) > 0:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('seed_merged_from', ?)",
+                (str(seed_path),),
+            )
+            conn.commit()
 
     def _import_json_payload(self, data: dict[str, Any]) -> None:
         conn = self._open()

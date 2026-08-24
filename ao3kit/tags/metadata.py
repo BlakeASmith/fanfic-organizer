@@ -1248,6 +1248,10 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.tags.graph import main as graph_main
 
         return graph_main(argv[1:])
+    if argv and argv[0] == "seed":
+        from ao3kit.tags.seed import main as seed_main
+
+        return seed_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         description="Extract AO3 tag wrangling metadata (profiles, search, tag sets)."
@@ -1380,6 +1384,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "graph",
         help="Graph tag relationships (synonyms, metatags) from the cache",
+    )
+    sub.add_parser(
+        "seed",
+        help="Bundled tag-cache seed: build, import, or stats",
     )
 
     enrich_p = sub.add_parser(
