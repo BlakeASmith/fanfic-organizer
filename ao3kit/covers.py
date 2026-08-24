@@ -29,6 +29,7 @@ from ao3kit.config import (
     merge_cover_settings,
     parse_color_map,
 )
+from ao3kit.scrape import calculate_quality_score, resolve_quality_score
 
 OPF_NS = "http://www.idpf.org/2007/opf"
 DC_NS = "http://purl.org/dc/elements/1.1/"
@@ -372,48 +373,18 @@ def _parse_stat(html: str, label: str) -> int | None:
     return value if value >= 0 else None
 
 
-def _coerce_score(value: Any) -> float | None:
-    if value is None or value is False or value == "":
-        return None
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(str(value).replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    return number if number >= 0 else None
-
-
-def _compute_quality_score(kudos: Any, hits: Any, words: Any) -> float | None:
-    try:
-        kudos_n = int(kudos)
-        hits_n = int(hits)
-        words_n = int(words)
-    except (TypeError, ValueError):
-        return None
-    if kudos_n < 50 or hits_n <= 0 or words_n <= 0:
-        return None
-    adjusted_hits = hits_n / (max(1, words_n / 5000) ** 0.4)
-    if adjusted_hits <= 0:
-        return None
-    return round((100 * kudos_n) / adjusted_hits * 10) / 10
-
-
 def _score_from_record(
     record: dict[str, Any],
     meta: dict[str, Any],
     words: int | None,
-) -> float | None:
-    for value in (
-        meta.get("quality_score"),
-        record.get("quality_score"),
-        meta.get("quality_score_raw"),
-        record.get("quality_score_raw"),
-    ):
-        score = _coerce_score(value)
-        if score is not None:
-            return score
-    return _compute_quality_score(meta.get("kudos"), meta.get("hits"), words)
+) -> int | None:
+    return resolve_quality_score(
+        kudos=meta.get("kudos"),
+        hits=meta.get("hits"),
+        words=words if words is not None else meta.get("words"),
+        quality_score=meta.get("quality_score", record.get("quality_score")),
+        quality_score_raw=meta.get("quality_score_raw", record.get("quality_score_raw")),
+    )
 
 
 def _format_score(score: float) -> str:
@@ -472,7 +443,7 @@ def cover_info_from_epub_bytes(data: bytes) -> CoverInfo:
                     words = _parse_wordcount(html)
                     if words is not None:
                         info.wordcount = words
-                    info.score = _compute_quality_score(
+                    info.score = calculate_quality_score(
                         _parse_stat(html, "Kudos"),
                         _parse_stat(html, "Hits"),
                         words,

@@ -20,6 +20,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Bug Fixes
 
+- Show and filter AO3 quality scores on a normalized 0–100 scale (matching the Reading Time & Quality Score userscript) instead of the raw word-adjusted ratio.
 - Stop showing a spurious "Could not start background job" error when a job finishes almost instantly (for example a small offline JSONL/zip import). A clean, fast exit is now treated as success instead of a startup failure.
 
 ### Documentation

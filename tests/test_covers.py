@@ -119,6 +119,7 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
             "kudos": 1321,
             "hits": 53450,
             "quality_score": 62,
+            "quality_score_raw": 13.6,
         },
         "series": [{"series_id": "9", "name": "A Series", "url": "", "position": 2}],
         "tags": ["Teen And Up Audiences"],
@@ -141,8 +142,7 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
     assert from_file.author == "alexwlchan"
     assert "Operation Mincemeat" in from_file.fandom
     assert from_file.wordcount == 12000
-    assert from_file.score is not None
-    assert from_file.score > 0
+    assert from_file.score == 100
     merged = merge_cover_info(info, from_file)
     assert merged.title == "Record Title"
     assert merged.fandom == "Doctor Who (2005)"
@@ -266,5 +266,5 @@ def test_cover_footer_includes_wordcount():
     assert _format_footer(info, CoverSettings()) == ["344,429 words", "Score 62"]
     hidden = CoverSettings(fields=["title", "author"])
     assert _format_footer(info, hidden) == []
-    raw = CoverInfo(score=13.4)
-    assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 13.4"]
+    raw = CoverInfo(score=62)
+    assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 62"]
