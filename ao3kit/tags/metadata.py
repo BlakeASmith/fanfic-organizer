@@ -18,7 +18,7 @@ from bs4 import Tag
 from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, attach_credentials, create_session, get_text
-from ao3kit.rate import configure_min_interval
+from ao3kit.rate import ensure_rate_limits
 from ao3kit.tags.cache import (
     DEFAULT_TAG_CACHE_TTL_DAYS,
     TAG_CACHE_VERSION,
@@ -245,7 +245,6 @@ class TagResolver:
         *,
         username: str | None = None,
         password: str | None = None,
-        delay: float = 2.0,
         on_status=None,
         owns_session: bool | None = None,
         cache_path: Path | None | object = _CACHE_UNSET,
@@ -261,7 +260,6 @@ class TagResolver:
         self.session = session
         if session is not None and username and password:
             attach_credentials(session, username, password)
-        self.delay = delay
         self.on_status = on_status
         self.follow_canonical = follow_canonical
         self.persist = persist and cache_path is not None
@@ -273,8 +271,7 @@ class TagResolver:
         self._profiles: dict[str, TagProfile] = {}
         self._errors: dict[str, str] = {}
         self.stats = TagCacheStats(expired_trees=self.cache.expired_trees)
-        if delay and delay > 0:
-            configure_min_interval(delay)
+        ensure_rate_limits()
 
     def close(self) -> None:
         if self.persist:
@@ -1330,12 +1327,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Also resolve work relationship tags (from the relationships field)",
     )
     resolve_p.add_argument(
-        "--delay",
-        type=float,
-        default=2.0,
-        help="Minimum seconds between AO3 requests (app-wide; ~2s default, heavier for search/downloads)",
-    )
-    resolve_p.add_argument(
         "--verbose",
         action="store_true",
         help="Print fetch progress to stderr",
@@ -1376,7 +1367,6 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print collection assignments only (JSONL: work_id, title, collections)",
     )
-    apply_p.add_argument("--delay", type=float, default=None)
     apply_p.add_argument("--verbose", action="store_true")
     _add_cache_args(apply_p)
     apply_p.add_argument("--no-follow-canonical", action="store_true")
@@ -1412,7 +1402,6 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Rules module; default: active rules from user config",
     )
-    enrich_p.add_argument("--delay", type=float, default=None)
     enrich_p.add_argument("--verbose", action="store_true")
     _add_cache_args(enrich_p)
     enrich_p.add_argument("--no-follow-canonical", action="store_true")
@@ -1452,7 +1441,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Accepted for older plugin argv; collections no longer fetch AO3 or map tags.
     coll_p.add_argument("--rules", type=Path, help=argparse.SUPPRESS)
-    coll_p.add_argument("--delay", type=float, default=None, help=argparse.SUPPRESS)
     coll_p.add_argument("--no-follow-canonical", action="store_true", help=argparse.SUPPRESS)
     coll_p.add_argument("--no-fandoms", action="store_true", help=argparse.SUPPRESS)
     coll_p.add_argument("--no-relationships", action="store_true", help=argparse.SUPPRESS)
@@ -1520,7 +1508,6 @@ def main(argv: list[str] | None = None) -> int:
         with TagResolver(
             username=args.username,
             password=args.password,
-            delay=args.delay,
             on_status=on_status,
             cache_path=cache_path,
             follow_canonical=not args.no_follow_canonical,
@@ -1612,11 +1599,6 @@ def main(argv: list[str] | None = None) -> int:
             rules.drop_errors = user_cfg.settings.drop_errors
         rules.include_metatags = _include_metatags(args, user_cfg)
 
-        delay = (
-            args.delay
-            if args.delay is not None
-            else user_cfg.settings.request_delay
-        )
         follow_canonical = (
             False
             if args.no_follow_canonical
@@ -1628,7 +1610,6 @@ def main(argv: list[str] | None = None) -> int:
         with TagResolver(
             username=args.username,
             password=args.password,
-            delay=delay,
             on_status=on_status,
             cache_path=cache_path,
             follow_canonical=follow_canonical,
@@ -1732,11 +1713,6 @@ def main(argv: list[str] | None = None) -> int:
             rules.drop_errors = user_cfg.settings.drop_errors
         rules.include_metatags = _include_metatags(args, user_cfg)
 
-        delay = (
-            args.delay
-            if args.delay is not None
-            else user_cfg.settings.request_delay
-        )
         follow_canonical = (
             False
             if args.no_follow_canonical
@@ -1756,7 +1732,6 @@ def main(argv: list[str] | None = None) -> int:
         with TagResolver(
             username=username,
             password=password,
-            delay=delay,
             on_status=on_status,
             cache_path=cache_path,
             follow_canonical=follow_canonical,

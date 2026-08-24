@@ -12,6 +12,7 @@ from ao3kit import rate as ao3_rate
 from ao3kit.rate import (
     DEFAULT_MIN_INTERVAL,
     configure_min_interval,
+    ensure_rate_limits,
     interval_for_url,
     load_robots_text,
     note_retry_after,
@@ -72,31 +73,35 @@ def test_configure_min_interval_can_lower_previous_value():
     assert configure_min_interval(2.0) == pytest.approx(2.0)
 
 
-def test_work_search_and_download_share_request_delay():
-    configure_min_interval(1.5)
+def test_work_search_and_download_share_engine_floor():
+    ao3_rate.ensure_rate_limits()
     work = interval_for_url("https://archiveofourown.org/works/1")
     listing = interval_for_url("https://archiveofourown.org/works?commit=Search")
     download = interval_for_url("https://archiveofourown.org/downloads/1/x.epub")
-    assert work == pytest.approx(1.5)
-    assert listing == pytest.approx(1.5)
-    assert download == pytest.approx(1.5)
+    assert work == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert listing == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert download == pytest.approx(DEFAULT_MIN_INTERVAL)
 
 
-def test_apply_request_delay_none_uses_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    from ao3kit.config import init_user_config
-    from ao3kit.rate import apply_request_delay
-
-    home = tmp_path / "home"
-    monkeypatch.setenv("AO3KIT_HOME", str(home))
-    cfg = init_user_config(home=home)
-    cfg.update_settings(request_delay=2.5)
-    apply_request_delay(None)
-    assert interval_for_url("https://archiveofourown.org/works/1") == pytest.approx(2.5)
+def test_ensure_rate_limits_uses_engine_floor():
+    ao3_rate._STATE.base_interval = 0.4
+    ensure_rate_limits()
+    assert interval_for_url("https://archiveofourown.org/works/1") >= DEFAULT_MIN_INTERVAL
     assert interval_for_url(
         "https://archiveofourown.org/downloads/1/x.epub"
-    ) == pytest.approx(2.5)
+    ) >= DEFAULT_MIN_INTERVAL
+
+
+def test_configure_min_interval_raises_tag_lane_with_scrape_delay():
+    ao3_rate._STATE.tag_interval = 0.4
+    configure_min_interval(1.5)
+    assert ao3_rate._STATE.tag_interval >= ao3_rate.TAG_SOFT_INTERVAL
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.TAG_SOFT_INTERVAL
+
+
+def test_interval_for_url_clamps_persisted_subfloor_tag():
+    ao3_rate._STATE.tag_interval = 0.1
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.ABSOLUTE_MIN_INTERVAL
 
 
 def test_note_request_success_speeds_tag_lane():

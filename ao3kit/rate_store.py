@@ -260,7 +260,7 @@ class SharedRateStore:
                   success_streak, crawl_delay, updated_at
                 ) VALUES (1, ?, ?, ?, 0, NULL, ?)
                 """,
-                (now, 1.0, 0.5, now),
+                (now, 1.0, 1.0, now),
             )
         conn.commit()
         self._conn = conn

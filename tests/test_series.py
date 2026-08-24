@@ -84,7 +84,7 @@ def test_parse_series_from_work_page():
 def test_scrape_series_parses_listing(monkeypatch):
     html = (FIXTURES / "series_page.html").read_text(encoding="utf-8")
     monkeypatch.setattr("ao3kit.series.fetch_page", lambda *a, **k: html)
-    works = scrape_series("6133236", session=object(), request_delay=0)
+    works = scrape_series("6133236", session=object())
     assert [work.work_id for work in works] == ["111", "90876776"]
     assert works[0].series[0].position == 1
     assert works[1].series[0].position == 2
@@ -109,7 +109,6 @@ def test_expand_with_series_adds_missing_parts(monkeypatch):
     expanded = expand_with_series(
         [seed],
         session=object(),
-        request_delay=0,
         fetch_missing=True,
     )
     assert [work.work_id for work in expanded] == ["90876776", "111"]
@@ -193,7 +192,7 @@ def test_fill_record_dicts_preserves_cleaned(monkeypatch):
             "cleaned": {"simplified": ["Fluff"]},
         }
     ]
-    filled = fill_record_dicts(records, session=object(), request_delay=0)
+    filled = fill_record_dicts(records, session=object())
     assert filled[0]["cleaned"] == {"simplified": ["Fluff"]}
     assert filled[0]["series"][0]["series_id"] == "6133236"
     assert len(filled) == 1

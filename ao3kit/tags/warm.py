@@ -632,7 +632,6 @@ def _make_resolver(job: WarmJob, args: argparse.Namespace, on_status: StatusCall
     return TagResolver(
         username=getattr(args, "username", None),
         password=getattr(args, "password", None),
-        delay=0,
         on_status=on_status,
         cache_path=cache_path,
         follow_canonical=job.follow_canonical,

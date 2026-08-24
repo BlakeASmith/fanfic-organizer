@@ -217,9 +217,11 @@ def test_makeplugin_release_dry_run_does_not_write(
     from calibre_dev.changelog import CHANGELOG_PATH, PLUGIN_INIT
 
     _stub_release_changelog(monkeypatch, tmp_path)
+    current = read_plugin_version()
+    target = format_version(next_0x_version(current))
     before_log = CHANGELOG_PATH.read_text(encoding="utf-8")
     before_plugin = PLUGIN_INIT.read_text(encoding="utf-8")
-    assert makeplugin.main(["release", "0.27.0", "--dry-run", "--date", "2026-08-24"]) == 0
+    assert makeplugin.main(["release", target, "--dry-run", "--date", "2026-08-24"]) == 0
     out = capsys.readouterr()
     assert "New search filter." in out.out
     assert "dry-run" in out.err

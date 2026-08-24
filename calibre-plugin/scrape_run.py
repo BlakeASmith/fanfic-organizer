@@ -143,9 +143,8 @@ def merge_plugin_settings(
     """Fill login from plugin settings when the search form omitted it.
 
     ``settings`` keys: ``ao3_username``, ``ao3_password``.
-    Explicit values on ``options`` win. Request delay is left to the
-    host-wide rate limiter (do not pass ``--delay``). Pacing is config
-    ``request_delay`` (1.5s); tag profiles stay on the faster adaptive lane.
+    Explicit values on ``options`` win. Request pacing is handled entirely by the
+    host-wide rate limiter (do not pass ``--delay``).
     """
     settings = settings or {}
     merged = dict(options)

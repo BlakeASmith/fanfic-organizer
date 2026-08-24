@@ -17,7 +17,7 @@ import requests
 from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, Ao3HttpError, create_session, get, is_login_wall
-from ao3kit.rate import apply_request_delay
+from ao3kit.rate import ensure_rate_limits
 
 EPUB_DIRNAME = "epubs"
 MANIFEST_NAME = "results.jsonl"
@@ -431,7 +431,6 @@ def download_records(
     dest_dir: str | Path,
     session: requests.Session,
     *,
-    request_delay: float | None = None,
     skip_existing: bool = True,
     make_zip: bool = True,
     zip_path: str | Path | None = None,
@@ -443,7 +442,7 @@ def download_records(
 ) -> DownloadReport:
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     report = DownloadReport()
     total = len(records)
     manifest_path = dest / MANIFEST_NAME
@@ -489,7 +488,6 @@ def download_records(
 
         enriched = enrich_records(
             [item.record for item in report.outcomes],
-            delay=request_delay,
             on_status=on_status,
         )
         for outcome, record in zip(report.outcomes, enriched, strict=True):
@@ -506,7 +504,6 @@ def download_from_jsonl(
     dest_dir: str | Path,
     session: requests.Session,
     *,
-    request_delay: float | None = None,
     skip_existing: bool = True,
     make_zip: bool = True,
     zip_path: str | Path | None = None,
@@ -520,7 +517,6 @@ def download_from_jsonl(
         load_jsonl_records(jsonl_path),
         dest_dir,
         session,
-        request_delay=request_delay,
         skip_existing=skip_existing,
         make_zip=make_zip,
         zip_path=zip_path,
@@ -557,15 +553,6 @@ def main(argv: list[str] | None = None) -> int:
         "Pass --no-zip to skip.",
     )
     parser.add_argument("--no-zip", action="store_true", help="Do not write an import zip")
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=None,
-        help=(
-            "Seconds between AO3 requests (default: config request_delay, 1.5). "
-            "Tag profiles use a faster adaptive lane."
-        ),
-    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -619,7 +606,6 @@ def main(argv: list[str] | None = None) -> int:
         jsonl_path,
         dest_dir,
         session,
-        request_delay=args.delay,
         skip_existing=not args.force,
         make_zip=make_zip,
         zip_path=zip_path,

@@ -23,7 +23,7 @@ from ao3kit.tags.rules import (
 
 def _resolver_with(*resolved: ResolvedTag) -> TagResolver:
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
 
     def fake_resolve_one(name: str) -> ResolvedTag:
@@ -245,7 +245,7 @@ def test_match_spec_and_vs_any():
 
 def _warmed_resolver(*profiles):
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     for profile in profiles:
         resolver.warm(profile)

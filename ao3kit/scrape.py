@@ -25,7 +25,7 @@ from ao3kit.http import (
     create_session,
     get_text,
 )
-from ao3kit.rate import apply_request_delay
+from ao3kit.rate import ensure_rate_limits
 
 RESULT_COUNT_RE = re.compile(
     r"(?P<start>\d+)\s*-\s*(?P<end>\d+)\s+of\s+(?P<total>[\d,]+)\s+Works?",
@@ -810,7 +810,6 @@ def scrape_search(
     min_kudos: int | None = None,
     min_words: int | None = None,
     complete_only: bool = False,
-    request_delay: float | None = None,
     start_page: int = 1,
     score_config: QualityScoreConfig | None = None,
     session: requests.Session | None = None,
@@ -818,7 +817,7 @@ def scrape_search(
     on_work: Callable[[WorkRecord], None] | None = None,
 ) -> list[WorkRecord]:
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     matched: list[WorkRecord] = []
     page = start_page
 
@@ -888,7 +887,6 @@ def download_scraped_works(
     session: requests.Session,
     *,
     score_config: QualityScoreConfig | None = None,
-    request_delay: float | None = None,
     make_zip: bool = False,
     zip_path: str | Path | None = None,
     simplify_tags: bool = False,
@@ -927,7 +925,6 @@ def download_scraped_works(
         records,
         dest,
         session,
-        request_delay=request_delay,
         skip_existing=True,
         make_zip=make_zip,
         zip_path=resolved_zip,
@@ -1074,15 +1071,6 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=50,
         help="Minimum kudos required to compute a quality score (default: 50)",
-    )
-    parser.add_argument(
-        "--delay",
-        type=float,
-        default=None,
-        help=(
-            "Seconds between AO3 requests (default: config request_delay, 1.5). "
-            "Tag profiles use a faster adaptive lane."
-        ),
     )
     parser.add_argument("--username", help="AO3 username (or set AO3_USERNAME)")
     parser.add_argument("--password", help="AO3 password (or set AO3_PASSWORD)")
@@ -1265,7 +1253,6 @@ def main(argv: list[str] | None = None) -> int:
         records = fill_record_dicts(
             seed_records,
             session=session,
-            request_delay=args.delay,
             on_status=on_status,
             score_config=score_config,
         )
@@ -1289,7 +1276,6 @@ def main(argv: list[str] | None = None) -> int:
         records = expand_record_dicts(
             seed_records,
             session=session,
-            request_delay=args.delay,
             fetch_missing=True,
             on_status=on_status,
             on_work=on_work,
@@ -1309,7 +1295,6 @@ def main(argv: list[str] | None = None) -> int:
             series_id,
             session=session,
             start_page=start_page,
-            request_delay=args.delay,
             on_page=on_page,
             on_work=on_work,
         )
@@ -1363,7 +1348,6 @@ def main(argv: list[str] | None = None) -> int:
             min_kudos=args.min_kudos,
             min_words=args.min_words,
             complete_only=args.complete_only,
-            request_delay=args.delay,
             start_page=start_page,
             score_config=score_config,
             session=session,
@@ -1378,7 +1362,6 @@ def main(argv: list[str] | None = None) -> int:
             works = expand_with_series(
                 works,
                 session=session,
-                request_delay=args.delay,
                 fetch_missing=False,
                 on_status=on_status,
                 on_work=on_work,
@@ -1406,7 +1389,6 @@ def main(argv: list[str] | None = None) -> int:
         dest,
         session,
         score_config=score_config,
-        request_delay=args.delay,
         make_zip=make_zip,
         zip_path=args.zip if make_zip else None,
         simplify_tags=bool(args.simplify),

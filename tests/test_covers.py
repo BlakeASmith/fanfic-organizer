@@ -255,8 +255,7 @@ def test_cover_settings_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_user_settings_cover_defaults_when_absent():
-    settings = UserSettings.from_dict({"request_delay": 3, "nope": 1})
-    assert settings.request_delay == 3.0
+    settings = UserSettings.from_dict({"nope": 1})
     assert settings.cover.enabled is True
     assert settings.cover.fields == ["title", "author", "wordcount", "score"]
 

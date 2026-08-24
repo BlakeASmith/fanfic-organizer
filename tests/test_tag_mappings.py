@@ -23,7 +23,7 @@ from ao3kit.tags.rules import MapToRule, TagRulesConfig, TagRulesEngine
 
 def _resolver_with(*resolved: ResolvedTag) -> TagResolver:
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
 
     def fake_resolve_one(name: str) -> ResolvedTag:

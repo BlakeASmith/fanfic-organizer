@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Remove ``request_delay`` from ``config.yaml`` and drop CLI ``--delay`` on scrape, download, and tag commands. AO3 pacing is handled only by the host-wide adaptive rate limiter.
+
 ### Features
 
 - Add **Check for updates…** in the plugin menu to compare the installed build with GitHub Releases, install `fanfic-organizer.zip` (upgrade or pick an older tag), and restart Calibre after confirmation.
@@ -23,6 +27,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 ### Bug Fixes
 
 - Fix the curl installer download bundle so it does not import `ao3kit` (stdlib-only `plugin_install` helpers).
+- Raise the host-wide AO3 tag-lane floor from ~0.4s to 1.0s and keep tag fetches from outrunning scrape/search pacing, reducing 429 throttling during Search and tag simplify runs.
 
 ## [0.27.0] - 2026-08-24
 
