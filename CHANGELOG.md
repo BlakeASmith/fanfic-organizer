@@ -14,10 +14,14 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Remove ``request_delay`` from ``config.yaml`` and drop CLI ``--delay`` on scrape, download, and tag commands. AO3 pacing is handled only by the host-wide adaptive rate limiter.
+
 ### Bug Fixes
 
 - Raise the host-wide AO3 tag-lane floor from ~0.4s to 1.0s and keep tag fetches from outrunning scrape/search pacing, reducing 429 throttling during Search and tag simplify runs.
-- Remove user-configurable ``request_delay`` and CLI ``--delay`` flags; Search, download, and tag operations rely on the shared adaptive rate limiter only.
+
 ## [0.27.0] - 2026-08-24
 
 ### Breaking Changes
