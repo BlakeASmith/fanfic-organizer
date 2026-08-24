@@ -9,7 +9,7 @@ from ao3kit.tags.rules import CollectRule, KeepSeparateRule, TagRulesConfig, Tag
 
 def _resolver_with(*resolved: ResolvedTag) -> TagResolver:
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
 
     def fake_resolve_one(name: str) -> ResolvedTag:
@@ -226,7 +226,7 @@ def test_enrich_record_appends_fandom_metatags():
     from ao3kit.tags.metadata import TagProfile, TagRef
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         TagProfile(
@@ -403,7 +403,7 @@ def test_enrich_record_does_not_append_character_metatags_to_tags():
     from ao3kit.tags.metadata import TagProfile, TagRef
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         TagProfile(

@@ -91,8 +91,6 @@ RULES = TagRulesConfig(
 '''
 
 
-DEFAULT_REQUEST_DELAY = 1.5
-
 COVER_COLOR_SEEDS = ("fandom", "relationship", "author", "title", "work_id")
 COVER_COLOR_MODES = ("hash", "palette", "solid")
 COVER_IMAGE_FORMATS = ("png", "jpeg")
@@ -262,7 +260,6 @@ class UserSettings:
     """Serializable user preferences (config.yaml)."""
 
     version: int = 1
-    request_delay: float = DEFAULT_REQUEST_DELAY
     resolve_canonical: bool = True
     drop_unmarked: bool = False
     drop_errors: bool = False
@@ -488,18 +485,6 @@ def _read_settings(path: Path) -> UserSettings:
     if not isinstance(data, dict):
         raise ValueError(f"Invalid config file (expected mapping): {path}")
     return UserSettings.from_dict(data)
-
-
-def default_request_delay() -> float:
-    """Work-page / search / download interval from ``config.yaml``."""
-    return float(load_user_config().settings.request_delay)
-
-
-def resolve_request_delay(requested: float | None) -> float:
-    """``None`` means use :func:`default_request_delay`; ``0`` is kept as-is."""
-    if requested is not None:
-        return float(requested)
-    return default_request_delay()
 
 
 def load_cover_settings(home: Path | None = None) -> CoverSettings:

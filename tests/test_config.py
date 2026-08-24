@@ -7,11 +7,9 @@ from pathlib import Path
 import pytest
 
 from ao3kit.config import (
-    DEFAULT_REQUEST_DELAY,
     UserSettings,
     init_user_config,
     load_user_config,
-    resolve_request_delay,
 )
 from ao3kit.tags.rules import load_tag_rules
 
@@ -21,8 +19,6 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
     cfg = init_user_config(home=home)
     assert cfg.config_path.is_file()
     assert (cfg.rules_dir / "default.py").is_file()
-    assert cfg.settings.request_delay == 1.5
-    assert cfg.settings.request_delay == DEFAULT_REQUEST_DELAY
     assert cfg.settings.tag_warm_interval == 10.0
     assert cfg.settings.include_metatags is True
     assert cfg.settings.cover.enabled is True
@@ -34,9 +30,8 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
 def test_update_settings_persists(tmp_path: Path):
     home = tmp_path / "home"
     cfg = init_user_config(home=home)
-    cfg.update_settings(request_delay=7.5, drop_unmarked=True, notes="hi")
+    cfg.update_settings(drop_unmarked=True, notes="hi")
     reloaded = load_user_config(home=home)
-    assert reloaded.settings.request_delay == 7.5
     assert reloaded.settings.drop_unmarked is True
     assert reloaded.settings.notes == "hi"
 
@@ -65,7 +60,7 @@ def test_reject_unsafe_rule_name(tmp_path: Path):
 
 def test_settings_from_dict_ignores_unknown():
     settings = UserSettings.from_dict({"request_delay": 3, "nope": 1})
-    assert settings.request_delay == 3.0
+    assert "request_delay" not in settings.to_dict()
     assert settings.cover.enabled is True
 
 
@@ -95,14 +90,3 @@ def test_config_set_cover_dotted_key(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert reloaded.settings.cover.width == 720
     assert reloaded.settings.cover.color_mode == "solid"
     assert reloaded.settings.cover.enabled is False
-
-
-def test_resolve_request_delay_none_uses_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    home = tmp_path / "home"
-    monkeypatch.setenv("AO3KIT_HOME", str(home))
-    cfg = init_user_config(home=home)
-    assert resolve_request_delay(None) == pytest.approx(DEFAULT_REQUEST_DELAY)
-    cfg.update_settings(request_delay=2.25)
-    assert resolve_request_delay(None) == pytest.approx(2.25)
-    assert resolve_request_delay(0) == pytest.approx(0.0)
-    assert resolve_request_delay(5) == pytest.approx(5.0)

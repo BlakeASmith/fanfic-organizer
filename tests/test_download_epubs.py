@@ -69,7 +69,6 @@ def test_download_records_keeps_manifest_if_later_work_crashes(
             ],
             tmp_path,
             session,
-            request_delay=0,
             make_zip=False,
             on_outcome=crash_after_first,
         )
@@ -95,7 +94,6 @@ def test_download_records_enriches_manifest(tmp_path: Path, monkeypatch: pytest.
         [{"work_id": "50448730", "url": "https://archiveofourown.org/works/50448730", "title": "Clandestine"}],
         tmp_path,
         session,
-        request_delay=0,
         make_zip=True,
     )
     assert report.downloaded == 1
@@ -347,7 +345,7 @@ def test_pack_and_download_from_jsonl(tmp_path: Path, monkeypatch: pytest.Monkey
         FakeResponse(content=minimal_epub_bytes()),
     )
     dest = tmp_path / "out"
-    report = download_from_jsonl(jsonl, dest, session, request_delay=0, make_zip=True)
+    report = download_from_jsonl(jsonl, dest, session, make_zip=True)
 
     assert report.downloaded == 1
     zip_path = dest / "ao3-import.zip"
@@ -461,7 +459,7 @@ def test_download_records_keeps_pending_works_in_manifest(
         )
 
     monkeypatch.setattr("ao3kit.epubs.download_record_epub", fake_download)
-    monkeypatch.setattr("ao3kit.epubs.apply_request_delay", lambda *_a, **_k: None)
+    monkeypatch.setattr("ao3kit.epubs.ensure_rate_limits", lambda: None)
     download_records(
         [
             {
@@ -477,7 +475,6 @@ def test_download_records_keeps_pending_works_in_manifest(
         ],
         tmp_path,
         object(),
-        request_delay=0,
         make_zip=False,
         simplify_tags=False,
     )

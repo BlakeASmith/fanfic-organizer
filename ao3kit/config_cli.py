@@ -498,7 +498,6 @@ def main(argv: list[str] | None = None) -> int:
             rules.include_metatags = cfg.settings.include_metatags
             use_cache = (not args.no_cache) and cfg.settings.tag_cache_enabled
             with TagResolver(
-                delay=cfg.settings.request_delay,
                 cache_path=default_tag_cache_path() if use_cache else None,
                 follow_canonical=cfg.settings.follow_canonical,
                 persist=use_cache,

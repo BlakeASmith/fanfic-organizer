@@ -11,7 +11,7 @@ same host pace together:
 
 - adaptive spacing for light paths (tag profiles) — start fast, back off on pressure
 - a short dedicated interval for login (GET form + POST)
-- work, search, and EPUB downloads share config request_delay (default 1.5s)
+- work, search, and EPUB downloads share the host-wide engine floor (default 1.0s, adaptive on pressure)
 - 429 + Retry-After pause every interface for that cooldown (not a new cruise interval)
 """
 
@@ -242,15 +242,17 @@ def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
     )
 
 
-def apply_request_delay(requested: float | None = None) -> float:
-    """Set the shared work/search/download interval from config ``request_delay``."""
-    from ao3kit.config import resolve_request_delay
-
-    return configure_min_interval(resolve_request_delay(requested))
+def ensure_rate_limits() -> float:
+    """Refresh shared work/search/download floors from the limiter engine."""
+    return configure_min_interval()
 
 
-def configure_min_interval(requested: float | None) -> float:
-    """Set the shared host-wide general interval (tag lane keeps its own pace)."""
+def configure_min_interval(requested: float | None = None) -> float:
+    """Set the shared host-wide general interval (tag lane keeps its own pace).
+
+    ``requested`` is retained for tests only; production code should call
+    :func:`ensure_rate_limits` and let the adaptive engine manage pacing.
+    """
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
         floor = _floor(snap.crawl_delay)
@@ -878,7 +880,7 @@ __all__ = [
     "USER_AGENT",
     "clear_rate_events",
     "clear_rate_hourly",
-    "apply_request_delay",
+    "ensure_rate_limits",
     "configure_min_interval",
     "current_tag_interval",
     "default_rate_db_path",

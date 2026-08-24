@@ -8,7 +8,7 @@ import requests
 from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, create_session, is_login_wall
-from ao3kit.rate import apply_request_delay
+from ao3kit.rate import ensure_rate_limits
 from ao3kit.scrape import (
     SeriesMembership,
     WorkRecord,
@@ -53,13 +53,12 @@ def scrape_series(
     *,
     session: requests.Session | None = None,
     start_page: int = 1,
-    request_delay: float | None = None,
     on_page: PageCallback | None = None,
     on_work: WorkCallback | None = None,
 ) -> list[WorkRecord]:
     """Fetch every work listed on an AO3 series page (same blurbs as search)."""
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     series_id = str(series_id).strip()
     if not series_id.isdigit():
         raise ValueError(f"Invalid AO3 series id: {series_id!r}")
@@ -168,14 +167,13 @@ def fill_record_dicts(
     records: list[dict[str, Any]],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     force: bool = False,
     on_status: StatusCallback | None = None,
     score_config=None,
 ) -> list[dict[str, Any]]:
     """Fill ``series`` on existing JSONL records without adding series-mates."""
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     paired: list[tuple[dict[str, Any], WorkRecord]] = []
     works: list[WorkRecord] = []
     for record in records:
@@ -233,7 +231,6 @@ def expand_with_series(
     works: list[WorkRecord],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     fetch_missing: bool = True,
     on_status: StatusCallback | None = None,
     on_work: WorkCallback | None = None,
@@ -245,7 +242,7 @@ def expand_with_series(
     their place at the front; new series-mates are appended in series order.
     """
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     works = [work for work in works if work.work_id]
     if fetch_missing:
         fill_series_from_work_pages(works, session, on_status=on_status)
@@ -268,7 +265,6 @@ def expand_with_series(
             series_works = scrape_series(
                 series_id,
                 session=session,
-                request_delay=request_delay,
                 on_page=on_page,
             )
         except ValueError as exc:
@@ -305,7 +301,6 @@ def expand_record_dicts(
     records: list[dict[str, Any]],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     fetch_missing: bool = True,
     on_status: StatusCallback | None = None,
     on_work: WorkCallback | None = None,
@@ -324,7 +319,6 @@ def expand_record_dicts(
     expanded = expand_with_series(
         works,
         session=session,
-        request_delay=request_delay,
         fetch_missing=fetch_missing,
         on_status=on_status,
         on_work=on_work,

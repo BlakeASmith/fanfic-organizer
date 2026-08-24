@@ -471,7 +471,6 @@ def enrich_records(
     include_fandoms: bool = True,
     include_relationships: bool = True,
     on_status: StatusCallback | None = None,
-    delay: float | None = None,
 ) -> list[dict[str, Any]]:
     """Run tag/fandom/relationship simplification using user rules + AO3 resolver.
 
@@ -488,14 +487,10 @@ def enrich_records(
         rules.include_metatags = user_cfg.settings.include_metatags
 
     if resolver is None:
-        request_delay = (
-            delay if delay is not None else user_cfg.settings.request_delay
-        )
         from ao3kit.tags.cache import default_tag_cache_path
 
         use_cache = user_cfg.settings.tag_cache_enabled
         resolver = TagResolver(
-            delay=request_delay,
             on_status=on_status,
             cache_path=default_tag_cache_path() if use_cache else None,
             follow_canonical=user_cfg.settings.follow_canonical,

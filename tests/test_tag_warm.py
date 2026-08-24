@@ -257,7 +257,6 @@ def test_warm_loop_skips_unlisted_synonym_after_canonical_follow(tmp_path: Path)
     cache_path = tmp_path / "ao3_tag_cache.sqlite"
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=cache_path,
         persist=True,
