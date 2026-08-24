@@ -99,6 +99,18 @@ def test_apply_request_delay_none_uses_config(
     ) == pytest.approx(2.5)
 
 
+def test_configure_min_interval_raises_tag_lane_with_scrape_delay():
+    ao3_rate._STATE.tag_interval = 0.4
+    configure_min_interval(1.5)
+    assert ao3_rate._STATE.tag_interval >= ao3_rate.TAG_SOFT_INTERVAL
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.TAG_SOFT_INTERVAL
+
+
+def test_interval_for_url_clamps_persisted_subfloor_tag():
+    ao3_rate._STATE.tag_interval = 0.1
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.ABSOLUTE_MIN_INTERVAL
+
+
 def test_note_request_success_speeds_tag_lane():
     ao3_rate._STATE.tag_interval = 2.0
     ao3_rate._STATE.success_streak = ao3_rate.SUCCESS_STREAK_TO_SPEED_UP - 1

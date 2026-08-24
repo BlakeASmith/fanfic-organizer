@@ -36,9 +36,9 @@ from ao3kit.rate_store import (
 ROBOTS_URL = "https://archiveofourown.org/robots.txt"
 # General work-page pacing when no adaptive tag lane applies.
 DEFAULT_MIN_INTERVAL = 1.0
-ABSOLUTE_MIN_INTERVAL = 0.4
+ABSOLUTE_MIN_INTERVAL = 1.0
 # Tag profiles start here and adapt up/down based on AO3 responses.
-TAG_SOFT_INTERVAL = 0.5
+TAG_SOFT_INTERVAL = 1.0
 TAG_MAX_INTERVAL = 8.0
 # Tag 429 without Retry-After: brief pause; the tag lane already doubles.
 TAG_DEFAULT_RETRY_AFTER = 2.0
@@ -227,6 +227,21 @@ def _floor(crawl_delay: float | None) -> float:
     return floor
 
 
+def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
+    """Enforce host-wide floors and keep the tag lane from outrunning scrape/search."""
+    floor = _floor(snap.crawl_delay)
+    base = max(floor, DEFAULT_MIN_INTERVAL, float(snap.base_interval))
+    tag = max(floor, TAG_SOFT_INTERVAL, float(snap.tag_interval))
+    tag = max(tag, min(base, TAG_SOFT_INTERVAL))
+    return RateSnapshot(
+        next_allowed_at=snap.next_allowed_at,
+        base_interval=base,
+        tag_interval=tag,
+        success_streak=snap.success_streak,
+        crawl_delay=snap.crawl_delay,
+    )
+
+
 def apply_request_delay(requested: float | None = None) -> float:
     """Set the shared work/search/download interval from config ``request_delay``."""
     from ao3kit.config import resolve_request_delay
@@ -247,12 +262,14 @@ def configure_min_interval(requested: float | None) -> float:
         else:
             base = max(snap.base_interval, floor, DEFAULT_MIN_INTERVAL)
             tag = snap.tag_interval
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
-            base_interval=base,
-            tag_interval=tag,
-            success_streak=snap.success_streak,
-            crawl_delay=snap.crawl_delay,
+        return _clamp_snapshot(
+            RateSnapshot(
+                next_allowed_at=snap.next_allowed_at,
+                base_interval=base,
+                tag_interval=tag,
+                success_streak=snap.success_streak,
+                crawl_delay=snap.crawl_delay,
+            )
         )
 
     return _STATE.store.update(mutator).base_interval
@@ -626,7 +643,7 @@ def clear_rate_hourly() -> int:
 
 
 def interval_for_url(url: str) -> float:
-    snap = _STATE.store.read()
+    snap = _clamp_snapshot(_STATE.store.read())
     base = snap.base_interval
     tag = snap.tag_interval
     crawl = snap.crawl_delay
