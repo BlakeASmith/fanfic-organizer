@@ -61,6 +61,22 @@ def test_build_zip_excludes_dev_project_stamp(tmp_path: Path):
             stamp.write_text(previous, encoding="utf-8")
 
 
+def test_build_zip_survives_pre_1980_mtime(tmp_path: Path):
+    victim = makeplugin.PLUGIN_DIR / "ao3_plugin.py"
+    original_mtime = victim.stat().st_mtime
+    import os
+
+    os.utime(victim, (0, 0))
+    try:
+        dest = tmp_path / "fanfic-organizer.zip"
+        makeplugin.build_zip(dest, vendor=False)
+        with zipfile.ZipFile(dest) as zf:
+            info = zf.getinfo("ao3_plugin.py")
+        assert info.date_time == makeplugin.ZIP_ENTRY_DATE_TIME
+    finally:
+        os.utime(victim, (original_mtime, original_mtime))
+
+
 def test_plugin_version_matches_ao3kit():
     text = (
         Path(__file__).resolve().parents[1] / "calibre-plugin" / "__init__.py"

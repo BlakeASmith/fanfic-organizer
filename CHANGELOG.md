@@ -18,6 +18,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 - Rename the Calibre plugin and GitHub project to **Fanfic Organizer**. The release zip is `fanfic-organizer.zip`. Remove a leftover **Wranglekit** (or **AO3 Scraper**) plugin before loading the new zip.
 
+### Build
+
+- Build `fanfic-organizer.zip` with fixed, reproducible entry timestamps so the release zip is byte-stable and no longer fails on file trees with pre-1980 modification times (e.g. fresh CI or snapshot checkouts).
+
 ### Documentation
 
 - Add a features list and attribution section to the README.
