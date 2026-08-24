@@ -18,6 +18,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 - Rename the Calibre plugin and GitHub project to **Fanfic Organizer**. The release zip is `fanfic-organizer.zip`. Remove a leftover **Wranglekit** (or **AO3 Scraper**) plugin before loading the new zip.
 
+### Bug Fixes
+
+- Stop showing a spurious "Could not start background job" error when a job finishes almost instantly (for example a small offline JSONL/zip import). A clean, fast exit is now treated as success instead of a startup failure.
+
 ### Documentation
 
 - Add a features list and attribution section to the README.

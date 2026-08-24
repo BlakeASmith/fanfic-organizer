@@ -630,6 +630,58 @@ def test_spawn_daemon_waits_for_pid_file(tmp_path: Path):
     assert pid == 4242
 
 
+def test_spawn_daemon_fast_clean_exit_is_success(tmp_path: Path):
+    """A job that finishes with code 0 before its pid file is seen is not an error."""
+    pid_path = tmp_path / "job.pid"
+    log_path = tmp_path / "job.log"
+
+    class FinishedProc:
+        returncode = 0
+
+        def poll(self):
+            return 0
+
+        @property
+        def pid(self):
+            return 4242
+
+    pid, error = spawn_daemon(
+        ["true"],
+        log_path=log_path,
+        pid_path=pid_path,
+        popen=lambda argv, **kwargs: FinishedProc(),
+        wait_seconds=1,
+    )
+    assert error is None
+    assert pid == 4242
+
+
+def test_spawn_daemon_fast_failure_reports_error(tmp_path: Path):
+    pid_path = tmp_path / "job.pid"
+    log_path = tmp_path / "job.log"
+
+    class CrashedProc:
+        returncode = 1
+
+        def poll(self):
+            return 1
+
+        @property
+        def pid(self):
+            return 4242
+
+    pid, error = spawn_daemon(
+        ["false"],
+        log_path=log_path,
+        pid_path=pid_path,
+        popen=lambda argv, **kwargs: CrashedProc(),
+        wait_seconds=1,
+    )
+    assert pid is None
+    assert error is not None
+    assert "code 1" in error
+
+
 def test_stop_daemon_stale_pid(tmp_path: Path):
     pid_path = tmp_path / "warm.pid"
     write_pid(pid_path, 99999999)
