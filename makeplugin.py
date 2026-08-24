@@ -41,6 +41,9 @@ RELEASE_PATHS = (
     "ao3kit/__init__.py",
     "calibre-plugin/__init__.py",
 )
+# Fixed entry timestamp so the zip is reproducible and never trips the ZIP
+# format's 1980 floor (fresh CI/snapshot checkouts can leave epoch mtimes).
+ZIP_ENTRY_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
 def _purge_native_extensions(root: Path) -> None:
@@ -190,7 +193,10 @@ def build_zip(
         for path, arcname in entries:
             if arcname in written:
                 continue
-            zf.write(path, arcname=arcname)
+            info = zipfile.ZipInfo(arcname, date_time=ZIP_ENTRY_DATE_TIME)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, path.read_bytes())
             written.add(arcname)
     print(f"Wrote {dest} ({dest.stat().st_size} bytes, {len(written)} files)")
     return dest
