@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Features
+
+- Add **Check for updates…** in the plugin menu to compare the installed build with GitHub Releases, install `fanfic-organizer.zip` (upgrade or pick an older tag), and restart Calibre after confirmation.
+
 ## [0.27.0] - 2026-08-24
 
 ### Breaking Changes
