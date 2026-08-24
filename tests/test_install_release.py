@@ -142,6 +142,10 @@ def test_run_install_with_local_zip(
         lambda path, **kwargs: None,
     )
     monkeypatch.setattr(
+        "calibre_dev.install_release.ensure_calibre_customize",
+        lambda **kwargs: "/fake/calibre-customize",
+    )
+    monkeypatch.setattr(
         "calibre_dev.install_release.find_calibre",
         lambda: "/bin/calibre",
     )
