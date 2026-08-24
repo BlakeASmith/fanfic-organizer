@@ -178,6 +178,7 @@ def test_install_plugin_bundle_imports_without_ao3kit(tmp_path: Path):
         "calibre_dev/__init__.py",
         "calibre_dev/release_urls.py",
         "calibre_dev/plugin_install.py",
+        "calibre_dev/calibre_install.py",
         "calibre_dev/install_release.py",
     ):
         src = ROOT / rel

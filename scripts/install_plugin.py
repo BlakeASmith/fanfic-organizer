@@ -24,6 +24,9 @@ MODULE_URLS = {
     "calibre_dev/plugin_install.py": (
         f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/plugin_install.py"
     ),
+    "calibre_dev/calibre_install.py": (
+        f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/calibre_install.py"
+    ),
     "calibre_dev/install_release.py": (
         f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/install_release.py"
     ),

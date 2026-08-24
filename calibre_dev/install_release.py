@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from calibre_dev.calibre_install import ensure_calibre_customize
 from calibre_dev.plugin_install import (
     apply_fanfic_organizer_gui_names,
     find_calibre,
@@ -100,12 +101,23 @@ def run_install(
     zip_path: Path | None = None,
     start_if_not_running: bool = True,
     customize: str | None = None,
+    install_calibre_if_missing: bool = True,
 ) -> dict[str, object]:
     """Download (unless ``zip_path`` is set), install, and start or prompt."""
     cleanup_dir: Path | None = None
     installed_from = zip_path
     download_url = zip_url
     try:
+        customize_bin = customize
+        if customize_bin is None:
+            if install_calibre_if_missing:
+                from calibre_dev.calibre_install import try_find_calibre_tool
+
+                if try_find_calibre_tool("calibre-customize") is None:
+                    _log("Calibre not found — installing")
+            customize_bin = ensure_calibre_customize(
+                install_if_missing=install_calibre_if_missing,
+            )
         if installed_from is None:
             cleanup_dir = Path(tempfile.mkdtemp(prefix="fanfic-organizer-install-"))
             installed_from = cleanup_dir / RELEASE_ZIP_NAME
@@ -117,7 +129,7 @@ def run_install(
                 url=zip_url,
             )
         _log("Removing legacy plugins (if present)")
-        install_release_zip(installed_from, customize=customize)
+        install_release_zip(installed_from, customize=customize_bin)
         _log("Installed Fanfic Organizer")
         calibre_bin = find_calibre()
         was_running = bool(list_calibre_gui_pids())
@@ -145,6 +157,14 @@ def run_install(
         }
     except FileNotFoundError as exc:
         return {"ok": False, "error": "not_found", "message": str(exc)}
+    except RuntimeError as exc:
+        msg = str(exc)
+        code = (
+            "download_failed"
+            if msg.startswith("Could not download")
+            else "calibre_install_failed"
+        )
+        return {"ok": False, "error": code, "message": msg}
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         return {
@@ -152,8 +172,6 @@ def run_install(
             "error": "install_failed",
             "message": detail or f"calibre-customize exited {exc.returncode}",
         }
-    except RuntimeError as exc:
-        return {"ok": False, "error": "download_failed", "message": str(exc)}
     finally:
         if cleanup_dir is not None:
             shutil.rmtree(cleanup_dir, ignore_errors=True)
@@ -175,6 +193,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Install an existing fanfic-organizer.zip instead of downloading.",
     )
     parser.add_argument(
+        "--no-install-calibre",
+        action="store_true",
+        help="Do not download and install Calibre when calibre-customize is missing.",
+    )
+    parser.add_argument(
         "--no-start",
         action="store_true",
         help="Do not start Calibre when it is not already running.",
@@ -188,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         version=args.version,
         zip_path=args.zip,
         start_if_not_running=not args.no_start,
+        install_calibre_if_missing=not args.no_install_calibre,
     )
     message = str(result.get("message") or "Install finished.")
     if result.get("ok"):

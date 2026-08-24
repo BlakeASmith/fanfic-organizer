@@ -49,11 +49,13 @@ On first import into an empty library (or via plugin settings), creates and fill
 
 ## Install
 
-**One-line install** (downloads the latest GitHub release, installs into Calibre, starts Calibre if it is not already running):
+**One-line install** (downloads Calibre when it is not already installed, then grabs the latest GitHub release, installs the plugin, and starts Calibre if it is not already running):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BlakeASmith/fanfic-organizer/main/scripts/install.sh | bash
 ```
+
+Linux installs Calibre without `sudo` into `~/.local/opt/calibre`. macOS needs [Homebrew](https://brew.sh/); Windows needs [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/). Pass `--no-install-calibre` to skip that step if you manage Calibre yourself.
 
 If Calibre is already open, quit it completely and reopen so the plugin loads.
 

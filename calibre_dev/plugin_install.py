@@ -52,21 +52,11 @@ def parse_ps_line(line: str) -> tuple[int, str] | None:
 
 
 def find_calibre_tool(name: str) -> str:
-    found = shutil.which(name)
+    from calibre_dev.calibre_install import try_find_calibre_tool
+
+    found = try_find_calibre_tool(name)
     if found:
         return found
-    mac = MAC_CALIBRE_BIN / name
-    if mac.exists():
-        return str(mac)
-    if os.name == "nt":
-        candidates = [
-            Path(os.environ.get("ProgramFiles", "")) / "Calibre2" / f"{name}.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "calibre" / f"{name}.exe",
-            Path.home() / "AppData" / "Local" / "Programs" / "calibre" / f"{name}.exe",
-        ]
-        for candidate in candidates:
-            if candidate.is_file():
-                return str(candidate)
     raise FileNotFoundError(
         f"{name} not found. Install Calibre or add it to PATH."
     )

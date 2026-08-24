@@ -14,17 +14,16 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
-<<<<<<< HEAD
-## [0.27.0] - 2026-08-24
-=======
 ### Features
 
 - Add a curl-based installer that downloads the latest `fanfic-organizer.zip` release, installs it with `calibre-customize`, starts Calibre when it is not running, and prompts for a restart otherwise.
+- Install Calibre automatically when it is missing (Linux: official isolated installer to `~/.local/opt/calibre`; macOS: Homebrew cask; Windows: winget).
 
 ### Bug Fixes
 
 - Fix the curl installer download bundle so it does not import `ao3kit` (stdlib-only `plugin_install` helpers).
->>>>>>> cursor/curl-install-bc44
+
+## [0.27.0] - 2026-08-24
 
 ### Breaking Changes
 
