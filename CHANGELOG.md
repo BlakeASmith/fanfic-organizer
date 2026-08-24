@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Features
+
+- Add a curl-based installer that downloads the latest `fanfic-organizer.zip` release, installs it with `calibre-customize`, starts Calibre when it is not running, and prompts for a restart otherwise.
+
 ### Breaking Changes
 
 - Rename the Calibre plugin and GitHub project to **Fanfic Organizer**. The release zip is `fanfic-organizer.zip`. Remove a leftover **Wranglekit** (or **AO3 Scraper**) plugin before loading the new zip.
