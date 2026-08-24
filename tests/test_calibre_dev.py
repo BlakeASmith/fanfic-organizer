@@ -37,8 +37,8 @@ def test_install_writes_dev_project_stamp(tmp_path: Path, monkeypatch: pytest.Mo
     plugin_dir.mkdir()
     ctl = CalibreCtl(lock_path=tmp_path / "lock", plugin_dir=plugin_dir)
     monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
-    monkeypatch.setattr("calibre_dev.calibre._run_checked", lambda *a, **k: None)
-    monkeypatch.setattr("calibre_dev.calibre.apply_fanfic_organizer_gui_names", lambda: False)
+    monkeypatch.setattr("calibre_dev.plugin_install.run_checked", lambda *a, **k: None)
+    monkeypatch.setattr("calibre_dev.plugin_install.apply_fanfic_organizer_gui_names", lambda: False)
     ctl._install()
     data = json.loads((plugin_dir / "dev_project.json").read_text(encoding="utf-8"))
     assert Path(data["project"]) == ROOT
@@ -56,8 +56,8 @@ def test_install_removes_legacy_plugin_then_builds(
         calls.append(list(argv))
 
     monkeypatch.setattr(ctl, "_find_customize", lambda: "/fake/calibre-customize")
-    monkeypatch.setattr("calibre_dev.calibre._run_checked", fake_run)
-    monkeypatch.setattr("calibre_dev.calibre.apply_fanfic_organizer_gui_names", lambda: True)
+    monkeypatch.setattr("calibre_dev.plugin_install.run_checked", fake_run)
+    monkeypatch.setattr("calibre_dev.plugin_install.apply_fanfic_organizer_gui_names", lambda: True)
     ctl._install()
     assert calls[0] == ["/fake/calibre-customize", "-r", "AO3 Scraper"]
     assert calls[1] == ["/fake/calibre-customize", "-r", "Wranglekit"]

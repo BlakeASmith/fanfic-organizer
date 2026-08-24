@@ -2,8 +2,8 @@
 """Bootstrap for the Fanfic Organizer curl installer.
 
 From a git checkout this delegates to ``calibre_dev.install_release``. When the
-script is downloaded alone (curl pipe), it fetches the module bundle from GitHub
-and runs the same installer.
+script is downloaded alone (curl pipe), it fetches a small stdlib-only module
+bundle from GitHub and runs the same installer (no ao3kit dependency).
 """
 
 from __future__ import annotations
@@ -21,14 +21,11 @@ MODULE_URLS = {
     "calibre_dev/release_urls.py": (
         f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/release_urls.py"
     ),
+    "calibre_dev/plugin_install.py": (
+        f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/plugin_install.py"
+    ),
     "calibre_dev/install_release.py": (
         f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/install_release.py"
-    ),
-    "calibre_dev/lock.py": (
-        f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/lock.py"
-    ),
-    "calibre_dev/calibre.py": (
-        f"https://raw.githubusercontent.com/{REPO}/{REF}/calibre_dev/calibre.py"
     ),
 }
 
@@ -45,6 +42,12 @@ def _run_from_checkout() -> int | None:
 
 
 def _download_modules(dest_root: Path) -> None:
+    package_dir = dest_root / "calibre_dev"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "__init__.py").write_text(
+        '"""Curl installer bundle (stdlib-only)."""\n',
+        encoding="utf-8",
+    )
     for rel_path, url in MODULE_URLS.items():
         target = dest_root / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)

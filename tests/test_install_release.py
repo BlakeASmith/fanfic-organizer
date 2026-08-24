@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -167,6 +168,35 @@ def test_run_install_with_local_zip(
 def test_install_sh_syntax():
     script = ROOT / "scripts" / "install.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
+
+
+def test_install_plugin_bundle_imports_without_ao3kit(tmp_path: Path):
+    """Simulate the curl download bundle (no calibre.py / lock / ao3kit)."""
+    bundle = tmp_path / "bundle"
+    shutil = __import__("shutil")
+    for rel in (
+        "calibre_dev/__init__.py",
+        "calibre_dev/release_urls.py",
+        "calibre_dev/plugin_install.py",
+        "calibre_dev/install_release.py",
+    ):
+        src = ROOT / rel
+        dest = bundle / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    (bundle / "calibre_dev" / "__init__.py").write_text(
+        '"""bundle"""\n', encoding="utf-8"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, "-c", "from calibre_dev.install_release import main; raise SystemExit(main(['--help']))"],
+        cwd=bundle,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Fanfic Organizer" in result.stdout
 
 
 def test_install_plugin_from_checkout():

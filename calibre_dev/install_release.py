@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from calibre_dev.calibre import (
+from calibre_dev.plugin_install import (
     apply_fanfic_organizer_gui_names,
     find_calibre,
     find_calibre_customize,
