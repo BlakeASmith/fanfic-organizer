@@ -20,7 +20,8 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Features
 
-- Add **Check for updates…** in the plugin menu to compare the installed build with GitHub Releases, install `fanfic-organizer.zip` (upgrade or pick an older tag), and restart Calibre after confirmation.
+- Ship a bundled AO3 tag-cache seed (`ao3kit/data/tag_cache_seed.json`) with popular canonical fandom, relationship, character, and freeform synonym trees; merge into the XDG cache on first open (and add missing names later) so initial library simplify runs skip thousands of tag-profile fetches.
+- Add `python -m ao3kit tags seed` (`build`, `import`, `stats`) for maintainers to refresh the bundled seed from AO3 tag search (sorted by uses).
 - Add a curl-based installer that downloads the latest `fanfic-organizer.zip` release, installs it with `calibre-customize`, starts Calibre when it is not running, and prompts for a restart otherwise.
 - Install Calibre automatically when it is missing (Linux: official isolated installer to `~/.local/opt/calibre`; macOS: Homebrew cask; Windows: winget).
 
