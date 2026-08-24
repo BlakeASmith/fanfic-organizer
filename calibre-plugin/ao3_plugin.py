@@ -181,6 +181,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         tags.addAction('Stop tag cache', self.stop_tag_cache_warm)
 
         self.menu.addSeparator()
+        self.menu.addAction('Check for updates...', self.check_for_updates)
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
     def show_running_jobs(self):
@@ -191,6 +192,11 @@ class FanficOrganizerPlugin(InterfaceAction):
 
     def show_configuration(self):
         self.interface_action_base_plugin.do_user_config(parent=self.gui)
+
+    def check_for_updates(self):
+        from calibre_plugins.fanfic_organizer.update_ui import show_update_check
+
+        show_update_check(self.gui)
 
     def show_import_dialog(self):
         dialog = ImportJsonlDialog(self.gui)

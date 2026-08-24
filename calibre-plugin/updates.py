@@ -1,0 +1,404 @@
+# -*- coding: utf-8 -*-
+"""Check GitHub Releases for plugin updates and install fanfic-organizer.zip."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+from calibre_plugins.fanfic_organizer.runtime import (
+    PLUGIN_NAME,
+    plugin_version_string,
+    zip_has_bundled_ao3kit,
+)
+
+GITHUB_OWNER = "BlakeASmith"
+GITHUB_REPO = "fanfic-organizer"
+_DEFAULT_GITHUB_API = (
+    f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
+)
+
+
+def github_releases_api() -> str:
+    override = (os.environ.get("AO3KIT_UPDATE_API") or "").strip()
+    return override or _DEFAULT_GITHUB_API
+ZIP_ASSET_NAME = "fanfic-organizer.zip"
+LEGACY_PLUGIN_NAMES = ("AO3 Scraper", "Wranglekit")
+VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+USER_AGENT = "Fanfic-Organizer-Plugin-Updater"
+RESTART_DELAY_S = 2.0
+SHUTDOWN_WAIT_S = 20.0
+START_WAIT_S = 3.0
+
+
+class UpdateError(RuntimeError):
+    """Update check, download, or install failed."""
+
+
+@dataclass(frozen=True)
+class ReleaseInfo:
+    version: tuple[int, int, int]
+    tag: str
+    name: str
+    published_at: str
+    body: str
+    html_url: str
+    download_url: str
+    asset_size: int | None = None
+
+    @property
+    def version_text(self) -> str:
+        return plugin_version_string(self.version)
+
+
+def parse_version(value: str) -> tuple[int, int, int]:
+    match = VERSION_RE.fullmatch((value or "").strip())
+    if not match:
+        raise UpdateError(f"release tag is not X.Y.Z: {value!r}")
+    return int(match["major"]), int(match["minor"]), int(match["patch"])
+
+
+def installed_version() -> tuple[int, int, int]:
+    try:
+        from calibre_plugins.fanfic_organizer import __version__ as version
+
+        return tuple(int(part) for part in version)
+    except Exception:
+        return (0, 0, 0)
+
+
+def _github_request(url: str, *, timeout: float = 30.0) -> Any:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise UpdateError(
+            f"GitHub request failed ({exc.code}): {detail or exc.reason}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise UpdateError(f"Could not reach GitHub: {exc.reason}") from exc
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise UpdateError("GitHub returned invalid JSON") from exc
+
+
+def _pick_zip_asset(assets: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
+    for asset in assets:
+        if str(asset.get("name") or "") == ZIP_ASSET_NAME:
+            return asset
+    return None
+
+
+def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
+    if record.get("draft") or record.get("prerelease"):
+        return None
+    tag = str(record.get("tag_name") or "").strip()
+    if not tag:
+        return None
+    try:
+        version = parse_version(tag)
+    except UpdateError:
+        return None
+    asset = _pick_zip_asset(record.get("assets") or [])
+    if asset is None:
+        return None
+    download_url = str(asset.get("browser_download_url") or "").strip()
+    if not download_url:
+        return None
+    size = asset.get("size")
+    return ReleaseInfo(
+        version=version,
+        tag=tag if tag.startswith("v") else f"v{tag.lstrip('v')}",
+        name=str(record.get("name") or tag),
+        published_at=str(record.get("published_at") or ""),
+        body=str(record.get("body") or "").strip(),
+        html_url=str(record.get("html_url") or "").strip(),
+        download_url=download_url,
+        asset_size=int(size) if isinstance(size, int) else None,
+    )
+
+
+def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
+    url = f"{github_releases_api()}?per_page={max(1, min(per_page, 100))}"
+    payload = _github_request(url)
+    if not isinstance(payload, list):
+        raise UpdateError("Unexpected GitHub releases response")
+    releases: list[ReleaseInfo] = []
+    for record in payload:
+        if not isinstance(record, dict):
+            continue
+        parsed = release_from_api(record)
+        if parsed is not None:
+            releases.append(parsed)
+    releases.sort(key=lambda item: item.version, reverse=True)
+    return releases
+
+
+def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
+    ordered = sorted(releases, key=lambda item: item.version, reverse=True)
+    return ordered[0] if ordered else None
+
+
+def summarize_release_notes(body: str, *, limit: int = 4000) -> str:
+    text = (body or "").strip()
+    if not text:
+        return "No release notes."
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def download_release(url: str, dest: Path, *, timeout: float = 120.0) -> Path:
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = response.read()
+    except urllib.error.HTTPError as exc:
+        raise UpdateError(f"Download failed ({exc.code}): {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise UpdateError(f"Download failed: {exc.reason}") from exc
+    dest.write_bytes(data)
+    if not zip_has_bundled_ao3kit(dest):
+        dest.unlink(missing_ok=True)
+        raise UpdateError(f"{ZIP_ASSET_NAME} is not a bundled Fanfic Organizer plugin")
+    return dest
+
+
+def find_calibre_tool(name: str) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    mac = Path("/Applications/calibre.app/Contents/MacOS") / name
+    if mac.is_file():
+        return str(mac)
+    if os.name == "nt":
+        for folder in (
+            os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+            os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        ):
+            candidate = Path(folder) / "Calibre2" / f"{name}.exe"
+            if candidate.is_file():
+                return str(candidate)
+    raise UpdateError(f"{name} not found. Install Calibre or add it to PATH.")
+
+
+def find_calibre() -> str:
+    return find_calibre_tool("calibre")
+
+
+def find_calibre_customize() -> str:
+    return find_calibre_tool("calibre-customize")
+
+
+def calibre_config_dir() -> Path:
+    override = (os.environ.get("CALIBRE_CONFIG_DIRECTORY") or "").strip()
+    if override:
+        return Path(override)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Preferences" / "calibre"
+    if os.name == "nt":
+        appdata = (os.environ.get("APPDATA") or "").strip()
+        if appdata:
+            return Path(appdata) / "calibre"
+        return Path.home() / "AppData" / "Roaming" / "calibre"
+    xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg:
+        return Path(xdg) / "calibre"
+    return Path.home() / ".config" / "calibre"
+
+
+def _rename_legacy_plugin_value(
+    value: Any,
+    *,
+    legacy: tuple[str, ...],
+    current: str,
+) -> Any:
+    if isinstance(value, str):
+        return current if value in legacy else value
+    if isinstance(value, list):
+        out: list[Any] = []
+        seen_current = False
+        for item in value:
+            replaced = _rename_legacy_plugin_value(
+                item, legacy=legacy, current=current
+            )
+            if replaced == current:
+                if seen_current:
+                    continue
+                seen_current = True
+            out.append(replaced)
+        return out
+    if isinstance(value, dict):
+        renamed: dict[Any, Any] = {}
+        for key, item in value.items():
+            new_key = key
+            if isinstance(key, str):
+                for old in legacy:
+                    new_key = new_key.replace(old, current)
+            renamed[new_key] = _rename_legacy_plugin_value(
+                item, legacy=legacy, current=current
+            )
+        return renamed
+    return value
+
+
+def apply_fanfic_organizer_gui_names(
+    config_dir: Path | None = None,
+    *,
+    name: str = PLUGIN_NAME,
+    legacy_names: tuple[str, ...] = LEGACY_PLUGIN_NAMES,
+) -> bool:
+    path = (config_dir or calibre_config_dir()) / "gui.json"
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    updated = _rename_legacy_plugin_value(
+        data, legacy=legacy_names, current=name
+    )
+    if updated == data:
+        return False
+    path.write_text(
+        json.dumps(updated, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def remove_legacy_plugins(customize: str) -> None:
+    for name in LEGACY_PLUGIN_NAMES:
+        subprocess.run(
+            [customize, "-r", name],
+            check=False,
+            timeout=60,
+            capture_output=True,
+            text=True,
+        )
+
+
+def install_plugin_zip(zip_path: Path) -> None:
+    zip_path = Path(zip_path)
+    if not zip_path.is_file():
+        raise UpdateError(f"Plugin zip not found: {zip_path}")
+    if not zip_has_bundled_ao3kit(zip_path):
+        raise UpdateError(f"{zip_path.name} is not a bundled Fanfic Organizer plugin")
+    customize = find_calibre_customize()
+    remove_legacy_plugins(customize)
+    completed = subprocess.run(
+        [customize, "-a", str(zip_path)],
+        check=False,
+        timeout=120,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise UpdateError(
+            detail or f"calibre-customize exited {completed.returncode}"
+        )
+    apply_fanfic_organizer_gui_names()
+
+
+def _restart_env_prefix() -> str:
+    demo_api = (os.environ.get("AO3KIT_UPDATE_API") or "").strip()
+    if not demo_api:
+        return ""
+    escaped = demo_api.replace('"', '\\"')
+    return f'AO3KIT_UPDATE_API="{escaped}" '
+
+
+def _restart_shell_command(calibre_bin: str) -> list[str]:
+    env_prefix = _restart_env_prefix()
+    if sys.platform == "darwin" and Path("/Applications/calibre.app").exists():
+        script = (
+            f'sleep {RESTART_DELAY_S}; '
+            f'"{calibre_bin}" --shutdown-running-calibre; '
+            f'sleep {START_WAIT_S}; '
+            f'{env_prefix}open -a calibre'
+        )
+        return ["sh", "-c", script]
+    if os.name == "nt":
+        script = (
+            f'timeout /t {int(RESTART_DELAY_S)} /nobreak >nul & '
+            f'"{calibre_bin}" --shutdown-running-calibre & '
+            f'timeout /t {int(START_WAIT_S)} /nobreak >nul & '
+            f'{env_prefix}start "" "{calibre_bin}"'
+        )
+        return ["cmd.exe", "/c", script]
+    script = (
+        f'sleep {RESTART_DELAY_S}; '
+        f'"{calibre_bin}" --shutdown-running-calibre; '
+        f'sleep {START_WAIT_S}; '
+        f'{env_prefix}"{calibre_bin}"'
+    )
+    return ["sh", "-c", script]
+
+
+def spawn_calibre_restart() -> None:
+    calibre_bin = find_calibre()
+    kwargs: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+        flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kwargs["creationflags"] = flags
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(_restart_shell_command(calibre_bin), **kwargs)
+
+
+def download_and_install(release: ReleaseInfo) -> Path:
+    with tempfile.TemporaryDirectory(prefix="fanfic-organizer-update-") as tmp:
+        dest = Path(tmp) / ZIP_ASSET_NAME
+        download_release(release.download_url, dest)
+        install_plugin_zip(dest)
+        return dest
+
+
+def compare_to_installed(release: ReleaseInfo) -> int:
+    current = installed_version()
+    if release.version > current:
+        return 1
+    if release.version < current:
+        return -1
+    return 0
+
+
+def format_published_at(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        return text.split("T", 1)[0]
+    return text[:10]
