@@ -122,6 +122,13 @@ def graph_serve_stamp_file(project: Path | None = None) -> Path:
     return cache_dir(project) / 'tag-graph-serve.json'
 
 
+def tag_cache_file(project: Path | None = None) -> Path:
+    env = os.environ.get('AO3KIT_TAG_CACHE', '').strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    return cache_dir(project) / 'ao3_tag_cache.sqlite'
+
+
 def warm_names_file(project: Path | None = None) -> Path:
     return cache_dir(project) / 'tag_warm_names.txt'
 
@@ -189,6 +196,13 @@ def resolve_graph_serve_stamp_file(project: Path | None = None) -> Path:
     if impl is not None:
         return impl.graph_serve_stamp_file()
     return graph_serve_stamp_file(project)
+
+
+def resolve_tag_cache_file(project: Path | None = None) -> Path:
+    impl = _from_ao3kit()
+    if impl is not None:
+        return impl.tag_cache_file()
+    return tag_cache_file(project)
 
 
 def resolve_warm_names_file(project: Path | None = None) -> Path:

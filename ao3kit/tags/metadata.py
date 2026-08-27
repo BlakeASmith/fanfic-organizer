@@ -1252,6 +1252,10 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.tags.seed import main as seed_main
 
         return seed_main(argv[1:])
+    if argv and argv[0] == "suggest":
+        from ao3kit.tags.suggest import main as suggest_main
+
+        return suggest_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         description="Extract AO3 tag wrangling metadata (profiles, search, tag sets)."
@@ -1388,6 +1392,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "seed",
         help="Bundled tag-cache seed: build, import, or stats",
+    )
+    sub.add_parser(
+        "suggest",
+        help="Suggest tag names from the local cache (no AO3 fetch)",
     )
 
     enrich_p = sub.add_parser(

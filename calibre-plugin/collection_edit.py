@@ -30,6 +30,9 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, question_dialog
 
+from calibre_plugins.fanfic_organizer.tag_complete import (
+    attach_collection_match_completer,
+)
 from calibre_plugins.fanfic_organizer.collection_rules import (
     MATCH_CHOICES,
     MODE_CHOICES,
@@ -155,6 +158,7 @@ class CollectionRuleEditDialog(QDialog):
             self.match.setCurrentIndex(idx)
         self.values = QLineEdit()
         self.values.setText(_join(self._row.get('values')))
+        attach_collection_match_completer(self.values, self.match, parent)
         if_layout.addWidget(self.match)
         if_layout.addWidget(self.values, 1)
         form.addRow('When', if_row)

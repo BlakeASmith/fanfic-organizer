@@ -40,6 +40,11 @@ from calibre_plugins.fanfic_organizer.scrape_run import (
     ids_to_csv,
     scrape_search_is_usable,
 )
+from calibre_plugins.fanfic_organizer.tag_complete import (
+    attach_collection_match_completer,
+    attach_tag_completer,
+    combined_tag_extras,
+)
 
 
 def _set_combo_data(combo: QComboBox, value) -> None:
@@ -209,6 +214,10 @@ class ScrapeSearchDialog(QDialog):
         self.date_to = _form_line('YYYY-MM-DD')
         self.other_tag_names = _form_line('comma-separated tag names')
         self.excluded_tag_names = _form_line('comma-separated tag names')
+        extras = combined_tag_extras(parent)
+        attach_tag_completer(self.tag_id, extra=extras)
+        attach_tag_completer(self.other_tag_names, extra=extras, csv=True)
+        attach_tag_completer(self.excluded_tag_names, extra=extras, csv=True)
         criteria_form.addRow('Fandom / tag', self.tag_id)
         criteria_form.addRow('Search query', self.query)
         criteria_form.addRow('Sort by', self.sort_column)
@@ -1196,6 +1205,7 @@ class CollectionRulesPage(QWidget):
             self.match.addItem(label, value)
         self.match.currentIndexChanged.connect(self._sync_match_fields)
         self.values = QLineEdit()
+        attach_collection_match_completer(self.values, self.match, self._dialog)
         if_layout.addWidget(self.match)
         if_layout.addWidget(self.values, 1)
         form.addRow('When', if_row)
@@ -1609,6 +1619,8 @@ class TagMappingsDialog(QDialog):
         self.values = QLineEdit()
         self.values.setPlaceholderText('River Song')
         self.values.setToolTip('The text to look for in a tag.')
+        extras = combined_tag_extras(parent)
+        attach_tag_completer(self.values, extra=extras, csv=True)
         if_layout.addWidget(self.match)
         if_layout.addWidget(self.values, 1)
         form.addRow('When a tag', if_row)
@@ -1639,6 +1651,7 @@ class TagMappingsDialog(QDialog):
         self.map_to = QLineEdit()
         self.map_to.setPlaceholderText('new tag name')
         self.map_to.setToolTip('The name to store instead.')
+        attach_tag_completer(self.map_to, extra=extras)
         tag_layout_fields.addWidget(self.action)
         tag_layout_fields.addWidget(self.map_to, 1)
         form.addRow('With the tag itself', tag_row)
@@ -1662,6 +1675,7 @@ class TagMappingsDialog(QDialog):
         self.preview_tag.setToolTip(
             'Type a tag from a book to see the cleaned name.'
         )
+        attach_tag_completer(self.preview_tag, extra=extras)
         preview_btn = QPushButton('Try')
         preview_btn.setToolTip('Show what Simplify would do with this tag.')
         preview_btn.clicked.connect(self._preview)
