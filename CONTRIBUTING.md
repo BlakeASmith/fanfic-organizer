@@ -34,7 +34,7 @@ Restart Calibre yourself unless you are iterating on plugin UI and need the GUI 
 |---|---|
 | AO3 HTTP, login, 429s | `ao3kit/http.py`, `rate.py`, `rate_store.py` |
 | Search URL / scrape filters | `ao3kit/scrape.py` (keep plugin `scrape_run.py` sorts in sync) |
-| Tag canonical / cache | `ao3kit/tags/` |
+| Tag canonical / cache / autocomplete | `ao3kit/tags/` (`suggest.py` for local name completion) |
 | Collections / keep-rename-drop | `ao3kit/tags/collections.py`, `config.py`, plugin `collection_*.py` |
 | Jobs / logs / retry | `ao3kit/jobs.py`; plugin `job_*.py` |
 | Covers | `ao3kit/covers.py`; plugin `cover_ui.py` |

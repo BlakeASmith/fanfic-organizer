@@ -1,6 +1,7 @@
 """Tag wrangling: profiles, search, cache, canonical resolution, and rules."""
 
 from ao3kit.tags.cache import default_tag_cache_path, DEFAULT_TAG_CACHE_TTL_DAYS
+from ao3kit.tags.suggest import suggest_tag_names
 from ao3kit.tags.metadata import (
     TagCache,
     TagProfile,
@@ -47,4 +48,5 @@ __all__ = [
     "parse_tag_set_page",
     "parse_tag_sets_search_page",
     "tag_url",
+    "suggest_tag_names",
 ]

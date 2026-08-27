@@ -668,6 +668,25 @@ class TagCache:
         conn.commit()
         self.dirty = True
 
+    def suggest_names(
+        self,
+        query: str,
+        *,
+        category: str | None = None,
+        extra: Iterable[str] | None = None,
+        limit: int = 25,
+    ) -> list[str]:
+        """Rank cached tag names that contain ``query`` (no AO3 fetch)."""
+        from ao3kit.tags.suggest import suggest_from_connection
+
+        return suggest_from_connection(
+            self._open(),
+            query,
+            category=category,
+            extra=extra,
+            limit=limit,
+        )
+
     def stats_snapshot(self) -> dict[str, Any]:
         if self.path is None or self._conn is None:
             return {"entries": 0, "trees": 0, "path": None}

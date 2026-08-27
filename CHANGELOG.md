@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Features
+
+- Add tag-name autocomplete in plugin text fields (Search AO3, Collections & tag rules, and Edit collection rule) from the local tag cache and library names. Collection match fields switch between tags, fandoms, and authors.
+
 ## [0.28.0] - 2026-08-27
 
 ### Breaking Changes

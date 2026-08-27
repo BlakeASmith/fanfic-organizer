@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser(
         "tags",
-        help="Tag profiles, search, resolve, tag sets, graph, background cache",
+        help="Tag profiles, search, resolve, suggest, tag sets, graph, background cache",
     )
     sub.add_parser("download", help="Download EPUBs from JSONL results")
     sub.add_parser(
