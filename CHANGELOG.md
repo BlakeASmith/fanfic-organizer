@@ -27,6 +27,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Bug Fixes
 
+- Fix Relationships column pollution: only AO3 Relationship-category tags belong there; slash freeforms such as Hurt/Comfort and Angst stay in Tags, including when re-simplifying books that already had bad data in Relationships.
 - Fix the curl installer download bundle so it does not import `ao3kit` (stdlib-only `plugin_install` helpers).
 - Raise the host-wide AO3 tag-lane floor from ~0.4s to 1.0s and keep tag fetches from outrunning scrape/search pacing, reducing 429 throttling during Search and tag simplify runs.
 

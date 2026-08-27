@@ -215,11 +215,6 @@ def format_remapping_summary(records: list[dict[str, Any]]) -> str:
     )
 
 
-def looks_like_relationship(name: str) -> bool:
-    """AO3 romantic ships use ``/``. Platonic ``&`` is left to AO3 category."""
-    return "/" in (name or "")
-
-
 def collect_unique_tag_names(
     records: list[dict[str, Any]],
     *,
@@ -354,7 +349,9 @@ def enrich_record(
             rel_extra = engine.apply(extra_names, include_metatags=False)
         rel_items = list(rel_from_tags)
         if rel_extra is not None:
-            rel_items.extend(rel_extra.tags)
+            rel_items.extend(
+                item for item in rel_extra.tags if _is_relationship_item(item)
+            )
         rel_originals = [item.original for item in rel_from_tags] + extra_names
         if rel_items or raw_rels or rel_from_tags:
             rel_result = _ruled_result_from_items(
