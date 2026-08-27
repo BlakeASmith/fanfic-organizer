@@ -345,6 +345,17 @@ def note_request_success(url: str) -> None:
     _STATE.store.update(mutator)
 
 
+def _is_work_listing_url(url: str) -> bool:
+    path = urlparse(url).path or "/"
+    if path.startswith("/collections/") and path.endswith("/works"):
+        return True
+    if path.startswith("/users/") and (
+        path.endswith("/works") or path.endswith("/works/collected") or path.endswith("/bookmarks")
+    ):
+        return True
+    return False
+
+
 def path_is_robots_disallow(url: str) -> bool:
     """True for paths AO3 asks crawlers not to index (search listings, /downloads/).
 
@@ -393,6 +404,8 @@ def url_kind(url: str) -> str:
         return "download"
     if _is_tag_profile_url(url):
         return "tag"
+    if _is_work_listing_url(url):
+        return "search"
     if path_is_robots_disallow(url):
         return "search"
     if path.startswith("/works"):

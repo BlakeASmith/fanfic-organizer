@@ -14,6 +14,9 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Features
+
+- Import works from AO3 collection pages, user work lists, and bookmark lists by pasting the listing URL in Search AO3 (same filters as site search where AO3 exposes them; bookmark URLs keep their own query filters).
 ## [0.28.0] - 2026-08-27
 
 ### Breaking Changes
