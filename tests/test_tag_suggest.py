@@ -35,6 +35,12 @@ def _populate(cache: TagCache) -> None:
     cache.remember_alias(
         "Angst", "Angst", status="canonical", category="Additional Tags"
     )
+    cache.remember_alias(
+        "Lewis Hamilton - Driver",
+        "Lewis Hamilton - Driver",
+        status="canonical",
+        category="Character",
+    )
 
 
 def test_suggest_ranks_exact_prefix_and_contains(tmp_path: Path) -> None:
@@ -45,6 +51,7 @@ def test_suggest_ranks_exact_prefix_and_contains(tmp_path: Path) -> None:
     assert "Melody Pond" not in names[:1]
     contained = cache.suggest_names("Song")
     assert "River Song" in contained
+    assert "Lewis Hamilton - Driver" not in cache.suggest_names("River")
     exact = cache.suggest_names("Angst")
     assert exact[0] == "Angst"
     cache.close()
@@ -73,6 +80,7 @@ def test_suggest_merges_extra_names_and_escapes_like(tmp_path: Path) -> None:
     assert "River Song" in mixed
     assert "Riverdale" in mixed
     assert "Fluff" not in mixed
+    assert "Lewis Hamilton - Driver" not in mixed
     cache.remember_alias("100% Fluff", "100% Fluff", status="canonical")
     assert suggest_tag_names("100%", cache=cache) == ["100% Fluff"]
     assert suggest_tag_names("missing", cache=cache) == []

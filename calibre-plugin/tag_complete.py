@@ -41,6 +41,17 @@ def category_values(category: str | None) -> tuple[str, ...] | None:
     return (key,)
 
 
+def _boundary_contains(folded: str, query: str) -> bool:
+    start = 0
+    while True:
+        pos = folded.find(query, start)
+        if pos < 0:
+            return False
+        if pos == 0 or not folded[pos - 1].isalnum():
+            return True
+        start = pos + 1
+
+
 def rank_tuple(name: str, query: str, *, canonical: bool = False) -> tuple:
     folded = name.casefold()
     q = query.casefold().strip()
@@ -48,13 +59,20 @@ def rank_tuple(name: str, query: str, *, canonical: bool = False) -> tuple:
         bucket = 0
     elif folded.startswith(q):
         bucket = 1
-    elif f' {q}' in f' {folded}' or f'/{q}' in folded or f'({q}' in folded:
-        bucket = 2
-    elif q in folded:
-        bucket = 3
+    elif _boundary_contains(folded, q):
+        bucket = 2 if (
+            f' {q}' in f' {folded}' or f'/{q}' in folded or f'({q}' in folded
+        ) else 3
     else:
         bucket = 4
     return (bucket, 0 if canonical else 1, len(name), folded)
+
+
+def name_matches_query(name: str, query: str) -> bool:
+    q = str(query or '').strip()
+    if not q:
+        return False
+    return rank_tuple(name, q)[0] < 4
 
 
 def current_csv_token(text: str, cursor: int | None = None) -> tuple[int, int, str]:
@@ -104,20 +122,21 @@ def merge_and_rank(
         key = text.casefold()
         if not text or key in seen:
             continue
+        rank = rank_tuple(text, q, canonical=str(status) == 'canonical')
+        if rank[0] >= 4:
+            continue
         seen.add(key)
-        items.append(
-            (rank_tuple(text, q, canonical=str(status) == 'canonical'), text)
-        )
-    needle = q.casefold()
+        items.append((rank, text))
     for name in extra or []:
         text = str(name or '').strip()
         key = text.casefold()
         if not text or key in seen:
             continue
-        if needle not in key:
+        rank = rank_tuple(text, q, canonical=False)
+        if rank[0] >= 4:
             continue
         seen.add(key)
-        items.append((rank_tuple(text, q, canonical=False), text))
+        items.append((rank, text))
     items.sort(key=lambda row: row[0])
     return [name for _rank, name in items[:cap]]
 
