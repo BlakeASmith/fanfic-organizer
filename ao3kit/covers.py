@@ -496,6 +496,45 @@ def parse_color(value: str) -> tuple[int, int, int, int]:
     return tuple(int(text[i : i + 2], 16) for i in (0, 2, 4, 6))  # type: ignore[return-value]
 
 
+def relative_luminance(rgb: tuple[int, ...]) -> float:
+    def _chan(channel: int) -> float:
+        value = max(0, min(255, int(channel))) / 255.0
+        if value <= 0.04045:
+            return value / 12.92
+        return ((value + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * _chan(rgb[0]) + 0.7152 * _chan(rgb[1]) + 0.0722 * _chan(rgb[2])
+    )
+
+
+def contrast_ratio(
+    foreground: tuple[int, ...],
+    background: tuple[int, ...],
+) -> float:
+    lighter = max(relative_luminance(foreground), relative_luminance(background))
+    darker = min(relative_luminance(foreground), relative_luminance(background))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def ensure_contrast(
+    hex_color: str,
+    *,
+    against: tuple[int, int, int] = (255, 255, 255),
+    min_ratio: float = 3.5,
+) -> str:
+    """Darken ``hex_color`` until white (or ``against``) text stays readable."""
+    red, green, blue, _alpha = parse_color(hex_color)
+    target = max(1.0, float(min_ratio))
+    for _ in range(48):
+        if contrast_ratio((red, green, blue), against) >= target:
+            break
+        red = max(0, int(red * 0.91))
+        green = max(0, int(green * 0.91))
+        blue = max(0, int(blue * 0.91))
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
 def _u32(n: int) -> int:
     return n & 0xFFFFFFFF
 
@@ -619,10 +658,10 @@ def choose_colours(
             r, g, b, a = parse_color(mapped)
             bottom_rgb = tuple(max(0, int(ch * 0.55)) for ch in (r, g, b))
             bottom = f"#{bottom_rgb[0]:02x}{bottom_rgb[1]:02x}{bottom_rgb[2]:02x}"
-        return top, bottom
+        return _maybe_auto_contrast(top, bottom, settings)
     if settings.color_mode == "solid":
         color = settings.solid_color or "#2c3e6b"
-        return color, color
+        return _maybe_auto_contrast(color, color, settings)
     rand = sfc32(*cyrb128(seed or "ao3"))
     if settings.color_mode == "palette" and settings.palette:
         index = int(rand() * len(settings.palette)) % len(settings.palette)
@@ -631,15 +670,30 @@ def choose_colours(
             bottom = settings.palette[(index + 1) % len(settings.palette)]
         else:
             bottom = top
-        return top, bottom
+        return _maybe_auto_contrast(top, bottom, settings)
     hue = rand()
     span = max(0.0, settings.saturation_max - settings.saturation_min)
     saturation = settings.saturation_min + span * rand()
     r1, g1, b1 = hsl_to_rgb(hue, saturation, settings.lightness_top)
     r2, g2, b2 = hsl_to_rgb(hue, saturation, settings.lightness_bottom)
-    return (
+    top, bottom = (
         f"#{r1:02x}{g1:02x}{b1:02x}",
         f"#{r2:02x}{g2:02x}{b2:02x}",
+    )
+    return _maybe_auto_contrast(top, bottom, settings)
+
+
+def _maybe_auto_contrast(
+    top: str,
+    bottom: str,
+    settings: CoverSettings,
+) -> tuple[str, str]:
+    if not settings.auto_contrast:
+        return top, bottom
+    minimum = float(settings.contrast_min_ratio)
+    return (
+        ensure_contrast(top, min_ratio=minimum),
+        ensure_contrast(bottom, min_ratio=minimum),
     )
 
 
@@ -716,7 +770,7 @@ def _wrap_words(
     current = words[0]
     for word in words[1:]:
         candidate = current + separator + word
-        if _text_width(draw, font, candidate) < max_width:
+        if _text_width(draw, font, candidate) <= max_width:
             current = candidate
         else:
             lines.append(current)
@@ -730,18 +784,73 @@ def _split_intercaps(name: str) -> list[str]:
     return parts or [name]
 
 
+def _break_long_token(draw, font, token: str, max_width: float) -> list[str]:
+    if not token or _text_width(draw, font, token) <= max_width:
+        return [token] if token else [""]
+    chunks = re.split(r"([-–—/:|])", token)
+    pieces: list[str] = []
+    current = ""
+    for chunk in chunks:
+        if not chunk:
+            continue
+        trial = current + chunk
+        if current and _text_width(draw, font, trial) > max_width:
+            pieces.append(current)
+            current = chunk
+        else:
+            current = trial
+    if current:
+        pieces.append(current)
+    broken: list[str] = []
+    for piece in pieces or [token]:
+        if _text_width(draw, font, piece) <= max_width:
+            broken.append(piece)
+            continue
+        current = ""
+        for char in piece:
+            trial = current + char
+            if current and _text_width(draw, font, trial) > max_width:
+                broken.append(current + ("-" if current[-1:] not in "-–—/" else ""))
+                current = char
+            else:
+                current = trial
+        if current:
+            broken.append(current)
+    return broken or [token]
+
+
 def wrap_author(draw, font, author: str, max_width: float) -> tuple[list[str], str]:
     if " " in author:
-        return _wrap_words(draw, font, author.split(" "), max_width, " ")
+        tokens: list[str] = []
+        for word in author.split(" "):
+            tokens.extend(_break_long_token(draw, font, word, max_width))
+        return _wrap_words(draw, font, tokens, max_width, " ")
     if "_" in author:
-        return _wrap_words(draw, font, author.split("_"), max_width, "_")
+        return _wrap_words(
+            draw,
+            font,
+            [
+                part
+                for word in author.split("_")
+                for part in _break_long_token(draw, font, word, max_width)
+            ],
+            max_width,
+            "_",
+        )
     if re.search(r"[A-Z]", author) and re.search(r"[a-z]", author):
-        return _wrap_words(draw, font, _split_intercaps(author), max_width, "")
-    return _wrap_words(draw, font, list(author), max_width, "")
+        return _wrap_words(
+            draw, font, _split_intercaps(author), max_width, ""
+        )
+    return _wrap_words(
+        draw, font, _break_long_token(draw, font, author, max_width), max_width, ""
+    )
 
 
 def wrap_title(draw, font, title: str, max_width: float) -> list[str]:
-    lines, _sep = _wrap_words(draw, font, title.split(" ") if title else [""], max_width, " ")
+    tokens: list[str] = []
+    for word in title.split(" ") if title else [""]:
+        tokens.extend(_break_long_token(draw, font, word, max_width))
+    lines, _sep = _wrap_words(draw, font, tokens, max_width, " ")
     return lines
 
 
@@ -753,6 +862,298 @@ def _display_line(text: str, separator: str, *, last: bool) -> str:
     if not last:
         return text + "-"
     return text
+
+
+def _stroke_for_size(base_px: int, size: int, *, ref: int = 88) -> int:
+    if base_px <= 0:
+        return 0
+    return max(1, int(round(base_px * max(size, 8) / ref)))
+
+
+def _effect_extra(settings: CoverSettings, size: int) -> float:
+    extra = float(_stroke_for_size(settings.text_stroke_px, size))
+    if settings.text_shadow:
+        extra += 2.0
+    return extra
+
+
+def _font_line_height(font, fallback_size: int, leading: float) -> float:
+    try:
+        bbox = font.getbbox("Hg")
+        cap = float(bbox[3] - bbox[1])
+        descent = 0.0
+        try:
+            _ascent, raw_descent = font.getmetrics()
+            descent = max(0.0, float(raw_descent))
+        except Exception:
+            descent = cap * 0.2
+        # Cap-height plus real descenders, without the extra em-square padding
+        # that made wrapped titles look double-spaced.
+        measured = cap + descent * 0.7
+        if measured > 0:
+            return max(1.0, measured * leading)
+    except Exception:
+        pass
+    return max(1.0, float(fallback_size) * leading)
+
+
+def _limit_lines(lines: list[str], max_lines: int) -> list[str]:
+    if max_lines > 0 and len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip("…") + "…"
+    return lines
+
+
+def _block_height(line_count: int, line_height: float) -> float:
+    return max(0.0, line_count * line_height)
+
+
+@dataclass
+class CoverTextBlock:
+    kind: str
+    lines: list[str]
+    separator: str
+    size: int
+    line_height: float
+    y: float
+    fill: str
+    max_lines: int
+
+    @property
+    def bottom(self) -> float:
+        return self.y + _block_height(len(self.lines), self.line_height)
+
+
+def _scratch_draw(width: int, height: int):
+    Image, ImageDraw, _ImageFont = _require_pillow()
+    image = Image.new("RGBA", (max(1, width), max(1, height)), (0, 0, 0, 0))
+    return ImageDraw.Draw(image, "RGBA")
+
+
+def _fit_wrapped(
+    draw,
+    settings: CoverSettings,
+    text: str,
+    *,
+    start_size: int,
+    min_size: int,
+    max_width: float,
+    max_height: float,
+    max_lines: int,
+    leading: float,
+    wrap,
+    auto_fit: bool,
+) -> tuple[object, int, list[str], str, float]:
+    size = max(int(start_size), int(min_size))
+    floor = max(8, int(min_size))
+    last: tuple[object, int, list[str], str, float] | None = None
+    while size >= floor:
+        font = resolve_font(settings, size)
+        wrapped = wrap(draw, font, text, max_width)
+        if isinstance(wrapped, tuple):
+            lines, separator = wrapped
+        else:
+            lines, separator = wrapped, " "
+        line_height = _font_line_height(font, size, leading) + _effect_extra(
+            settings, size
+        )
+        last = (font, size, lines, separator, line_height)
+        fits_lines = max_lines <= 0 or len(lines) <= max_lines
+        fits_height = _block_height(len(lines), line_height) <= max_height
+        if fits_lines and fits_height:
+            return last
+        if not auto_fit:
+            break
+        size -= 2
+    font, size, lines, separator, line_height = last or (
+        resolve_font(settings, floor),
+        floor,
+        [text],
+        " ",
+        float(floor) * leading + _effect_extra(settings, floor),
+    )
+    lines = _limit_lines(lines, max_lines)
+    while (
+        auto_fit
+        and size > floor
+        and _block_height(len(lines), line_height) > max_height
+    ):
+        size -= 2
+        font = resolve_font(settings, size)
+        wrapped = wrap(draw, font, text, max_width)
+        if isinstance(wrapped, tuple):
+            lines, separator = wrapped
+        else:
+            lines, separator = wrapped, " "
+        lines = _limit_lines(lines, max_lines)
+        line_height = _font_line_height(font, size, leading) + _effect_extra(
+            settings, size
+        )
+    if _block_height(len(lines), line_height) > max_height and line_height > 1:
+        allowed = max(1, int(max_height // line_height))
+        lines = _limit_lines(lines, min(max_lines or allowed, allowed))
+    return font, size, lines, separator, line_height
+
+
+def plan_cover_layout(
+    info: CoverInfo,
+    settings: CoverSettings | None = None,
+    *,
+    draw=None,
+) -> tuple[CoverTextBlock | None, CoverTextBlock | None, CoverTextBlock | None, list[CoverTextBlock]]:
+    """Return (title, author, footer, headers) with fitted sizes and y positions."""
+    settings = settings or CoverSettings()
+    width = max(120, int(settings.width))
+    height = max(180, int(settings.height))
+    if draw is None:
+        draw = _scratch_draw(width, height)
+    max_width = width * max(0.4, min(0.95, 1 - 2 * settings.padding))
+    gap = height * float(settings.block_gap)
+    headers: list[CoverTextBlock] = []
+    header_y = height * settings.header_y
+    header_bits: list[str] = []
+    if settings.shows("fandom") and info.fandom:
+        header_bits.append(info.fandom)
+    if settings.shows("relationship") and info.relationship:
+        header_bits.append(info.relationship)
+    for block in header_bits:
+        font = resolve_font(settings, settings.header_size)
+        lines, sep = _wrap_words(draw, font, block.split(" "), max_width, " ")
+        lines = _limit_lines(lines, settings.header_max_lines)
+        line_height = _font_line_height(
+            font, settings.header_size, settings.header_leading
+        ) + _effect_extra(settings, settings.header_size)
+        headers.append(
+            CoverTextBlock(
+                kind="header",
+                lines=lines,
+                separator=sep,
+                size=settings.header_size,
+                line_height=line_height,
+                y=header_y,
+                fill=settings.header_color,
+                max_lines=settings.header_max_lines,
+            )
+        )
+        header_y += _block_height(len(lines), line_height) + 8
+
+    footer_block: CoverTextBlock | None = None
+    footer_parts = _format_footer(info, settings)
+    footer_top = height * settings.footer_y
+    if footer_parts:
+        font = resolve_font(settings, settings.footer_size)
+        block = " · ".join(footer_parts)
+        lines, sep = _wrap_words(draw, font, block.split(" "), max_width, " ")
+        lines = _limit_lines(lines, 3)
+        line_height = _font_line_height(
+            font, settings.footer_size, settings.footer_leading
+        ) + _effect_extra(settings, settings.footer_size)
+        shown = len(lines)
+        footer_top = height * settings.footer_y - _block_height(shown, line_height)
+        footer_block = CoverTextBlock(
+            kind="footer",
+            lines=lines,
+            separator=sep,
+            size=settings.footer_size,
+            line_height=line_height,
+            y=footer_top,
+            fill=settings.footer_color,
+            max_lines=3,
+        )
+
+    author_block: CoverTextBlock | None = None
+    author_top = height * settings.author_y
+    if settings.shows("author") and info.author:
+        author_ceiling = footer_top - gap if footer_block else height * 0.96
+        max_author_height = max(settings.min_author_size, author_ceiling - author_top)
+        _font, size, lines, sep, line_height = _fit_wrapped(
+            draw,
+            settings,
+            info.author,
+            start_size=settings.author_size,
+            min_size=settings.min_author_size,
+            max_width=max_width,
+            max_height=max_author_height,
+            max_lines=settings.author_max_lines,
+            leading=settings.author_leading,
+            wrap=wrap_author,
+            auto_fit=True,
+        )
+        author_block = CoverTextBlock(
+            kind="author",
+            lines=lines,
+            separator=sep,
+            size=size,
+            line_height=line_height,
+            y=author_top,
+            fill=settings.author_color,
+            max_lines=settings.author_max_lines,
+        )
+
+    title_block: CoverTextBlock | None = None
+    if settings.shows("title") and info.title:
+        title = info.title.upper() if settings.uppercase_title else info.title
+        title_top = max(height * settings.title_y, header_y + gap if headers else 0)
+        title_floor = (
+            author_block.y - gap
+            if author_block is not None
+            else (footer_top - gap if footer_block else height * 0.78)
+        )
+        max_title_height = max(settings.min_title_size, title_floor - title_top)
+        _font, size, lines, sep, line_height = _fit_wrapped(
+            draw,
+            settings,
+            title,
+            start_size=settings.title_size,
+            min_size=settings.min_title_size,
+            max_width=max_width,
+            max_height=max_title_height,
+            max_lines=settings.title_max_lines,
+            leading=settings.title_leading,
+            wrap=wrap_title,
+            auto_fit=bool(settings.auto_fit_title),
+        )
+        title_block = CoverTextBlock(
+            kind="title",
+            lines=lines,
+            separator=sep,
+            size=size,
+            line_height=line_height,
+            y=title_top,
+            fill=settings.title_color,
+            max_lines=settings.title_max_lines,
+        )
+    return title_block, author_block, footer_block, headers
+
+
+def _draw_text_line(
+    draw,
+    font,
+    text: str,
+    *,
+    xy: tuple[float, float],
+    fill: tuple[int, int, int, int],
+    stroke_width: int = 0,
+    stroke_fill: tuple[int, int, int, int] | None = None,
+    anchor: str = "ma",
+) -> None:
+    kwargs: dict[str, Any] = {"font": font, "fill": fill}
+    if stroke_width > 0 and stroke_fill is not None:
+        kwargs["stroke_width"] = int(stroke_width)
+        kwargs["stroke_fill"] = stroke_fill
+    try:
+        draw.text(xy, text, anchor=anchor, **kwargs)
+        return
+    except TypeError:
+        kwargs.pop("stroke_width", None)
+        kwargs.pop("stroke_fill", None)
+        try:
+            draw.text(xy, text, anchor=anchor, **kwargs)
+            return
+        except TypeError:
+            pass
+    tw = _text_width(draw, font, text)
+    draw.text((xy[0] - tw / 2, xy[1]), text, **kwargs)
 
 
 def _draw_lines(
@@ -767,27 +1168,35 @@ def _draw_lines(
     max_lines: int,
     separator: str = " ",
     shadow: bool = False,
+    stroke_width: int = 0,
+    stroke_fill: tuple[int, int, int, int] | None = None,
 ) -> None:
-    if max_lines > 0 and len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines[-1] = lines[-1].rstrip("…") + "…"
+    lines = _limit_lines(list(lines), max_lines)
+    x = width / 2
+    shadow_fill = (0, 0, 0, 170)
+    offset = max(2, int(stroke_width) + 1) if stroke_width else 2
     for index, line in enumerate(lines):
         shown = _display_line(line, separator, last=index == len(lines) - 1)
-        baseline = y + index * line_height
-        x = width / 2
+        top = y + index * line_height
         if shadow:
-            draw.text(
-                (x + 2, baseline + 2),
+            _draw_text_line(
+                draw,
+                font,
                 shown,
-                font=font,
-                fill=(0, 0, 0, 120),
-                anchor="ms",
+                xy=(x + offset, top + offset),
+                fill=shadow_fill,
+                stroke_width=stroke_width,
+                stroke_fill=shadow_fill,
             )
-        try:
-            draw.text((x, baseline), shown, font=font, fill=fill, anchor="ms")
-        except TypeError:
-            tw = _text_width(draw, font, shown)
-            draw.text((x - tw / 2, baseline), shown, font=font, fill=fill)
+        _draw_text_line(
+            draw,
+            font,
+            shown,
+            xy=(x, top),
+            fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
 
 
 def _format_footer(info: CoverInfo, settings: CoverSettings) -> list[str]:
@@ -803,6 +1212,22 @@ def _format_footer(info: CoverInfo, settings: CoverSettings) -> list[str]:
     if settings.shows("complete") and info.complete is not None:
         parts.append("Complete" if info.complete else "WIP")
     return parts
+
+
+def _apply_scrim(Image, image, amount: float):
+    if amount <= 0:
+        return image
+    width, height = image.size
+    amount = min(max(float(amount), 0.0), 0.8)
+    band = Image.new("L", (1, height))
+    for row in range(height):
+        t = row / max(1, height - 1)
+        edge = min(t / 0.14, (1.0 - t) / 0.12, 1.0)
+        band.putpixel((0, row), int(255 * amount * (0.4 + 0.6 * edge)))
+    alpha = band.resize((width, height))
+    black = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    black.putalpha(alpha)
+    return Image.alpha_composite(image.convert("RGBA"), black)
 
 
 def render_cover_image(
@@ -826,6 +1251,7 @@ def render_cover_image(
         image = base.convert("RGBA")
     else:
         image = Image.new("RGBA", (width, height), top)
+    image = _apply_scrim(Image, image, settings.scrim)
     draw = ImageDraw.Draw(image, "RGBA")
     if settings.border_px > 0:
         inset = max(1, int(settings.border_px))
@@ -834,88 +1260,36 @@ def render_cover_image(
             outline=parse_color(settings.border_color),
             width=inset,
         )
-    max_width = width * max(0.4, min(0.95, 1 - 2 * settings.padding))
-    title_font = resolve_font(settings, settings.title_size)
-    author_font = resolve_font(settings, settings.author_size)
-    header_font = resolve_font(settings, settings.header_size)
-    footer_font = resolve_font(settings, settings.footer_size)
+    title_block, author_block, footer_block, headers = plan_cover_layout(
+        info, settings, draw=draw
+    )
+    stroke_color = parse_color(settings.text_stroke_color)
     shadow = bool(settings.text_shadow)
 
-    header_bits: list[str] = []
-    if settings.shows("fandom") and info.fandom:
-        header_bits.append(info.fandom)
-    if settings.shows("relationship") and info.relationship:
-        header_bits.append(info.relationship)
-    header_y = height * settings.header_y
-    for block in header_bits:
-        lines, sep = _wrap_words(
-            draw, header_font, block.split(" "), max_width, " "
-        )
+    def _paint(block: CoverTextBlock | None) -> None:
+        if block is None or not block.lines:
+            return
+        font = resolve_font(settings, block.size)
         _draw_lines(
             draw,
-            header_font,
-            lines,
+            font,
+            block.lines,
             width=width,
-            y=header_y,
-            line_height=settings.header_size * 1.25,
-            fill=parse_color(settings.header_color),
-            max_lines=settings.header_max_lines,
-            separator=sep,
+            y=block.y,
+            line_height=block.line_height,
+            fill=parse_color(block.fill),
+            max_lines=block.max_lines,
+            separator=block.separator,
             shadow=shadow,
-        )
-        shown = min(len(lines), settings.header_max_lines or len(lines))
-        header_y += shown * settings.header_size * 1.25 + 8
-
-    if settings.shows("title") and info.title:
-        title = info.title.upper() if settings.uppercase_title else info.title
-        lines = wrap_title(draw, title_font, title, max_width)
-        _draw_lines(
-            draw,
-            title_font,
-            lines,
-            width=width,
-            y=height * settings.title_y,
-            line_height=settings.title_size * 1.27,
-            fill=parse_color(settings.title_color),
-            max_lines=settings.title_max_lines,
-            separator=" ",
-            shadow=shadow,
+            stroke_width=_stroke_for_size(settings.text_stroke_px, block.size),
+            stroke_fill=stroke_color,
         )
 
-    if settings.shows("author") and info.author:
-        lines, sep = wrap_author(draw, author_font, info.author, max_width)
-        _draw_lines(
-            draw,
-            author_font,
-            lines,
-            width=width,
-            y=height * settings.author_y,
-            line_height=settings.author_size * 1.24,
-            fill=parse_color(settings.author_color),
-            max_lines=settings.author_max_lines,
-            separator=sep,
-            shadow=shadow,
-        )
-
-    footer = _format_footer(info, settings)
-    if footer:
-        block = " · ".join(footer)
-        lines, sep = _wrap_words(draw, footer_font, block.split(" "), max_width, " ")
-        line_height = settings.footer_size * 1.25
-        shown = min(len(lines), 3)
-        y = height * settings.footer_y - (shown - 1) * line_height
-        _draw_lines(
-            draw,
-            footer_font,
-            lines,
-            width=width,
-            y=y,
-            line_height=line_height,
-            fill=parse_color(settings.footer_color),
-            max_lines=3,
-            separator=sep,
-            shadow=shadow,
-        )
+    for header in headers:
+        _paint(header)
+    _paint(title_block)
+    _paint(author_block)
+    _paint(footer_block)
 
     buf = io.BytesIO()
     if settings.image_format == "jpeg":
@@ -1373,6 +1747,14 @@ def maybe_stamp_downloaded_epub(
 
 def _settings_from_args(args: argparse.Namespace) -> CoverSettings:
     base = load_cover_settings()
+    if getattr(args, "settings_json", None):
+        try:
+            parsed = json.loads(args.settings_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"--settings-json: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("--settings-json must be a JSON object")
+        base = merge_cover_settings(base, **parsed)
     changes: dict[str, Any] = {
         "replace_existing": args.replace,
         "width": args.width,
@@ -1435,6 +1817,11 @@ def main(argv: list[str] | None = None) -> int:
         "--preview",
         action="store_true",
         help="Write a cover image only (no EPUB). Needs --output or --png-dir",
+    )
+    parser.add_argument(
+        "--settings-json",
+        default=None,
+        help="JSON object of CoverSettings overrides (plugin preview / scripting)",
     )
     parser.add_argument("--title", default="")
     parser.add_argument("--author", default="")

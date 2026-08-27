@@ -11,6 +11,7 @@ from PyQt5.Qt import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,6 +20,7 @@ from PyQt5.Qt import (
     QPixmap,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     Qt,
     QVBoxLayout,
@@ -55,6 +57,39 @@ COLOR_MODES = (
     ('solid', 'Solid colour'),
 )
 
+PREVIEW_SAMPLES = (
+    (
+        'short',
+        'Short title',
+        'Operation Cameo',
+        'alexwlchan',
+        'Star Wars',
+        'Rey/Ben Solo',
+        '12000',
+        '72',
+    ),
+    (
+        'long',
+        'Long title',
+        'The One Where They All Get Together in a Coffee Shop and Save the Galaxy (Again)',
+        'Jane AUs-ten',
+        'Star Wars',
+        'Rey/Ben Solo',
+        '125000',
+        '72',
+    ),
+    (
+        'very_long',
+        'Very long title',
+        'and they were roommates (oh my god they were roommates) or: a treatise on found family, time travel, and the inherent eroticism of sharing a tiny apartment',
+        'AVeryLongPenNameWithoutSpaces',
+        'Marvel Cinematic Universe',
+        '',
+        '344429',
+        '62',
+    ),
+)
+
 
 def default_cover_dict() -> dict[str, Any]:
     return {
@@ -73,8 +108,34 @@ def default_cover_dict() -> dict[str, Any]:
         'font': 'Georgia',
         'title_size': 88,
         'author_size': 62,
+        'header_size': 28,
+        'footer_size': 24,
+        'min_title_size': 32,
+        'min_author_size': 24,
+        'title_max_lines': 8,
+        'author_max_lines': 3,
+        'title_leading': 1.08,
+        'author_leading': 1.08,
+        'auto_fit_title': True,
         'uppercase_title': False,
-        'text_shadow': False,
+        'text_shadow': True,
+        'text_stroke_px': 3,
+        'text_stroke_color': '#000000',
+        'title_color': '#ffffff',
+        'author_color': '#ffffff',
+        'header_color': '#f5f5f5',
+        'footer_color': '#f5f5f5',
+        'padding': 0.125,
+        'title_y': 0.18,
+        'author_y': 0.82,
+        'header_y': 0.07,
+        'footer_y': 0.93,
+        'block_gap': 0.035,
+        'scrim': 0.22,
+        'auto_contrast': True,
+        'contrast_min_ratio': 3.5,
+        'lightness_top': 0.26,
+        'lightness_bottom': 0.11,
     }
 
 
@@ -140,11 +201,61 @@ def _combo(options: tuple[tuple[str, str], ...], current: str) -> QComboBox:
     return combo
 
 
+def _int_spin(value: Any, lo: int, hi: int, default: int) -> QSpinBox:
+    box = QSpinBox()
+    box.setRange(lo, hi)
+    try:
+        box.setValue(int(value))
+    except (TypeError, ValueError):
+        box.setValue(default)
+    return box
+
+
+def _float_spin(
+    value: Any,
+    lo: float,
+    hi: float,
+    default: float,
+    *,
+    decimals: int = 2,
+    step: float = 0.02,
+    suffix: str = '',
+) -> QDoubleSpinBox:
+    box = QDoubleSpinBox()
+    box.setRange(lo, hi)
+    box.setDecimals(decimals)
+    box.setSingleStep(step)
+    if suffix:
+        box.setSuffix(suffix)
+    try:
+        box.setValue(float(value))
+    except (TypeError, ValueError):
+        box.setValue(default)
+    return box
+
+
+def _pct_spin(value: Any, default_frac: float, *, lo: float = 0.0, hi: float = 100.0) -> QDoubleSpinBox:
+    try:
+        frac = float(value)
+    except (TypeError, ValueError):
+        frac = default_frac
+    if frac <= 1.5:
+        frac *= 100.0
+    return _float_spin(frac, lo, hi, default_frac * 100.0, decimals=1, step=1.0, suffix=' %')
+
+
+def _hex_edit(value: Any, default: str) -> QLineEdit:
+    edit = QLineEdit(str(value or default))
+    edit.setPlaceholderText(default)
+    return edit
+
+
 class CoverStyleDialog(QDialog):
     def __init__(self, parent=None, cover: dict[str, Any] | None = None):
         super().__init__(parent)
         self.setWindowTitle('Cover style')
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
+        self.resize(580, 720)
         self._cover = dict(default_cover_dict())
         if cover:
             self._cover.update(cover)
@@ -152,11 +263,19 @@ class CoverStyleDialog(QDialog):
         layout = QVBoxLayout(self)
         intro = QLabel(
             'Covers match the AO3 cover tool: title and author on a dark '
-            'gradient whose colour is stable for a fandom. Extra lines, '
-            'fonts, sizes, and colour overrides are optional.'
+            'gradient whose colour is stable for a fandom. Long titles shrink '
+            'and tighten so they stay readable. Extra lines, fonts, layout, '
+            'and contrast are optional.'
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(4, 4, 12, 4)
 
         fields_box = QGroupBox('Show on cover')
         fields_layout = QVBoxLayout(fields_box)
@@ -169,7 +288,7 @@ class CoverStyleDialog(QDialog):
             box.setChecked(key in current_fields)
             self.field_boxes[key] = box
             fields_layout.addWidget(box)
-        layout.addWidget(fields_box)
+        inner_layout.addWidget(fields_box)
 
         colour = QGroupBox('Colour')
         colour_form = QFormLayout(colour)
@@ -177,8 +296,9 @@ class CoverStyleDialog(QDialog):
         self.color_mode = _combo(COLOR_MODES, str(self._cover.get('color_mode') or 'hash'))
         self.gradient = QCheckBox('Vertical gradient')
         self.gradient.setChecked(bool(self._cover.get('gradient', True)))
-        self.solid_color = QLineEdit(str(self._cover.get('solid_color') or '#2c3e6b'))
-        self.solid_color.setPlaceholderText('#2c3e6b')
+        self.auto_contrast = QCheckBox('Auto-darken bright colours for readable white text')
+        self.auto_contrast.setChecked(bool(self._cover.get('auto_contrast', True)))
+        self.solid_color = _hex_edit(self._cover.get('solid_color'), '#2c3e6b')
         palette = self._cover.get('palette') or []
         if isinstance(palette, list):
             palette_text = ', '.join(str(item) for item in palette)
@@ -194,33 +314,33 @@ class CoverStyleDialog(QDialog):
             format_fandom_colors(self._cover.get('fandom_colors'))
         )
         self.fandom_colors.setMaximumHeight(90)
+        self.lightness_top = _pct_spin(self._cover.get('lightness_top'), 0.26, lo=4.0, hi=70.0)
+        self.lightness_bottom = _pct_spin(
+            self._cover.get('lightness_bottom'), 0.11, lo=2.0, hi=70.0
+        )
         colour_form.addRow('Colour from', self.color_seed)
         colour_form.addRow('Mode', self.color_mode)
         colour_form.addRow(self.gradient)
+        colour_form.addRow(self.auto_contrast)
         colour_form.addRow('Solid colour', self.solid_color)
         colour_form.addRow('Palette', self.palette)
         colour_form.addRow('Fandom colours', self.fandom_colors)
-        layout.addWidget(colour)
+        colour_form.addRow('Top brightness', self.lightness_top)
+        colour_form.addRow('Bottom brightness', self.lightness_bottom)
+        inner_layout.addWidget(colour)
 
         type_box = QGroupBox('Type and size')
         type_form = QFormLayout(type_box)
         self.font = QLineEdit(str(self._cover.get('font') or 'Georgia'))
-        self.width = QSpinBox()
-        self.width.setRange(200, 2400)
-        self.width.setValue(int(self._cover.get('width') or 600))
-        self.height = QSpinBox()
-        self.height.setRange(300, 3600)
-        self.height.setValue(int(self._cover.get('height') or 900))
-        self.title_size = QSpinBox()
-        self.title_size.setRange(16, 200)
-        self.title_size.setValue(int(self._cover.get('title_size') or 88))
-        self.author_size = QSpinBox()
-        self.author_size.setRange(12, 160)
-        self.author_size.setValue(int(self._cover.get('author_size') or 62))
+        self.width = _int_spin(self._cover.get('width'), 200, 2400, 600)
+        self.height = _int_spin(self._cover.get('height'), 300, 3600, 900)
+        self.title_size = _int_spin(self._cover.get('title_size'), 16, 200, 88)
+        self.author_size = _int_spin(self._cover.get('author_size'), 12, 160, 62)
+        self.header_size = _int_spin(self._cover.get('header_size'), 10, 80, 28)
+        self.footer_size = _int_spin(self._cover.get('footer_size'), 10, 80, 24)
+        self.min_title_size = _int_spin(self._cover.get('min_title_size'), 12, 120, 32)
         self.uppercase_title = QCheckBox('Uppercase title')
         self.uppercase_title.setChecked(bool(self._cover.get('uppercase_title')))
-        self.text_shadow = QCheckBox('Text shadow')
-        self.text_shadow.setChecked(bool(self._cover.get('text_shadow')))
         size_row = QWidget()
         size_layout = QHBoxLayout(size_row)
         size_layout.setContentsMargins(0, 0, 0, 0)
@@ -233,13 +353,74 @@ class CoverStyleDialog(QDialog):
         type_form.addRow('Size (px)', size_row)
         type_form.addRow('Title size', self.title_size)
         type_form.addRow('Author size', self.author_size)
+        type_form.addRow('Header size', self.header_size)
+        type_form.addRow('Footer size', self.footer_size)
+        type_form.addRow('Smallest title', self.min_title_size)
         type_form.addRow(self.uppercase_title)
-        type_form.addRow(self.text_shadow)
-        layout.addWidget(type_box)
+        inner_layout.addWidget(type_box)
+
+        layout_box = QGroupBox('Layout')
+        layout_form = QFormLayout(layout_box)
+        self.auto_fit_title = QCheckBox('Shrink long titles to fit (recommended)')
+        self.auto_fit_title.setChecked(bool(self._cover.get('auto_fit_title', True)))
+        self.padding = _pct_spin(self._cover.get('padding'), 0.125, lo=4.0, hi=30.0)
+        self.title_y = _pct_spin(self._cover.get('title_y'), 0.18)
+        self.author_y = _pct_spin(self._cover.get('author_y'), 0.82)
+        self.header_y = _pct_spin(self._cover.get('header_y'), 0.07)
+        self.footer_y = _pct_spin(self._cover.get('footer_y'), 0.93)
+        self.title_leading = _float_spin(
+            self._cover.get('title_leading'), 0.80, 1.80, 1.08, decimals=2, step=0.02
+        )
+        self.author_leading = _float_spin(
+            self._cover.get('author_leading'), 0.80, 1.80, 1.08, decimals=2, step=0.02
+        )
+        self.title_max_lines = _int_spin(self._cover.get('title_max_lines'), 1, 16, 8)
+        self.author_max_lines = _int_spin(self._cover.get('author_max_lines'), 1, 8, 3)
+        layout_form.addRow(self.auto_fit_title)
+        layout_form.addRow('Side padding', self.padding)
+        layout_form.addRow('Title position', self.title_y)
+        layout_form.addRow('Author position', self.author_y)
+        layout_form.addRow('Header position', self.header_y)
+        layout_form.addRow('Footer position', self.footer_y)
+        layout_form.addRow('Title line spacing', self.title_leading)
+        layout_form.addRow('Author line spacing', self.author_leading)
+        layout_form.addRow('Max title lines', self.title_max_lines)
+        layout_form.addRow('Max author lines', self.author_max_lines)
+        inner_layout.addWidget(layout_box)
+
+        text_box = QGroupBox('Text contrast')
+        text_form = QFormLayout(text_box)
+        self.title_color = _hex_edit(self._cover.get('title_color'), '#ffffff')
+        self.author_color = _hex_edit(self._cover.get('author_color'), '#ffffff')
+        self.header_color = _hex_edit(self._cover.get('header_color'), '#f5f5f5')
+        self.footer_color = _hex_edit(self._cover.get('footer_color'), '#f5f5f5')
+        self.text_shadow = QCheckBox('Text shadow')
+        self.text_shadow.setChecked(bool(self._cover.get('text_shadow', True)))
+        self.text_stroke_px = _int_spin(self._cover.get('text_stroke_px'), 0, 12, 3)
+        self.text_stroke_color = _hex_edit(self._cover.get('text_stroke_color'), '#000000')
+        self.scrim = _pct_spin(self._cover.get('scrim'), 0.22, lo=0.0, hi=80.0)
+        text_form.addRow('Title colour', self.title_color)
+        text_form.addRow('Author colour', self.author_color)
+        text_form.addRow('Header colour', self.header_color)
+        text_form.addRow('Footer colour', self.footer_color)
+        text_form.addRow(self.text_shadow)
+        text_form.addRow('Outline (px)', self.text_stroke_px)
+        text_form.addRow('Outline colour', self.text_stroke_color)
+        text_form.addRow('Dark overlay', self.scrim)
+        inner_layout.addWidget(text_box)
+
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
 
         preview_row = QHBoxLayout()
+        self.preview_sample = QComboBox()
+        for key, label, *_rest in PREVIEW_SAMPLES:
+            self.preview_sample.addItem(label, key)
+        self.preview_sample.setCurrentIndex(1)
         self.preview_btn = QPushButton('Preview sample…')
         self.preview_btn.clicked.connect(self.preview)
+        preview_row.addWidget(QLabel('Sample'))
+        preview_row.addWidget(self.preview_sample)
         preview_row.addWidget(self.preview_btn)
         preview_row.addStretch(1)
         layout.addLayout(preview_row)
@@ -263,16 +444,39 @@ class CoverStyleDialog(QDialog):
             'color_seed': self.color_seed.currentData(),
             'color_mode': self.color_mode.currentData(),
             'gradient': self.gradient.isChecked(),
+            'auto_contrast': self.auto_contrast.isChecked(),
             'solid_color': self.solid_color.text().strip() or '#2c3e6b',
             'palette': palette,
             'fandom_colors': parse_fandom_colors(self.fandom_colors.toPlainText()),
+            'lightness_top': self.lightness_top.value() / 100.0,
+            'lightness_bottom': self.lightness_bottom.value() / 100.0,
             'font': self.font.text().strip() or 'Georgia',
             'width': int(self.width.value()),
             'height': int(self.height.value()),
             'title_size': int(self.title_size.value()),
             'author_size': int(self.author_size.value()),
+            'header_size': int(self.header_size.value()),
+            'footer_size': int(self.footer_size.value()),
+            'min_title_size': int(self.min_title_size.value()),
             'uppercase_title': self.uppercase_title.isChecked(),
+            'auto_fit_title': self.auto_fit_title.isChecked(),
+            'padding': self.padding.value() / 100.0,
+            'title_y': self.title_y.value() / 100.0,
+            'author_y': self.author_y.value() / 100.0,
+            'header_y': self.header_y.value() / 100.0,
+            'footer_y': self.footer_y.value() / 100.0,
+            'title_leading': float(self.title_leading.value()),
+            'author_leading': float(self.author_leading.value()),
+            'title_max_lines': int(self.title_max_lines.value()),
+            'author_max_lines': int(self.author_max_lines.value()),
+            'title_color': self.title_color.text().strip() or '#ffffff',
+            'author_color': self.author_color.text().strip() or '#ffffff',
+            'header_color': self.header_color.text().strip() or '#f5f5f5',
+            'footer_color': self.footer_color.text().strip() or '#f5f5f5',
             'text_shadow': self.text_shadow.isChecked(),
+            'text_stroke_px': int(self.text_stroke_px.value()),
+            'text_stroke_color': self.text_stroke_color.text().strip() or '#000000',
+            'scrim': self.scrim.value() / 100.0,
         }
 
     def preview(self) -> None:
@@ -282,44 +486,34 @@ class CoverStyleDialog(QDialog):
         from calibre_plugins.fanfic_organizer.enrich import EnrichCancelled, run_ao3kit
 
         values = self.values()
+        sample = self.preview_sample.currentData()
+        chosen = PREVIEW_SAMPLES[1]
+        for row in PREVIEW_SAMPLES:
+            if row[0] == sample:
+                chosen = row
+                break
+        _key, _label, title, author, fandom, relationship, words, score = chosen
         tmp = Path(tempfile.mkdtemp(prefix='ao3-cover-')) / 'preview.png'
         argv = [
             'cover',
             '--preview',
             '--title',
-            'Yet Another Coffee Shop AU',
+            title,
             '--author',
-            'Jane AUs-ten',
+            author,
             '--fandom',
-            'Star Wars',
+            fandom,
             '--relationship',
-            'Rey/Ben Solo',
+            relationship,
             '--wordcount',
-            '125000',
+            words,
             '--score',
-            '72',
-            '--fields',
-            ','.join(values['fields']),
-            '--color-seed',
-            str(values['color_seed']),
-            '--color-mode',
-            str(values['color_mode']),
-            '--color',
-            str(values['solid_color']),
-            '--font',
-            str(values['font']),
-            '--width',
-            str(values['width']),
-            '--height',
-            str(values['height']),
-            '--gradient' if values['gradient'] else '--no-gradient',
-            '--uppercase-title' if values['uppercase_title'] else '--no-uppercase-title',
-            '--text-shadow' if values['text_shadow'] else '--no-text-shadow',
+            score,
+            '--settings-json',
+            json.dumps(values),
             '-o',
             str(tmp),
         ]
-        if values['palette']:
-            argv.extend(['--palette', ','.join(values['palette'])])
         try:
             code, stdout, stderr = run_ao3kit(argv)
         except EnrichCancelled:
@@ -346,7 +540,7 @@ class CoverStyleDialog(QDialog):
         dlg.setWindowTitle('Cover preview')
         box = QVBoxLayout(dlg)
         label = QLabel()
-        label.setPixmap(pix.scaledToHeight(360))
+        label.setPixmap(pix.scaledToHeight(420))
         label.setAlignment(Qt.AlignCenter)
         box.addWidget(label)
         close = QDialogButtonBox(QDialogButtonBox.Ok)

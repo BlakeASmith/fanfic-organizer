@@ -325,8 +325,8 @@ class ConfigWidget(QWidget):
         self._cover_style = dict(cover)
         style_btn = QPushButton('Cover style…')
         style_btn.setToolTip(
-            'Fields, colours, font, and size. Fandom-seeded colours stay the '
-            'same for every fic in that fandom.'
+            'Fields, colours, font, size, layout, and contrast. Fandom-seeded '
+            'colours stay the same for every fic in that fandom.'
         )
         style_btn.clicked.connect(self.edit_cover_style)
         covers_form.addRow(self.generate_covers)
@@ -336,9 +336,9 @@ class ConfigWidget(QWidget):
         covers_form.addRow(
             _hint(
                 'Default look is title + author on a dark fandom-coloured '
-                'gradient (600×900, Georgia). Click Cover style to show '
-                'fandom/relationship lines, pick a palette, or pin colours '
-                'per fandom.'
+                'gradient (600×900, Georgia). Long titles shrink to fit. '
+                'Click Cover style for layout, outline, overlay, and '
+                'per-fandom colours.'
             )
         )
         layout.addWidget(covers)
