@@ -2,7 +2,12 @@
 
 from calibre.customize import InterfaceActionBase
 
+from calibre_plugins.fanfic_organizer.plugin_version import CalibreVersion
+
 __version__ = (0, 30, 0)
+__version_display__ = "0.30.0"
+
+
 class FanficOrganizerBase(InterfaceActionBase):
     name = 'Fanfic Organizer'
     description = (
@@ -18,7 +23,7 @@ class FanficOrganizerBase(InterfaceActionBase):
     )
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Emily'
-    version = __version__
+    version = CalibreVersion(__version__, __version_display__)
     minimum_calibre_version = (5, 0, 0)
 
     actual_plugin = 'calibre_plugins.fanfic_organizer.ao3_plugin:FanficOrganizerPlugin'

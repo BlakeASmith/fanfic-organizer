@@ -1,0 +1,51 @@
+name: Preview release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# GITHUB_TOKEN pushes do not retrigger workflows. Still skip release-cut
+# commits so a laptop `just release publish` does not spawn a preview.
+jobs:
+  preview:
+    if: >
+      github.event.head_commit == null ||
+      (
+        !startsWith(github.event.head_commit.message, 'chore(release):') &&
+        !contains(github.event.head_commit.message, '[skip preview]')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compute preview version and notes
+        id: meta
+        run: |
+          python -m calibre_dev.ci preview-meta \
+            --build "${{ github.run_number }}" \
+            --sha "${{ github.sha }}" \
+            --notes-file "${{ runner.temp }}/preview-notes.md"
+      - name: Build versioned plugin zip
+        run: |
+          python makeplugin.py zip \
+            --set-version "${{ steps.meta.outputs.version }}" \
+            --output "${{ steps.meta.outputs.zip_name }}"
+      - name: Publish GitHub pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.meta.outputs.notes_file }}
+          files: ${{ steps.meta.outputs.zip_name }}
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

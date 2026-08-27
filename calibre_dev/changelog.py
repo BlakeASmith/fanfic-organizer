@@ -76,13 +76,24 @@ def next_0x_version(
     current: tuple[int, int, int],
     *,
     patch: bool = False,
+    bump: str | None = None,
 ) -> tuple[int, int, int]:
-    """Next 0.x: minor+1 (default) or patch+1. Never increments major."""
+    """Next 0.x: minor+1 (default), patch+1, or major+1. Never publishes 1.0+."""
     require_0x(current)
+    if bump is None:
+        kind = "patch" if patch else "minor"
+    else:
+        kind = bump.strip().lower()
+        if patch and kind != "patch":
+            raise ChangelogError("use either --patch or --bump, not both")
+    if kind not in {"patch", "minor", "major"}:
+        raise ChangelogError(f"bump must be patch, minor, or major, got {bump!r}")
     major, minor, patch_n = current
-    if patch:
+    if kind == "patch":
         return (major, minor, patch_n + 1)
-    return (major, minor + 1, 0)
+    if kind == "minor":
+        return (major, minor + 1, 0)
+    return require_0x((major + 1, 0, 0))
 
 
 def parse_changelog(text: str) -> tuple[str, list[ChangelogSection]]:
@@ -195,28 +206,31 @@ def read_plugin_version(path: Path = PLUGIN_INIT) -> tuple[int, int, int]:
     return nums[0], nums[1], nums[2]
 
 
-def set_plugin_version(path: Path, version: tuple[int, int, int]) -> None:
-    text = path.read_text(encoding="utf-8")
-    updated, count = PLUGIN_VERSION_RE.subn(
-        rf"\g<1>({version[0]}, {version[1]}, {version[2]})",
-        text,
-        count=1,
+def set_plugin_version(
+    path: Path,
+    version: tuple[int, int, int],
+    display: str | None = None,
+) -> None:
+    from calibre_dev.versioning import apply_version_to_plugin_init
+
+    shown = display or format_version(version)
+    path.write_text(
+        apply_version_to_plugin_init(path.read_text(encoding="utf-8"), shown),
+        encoding="utf-8",
     )
-    if count != 1:
-        raise ChangelogError(f"could not write plugin version in {path}")
-    path.write_text(updated, encoding="utf-8")
 
 
-def set_package_version(path: Path, version: tuple[int, int, int]) -> None:
-    text = path.read_text(encoding="utf-8")
-    updated, count = PACKAGE_VERSION_RE.subn(
-        rf'\g<1>"{format_version(version)}"',
-        text,
-        count=1,
+def set_package_version(
+    path: Path,
+    version: tuple[int, int, int] | str,
+) -> None:
+    from calibre_dev.versioning import apply_version_to_package_init
+
+    shown = version if isinstance(version, str) else format_version(version)
+    path.write_text(
+        apply_version_to_package_init(path.read_text(encoding="utf-8"), shown),
+        encoding="utf-8",
     )
-    if count != 1:
-        raise ChangelogError(f"could not write package version in {path}")
-    path.write_text(updated, encoding="utf-8")
 
 
 def prepare_release(

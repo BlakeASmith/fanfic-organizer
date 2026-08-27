@@ -33,6 +33,7 @@ def github_releases_api() -> str:
     override = (os.environ.get("AO3KIT_UPDATE_API") or "").strip()
     return override or _DEFAULT_GITHUB_API
 ZIP_ASSET_NAME = "fanfic-organizer.zip"
+VERSIONED_ZIP_PREFIX = "FanFicOrganizer-"
 LEGACY_PLUGIN_NAMES = ("AO3 Scraper", "Wranglekit")
 VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 USER_AGENT = "Fanfic-Organizer-Plugin-Updater"
@@ -72,9 +73,20 @@ def installed_version() -> tuple[int, int, int]:
     try:
         from calibre_plugins.fanfic_organizer import __version__ as version
 
-        return tuple(int(part) for part in version)
+        return (int(version[0]), int(version[1]), int(version[2]))
     except Exception:
         return (0, 0, 0)
+
+
+def installed_version_text() -> str:
+    try:
+        from calibre_plugins.fanfic_organizer import __version_display__ as display
+
+        if display:
+            return str(display)
+    except Exception:
+        pass
+    return plugin_version_string(installed_version())
 
 
 def _github_request(url: str, *, timeout: float = 30.0) -> Any:
@@ -101,9 +113,27 @@ def _github_request(url: str, *, timeout: float = 30.0) -> Any:
         raise UpdateError("GitHub returned invalid JSON") from exc
 
 
-def _pick_zip_asset(assets: Iterable[dict[str, Any]]) -> dict[str, Any] | None:
-    for asset in assets:
-        if str(asset.get("name") or "") == ZIP_ASSET_NAME:
+def _asset_name(asset: dict[str, Any]) -> str:
+    return str(asset.get("name") or "")
+
+
+def _pick_zip_asset(
+    assets: Iterable[dict[str, Any]],
+    *,
+    tag: str = "",
+) -> dict[str, Any] | None:
+    items = [asset for asset in assets if isinstance(asset, dict)]
+    version = tag[1:] if tag.startswith("v") else tag
+    wanted = f"{VERSIONED_ZIP_PREFIX}{version}.zip" if version else ""
+    for asset in items:
+        if wanted and _asset_name(asset) == wanted:
+            return asset
+    for asset in items:
+        if _asset_name(asset) == ZIP_ASSET_NAME:
+            return asset
+    for asset in items:
+        name = _asset_name(asset)
+        if name.startswith(VERSIONED_ZIP_PREFIX) and name.endswith(".zip"):
             return asset
     return None
 
@@ -118,7 +148,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
         version = parse_version(tag)
     except UpdateError:
         return None
-    asset = _pick_zip_asset(record.get("assets") or [])
+    asset = _pick_zip_asset(record.get("assets") or [], tag=tag)
     if asset is None:
         return None
     download_url = str(asset.get("browser_download_url") or "").strip()
