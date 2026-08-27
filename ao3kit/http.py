@@ -13,7 +13,7 @@ import requests
 from ao3kit.htmlsoup import parse_html
 
 from ao3kit.rate import (
-    TAG_DEFAULT_RETRY_AFTER,
+    get_default_retry_after,
     USER_AGENT,
     ensure_robots,
     interval_for_url,
@@ -260,7 +260,7 @@ def request(
                 response.headers.get("Retry-After")
             )
             if not from_header and url_kind(url) == "tag":
-                pause = min(pause, TAG_DEFAULT_RETRY_AFTER)
+                pause = min(pause, get_default_retry_after())
             note_retry_after(pause, url=url)
             _log_attempt(
                 url=url,

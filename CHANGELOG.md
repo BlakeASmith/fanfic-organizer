@@ -17,6 +17,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 ### Features
 
 - Add AO3 request pacing controls to Plugin settings (min request interval and tag-cache warm interval). Defaults are slightly slower (1.5s between requests) to reduce throttling.
+- Expose advanced rate-limit settings in Plugin settings: max cruise interval, tag backoff multipliers, pressure scaling, jitter, and success-streak speed-up (`rate:` in config.yaml; CLI `config set rate.<key>`).
 
 ## [0.28.0] - 2026-08-27
 

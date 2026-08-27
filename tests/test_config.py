@@ -21,11 +21,38 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
     assert (cfg.rules_dir / "default.py").is_file()
     assert cfg.settings.tag_warm_interval == 10.0
     assert cfg.settings.min_request_interval == 1.5
+    assert cfg.settings.rate.pressure_tag_multiplier == 1.5
     assert cfg.settings.include_metatags is True
     assert cfg.settings.cover.enabled is True
     assert cfg.settings.cover.fields == ["title", "author", "wordcount", "score"]
     rules = load_tag_rules(cfg.active_rules_path())
     assert rules.resolve_canonical is True
+
+
+def test_rate_limit_settings_from_dict_clamps(tmp_path: Path):
+    settings = UserSettings.from_dict(
+        {
+            "rate": {
+                "jitter": 2.0,
+                "success_speed_factor": 2.0,
+                "pressure_tag_multiplier": 0.5,
+            }
+        }
+    )
+    assert settings.rate.jitter == 0.5
+    assert settings.rate.success_speed_factor == 1.0
+    assert settings.rate.pressure_tag_multiplier == 1.0
+
+
+def test_config_set_rate_dotted_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from ao3kit.config_cli import main as config_main
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AO3KIT_HOME", str(home))
+    init_user_config(home=home)
+    assert config_main(["--home", str(home), "set", "rate.pressure_tag_multiplier", "2.5"]) == 0
+    reloaded = load_user_config(home=home)
+    assert reloaded.settings.rate.pressure_tag_multiplier == 2.5
 
 
 def test_update_settings_persists(tmp_path: Path):

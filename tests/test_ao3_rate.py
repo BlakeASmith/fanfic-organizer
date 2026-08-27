@@ -126,6 +126,32 @@ def test_note_request_success_speeds_tag_lane():
     assert ao3_rate._STATE.tag_interval < 2.0
 
 
+def test_note_request_pressure_uses_config_multipliers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    from ao3kit.config import init_user_config
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AO3KIT_HOME", str(home))
+    cfg = init_user_config(home=home)
+    cfg.update_settings(
+        min_request_interval=2.0,
+        rate={
+            "pressure_base_multiplier": 2.0,
+            "pressure_tag_multiplier": 3.0,
+            "pressure_floor": 2.0,
+            "max_interval": 90.0,
+            "tag_max_interval": 12.0,
+        },
+    )
+    ao3_rate.refresh_rate_settings_from_config()
+    ao3_rate._STATE.base_interval = 2.0
+    ao3_rate._STATE.tag_interval = 2.0
+    ao3_rate.note_request_pressure(status_code=503)
+    assert ao3_rate._STATE.base_interval == pytest.approx(4.0)
+    assert ao3_rate._STATE.tag_interval == pytest.approx(6.0)
+
+
 def test_wait_for_request_spaces_calls(monkeypatch: pytest.MonkeyPatch):
     ao3_rate._STATE.skip_wait = False
     monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
