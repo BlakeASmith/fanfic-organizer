@@ -9,6 +9,7 @@ work to manage fan-fiction and metadata cleaning etc.
 
 - [Ao3 downloader](https://github.com/nianeyna/ao3downloader)
 - [FanFicFare](https://github.com/jimmxinu/fanficfare)
+- Calibre **source** (read-only): `$HOME/src/calibre` — skill [Calibre source code read](.cursor/skills/calibre-source-code-read/SKILL.md). Never open PRs against `kovidgoyal/calibre`. The plugin must stay compatible with stock Calibre and must not use fork-only APIs.
 
 ## Project layout
 
