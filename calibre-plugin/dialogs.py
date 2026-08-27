@@ -146,6 +146,7 @@ class ScrapeSearchDialog(QDialog):
         self.resize(620, 740)
         self._use_form_criteria = False
         self._filling = False
+        self._list_path = ''
 
         outer = QVBoxLayout()
         self.setLayout(outer)
@@ -167,23 +168,25 @@ class ScrapeSearchDialog(QDialog):
             'Search AO3 like the CLI, then import matches into the '
             '<b>currently open</b> Calibre library. Uses the toolkit bundled '
             'in this plugin so host-wide rate limiting still applies.\n\n'
-            'AO3 login is in Plugin settings. Paste a search '
-            'URL, or fill the form. Click Fill from URL to preview and edit '
-            'criteria. A series URL imports every work in that series. '
-            'Switch to a new empty library first if you do not want '
-            'to write an existing collection.'
+            'AO3 login is in Plugin settings. Paste a search, collection, '
+            'user works, or series URL, or fill the form. Click Fill from URL '
+            'to preview and edit criteria. A collection home URL uses the full '
+            'works listing. Switch to a new empty library first if you do not '
+            'want to write an existing collection.'
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         url_row = QHBoxLayout()
         self.url = _form_line(
-            'https://archiveofourown.org/works?... or /series/…',
+            'https://archiveofourown.org/works?…, /collections/…, /users/…/works, or /series/…',
             prefs.get('last_scrape_url') or '',
         )
         self.url.textChanged.connect(self._on_url_changed)
         fill = QPushButton('Fill from URL')
-        fill.setToolTip('Parse the AO3 search URL into the form fields (no network scrape).')
+        fill.setToolTip(
+            'Parse the AO3 URL into the form fields (no network scrape).'
+        )
         fill.clicked.connect(self.fill_from_url)
         url_row.addWidget(self.url)
         url_row.addWidget(fill)
@@ -317,6 +320,7 @@ class ScrapeSearchDialog(QDialog):
         if self._filling:
             return
         self._use_form_criteria = False
+        self._list_path = ''
 
     def _on_criteria_edited(self, *_args) -> None:
         if self._filling:
@@ -377,6 +381,16 @@ class ScrapeSearchDialog(QDialog):
                 self.start_page.setText(str(payload.get('start_page') or 1))
             finally:
                 self._filling = False
+            self._list_path = ''
+            self._use_form_criteria = False
+            return
+        if payload.get('kind') == 'bookmarks':
+            self._filling = True
+            try:
+                self.start_page.setText(str(payload.get('start_page') or 1))
+            finally:
+                self._filling = False
+            self._list_path = str(payload.get('list_path') or '')
             self._use_form_criteria = False
             return
         criteria = payload.get('criteria') or {}
@@ -412,6 +426,7 @@ class ScrapeSearchDialog(QDialog):
             self.start_page.setText(str(payload.get('start_page') or 1))
         finally:
             self._filling = False
+        self._list_path = str(payload.get('list_path') or '')
         # Keep using the original URL until the user edits a criteria field,
         # matching scrape --parse-only URL fill.
         self._use_form_criteria = False
@@ -422,7 +437,8 @@ class ScrapeSearchDialog(QDialog):
             error_dialog(
                 self,
                 'Fanfic Organizer',
-                'Paste an AO3 search URL, a series URL, or enter a fandom/tag or query.',
+                'Paste an AO3 search, collection, user works, or series URL, '
+                'or enter a fandom/tag or query.',
                 show=True,
             )
             return
@@ -431,6 +447,7 @@ class ScrapeSearchDialog(QDialog):
     def values(self) -> dict:
         return {
             'url': self.url.text().strip(),
+            'list_path': self._list_path,
             'use_form_criteria': self._use_form_criteria,
             'tag_id': self.tag_id.text().strip(),
             'query': self.query.text().strip(),
