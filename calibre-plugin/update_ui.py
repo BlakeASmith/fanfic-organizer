@@ -21,7 +21,6 @@ from PyQt5.Qt import (
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
 from calibre_plugins.fanfic_organizer.updates import (
-    ZIP_ASSET_NAME,
     ReleaseInfo,
     UpdateError,
     compare_to_installed,
@@ -29,8 +28,8 @@ from calibre_plugins.fanfic_organizer.updates import (
     fetch_releases,
     format_published_at,
     installed_version,
+    installed_version_text,
     latest_release,
-    plugin_version_string,
     spawn_calibre_restart,
     summarize_release_notes,
 )
@@ -87,7 +86,7 @@ class UpdateCheckDialog(QDialog):
         layout.addWidget(intro)
 
         form = QFormLayout()
-        self.current_label = QLabel(plugin_version_string(installed_version()))
+        self.current_label = QLabel(installed_version_text())
         form.addRow("Installed", self.current_label)
         self.latest_label = QLabel("Checking GitHub…")
         form.addRow("Latest on GitHub", self.latest_label)
@@ -178,7 +177,7 @@ class UpdateCheckDialog(QDialog):
         if latest is None:
             self.latest_label.setText("No releases found")
             self.status.setText(
-                f"No published GitHub releases with {ZIP_ASSET_NAME} were found."
+                "No published GitHub releases with a plugin zip were found."
             )
             return
         self.latest_label.setText(latest.version_text)
@@ -186,7 +185,7 @@ class UpdateCheckDialog(QDialog):
         if latest.version > current:
             self.status.setText(
                 f"Version {latest.version_text} is available "
-                f"(you have {plugin_version_string(current)})."
+                f"(you have {installed_version_text()})."
             )
         elif latest.version == current:
             self.status.setText("You are on the latest release.")
@@ -221,7 +220,7 @@ class UpdateCheckDialog(QDialog):
         release = self._selected_release()
         if release is None:
             return
-        current = plugin_version_string(installed_version())
+        current = installed_version_text()
         direction = "upgrade" if compare_to_installed(release) > 0 else "downgrade"
         if not question_dialog(
             self,

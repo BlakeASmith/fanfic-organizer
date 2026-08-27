@@ -269,3 +269,14 @@ def test_makeplugin_release_rejects_version_with_patch():
     import makeplugin
 
     assert makeplugin.main(["release", "0.27.1", "--patch", "--dry-run"]) == 2
+
+
+def test_makeplugin_release_dry_run_bump_patch(
+    capsys, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import makeplugin
+
+    _stub_release_changelog(monkeypatch, tmp_path)
+    expected = format_version(next_0x_version(read_plugin_version(), bump="patch"))
+    assert makeplugin.main(["release", "--bump", "patch", "--dry-run", "--date", "2026-08-24"]) == 0
+    assert expected in capsys.readouterr().err

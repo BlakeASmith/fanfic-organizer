@@ -27,6 +27,8 @@ python makeplugin.py release                   # same as just release
 python makeplugin.py release --patch --publish
 ```
 
-`--publish` uses [Unreleased] (now the versioned section) as the GitHub release body and attaches `fanfic-organizer.zip`. Do not invent a second notes file. Fail the release if Unreleased has no bullets.
+Preferred standard-channel path: GitHub Actions **Release plugin** (`workflow_dispatch`, bump patch/minor/major). That rolls `[Unreleased]`, tags `vX.Y.Z`, attaches `FanFicOrganizer-X.Y.Z.zip` and the `fanfic-organizer.zip` alias, and annotates preview releases whose commits are included.
+
+`--publish` uses [Unreleased] (now the versioned section) as the GitHub release body. Do not invent a second notes file. Fail the standard release if Unreleased has no bullets. Preview workflows must not write CHANGELOG.md.
 
 Every **0.x** release body must keep the pre-1.0 disclaimer (`calibre_dev.changelog.PRE_1_0_DISCLAIMER`): not rigorously tested, part-time OSS, prefer **Stable** (marked after the fact), try another release if one will not run. Do not strip it. Do not mark Stable at publish time.

@@ -77,6 +77,26 @@ def test_parse_version_accepts_optional_v_prefix():
     assert updates.parse_version("v0.27.0") == (0, 27, 0)
 
 
+def test_release_from_api_prefers_versioned_zip_asset():
+    updates = load_updates()
+    record = _sample_release()
+    record["assets"] = [
+        {
+            "name": "fanfic-organizer.zip",
+            "browser_download_url": "https://example.com/alias.zip",
+            "size": 1,
+        },
+        {
+            "name": "FanFicOrganizer-0.27.0.zip",
+            "browser_download_url": "https://example.com/versioned.zip",
+            "size": 2,
+        },
+    ]
+    parsed = updates.release_from_api(record)
+    assert parsed is not None
+    assert parsed.download_url.endswith("versioned.zip")
+
+
 def test_release_from_api_skips_drafts_prereleases_and_missing_asset():
     updates = load_updates()
     assert updates.release_from_api(_sample_release(draft=True)) is None

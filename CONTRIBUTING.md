@@ -16,6 +16,8 @@ pytest
 
 `requirements.txt` is the `ao3kit` library runtime (also used by the optional CLI). `requirements-dev.txt` adds pytest and the Calibre-dev MCP extra. `just build` vendors that list into the zip except native packages Calibre already has (`lxml`, Pillow).
 
+Calibre **source** for reading GUI/library internals lives at `$HOME/src/calibre` (the [BlakeASmith/calibre](https://github.com/BlakeASmith/calibre) fork). Clone it if missing; update with `git -C "$HOME/src/calibre" pull --ff-only origin master`. Agents: follow `.cursor/skills/calibre-source-code-read/SKILL.md`. Do not open PRs against `kovidgoyal/calibre`. The plugin must keep working on stock Calibre and must not depend on fork-only additions.
+
 Open a **throwaway Calibre library**. Search, import, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
 
 ```bash
@@ -45,7 +47,13 @@ Known copies (do not invent a third): `calibre-plugin/similar.py` mirrors `ao3ki
 
 ## Version, changelog, and releases
 
-One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__init__.py` must match. `pyproject.toml` reads the package attribute. `just release` (or `python makeplugin.py release`) bumps the next **0.x minor** (0.26.0 → 0.27.0). Pass `--patch` / `just release patch` for a patch bump. This tool does not cut 1.0+.
+One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__init__.py` must match (`__version_display__` is the same `X.Y.Z` on the source tree). `pyproject.toml` reads the package attribute.
+
+**Standard releases** (what most users should install) are cut from GitHub Actions → **Release plugin** (`workflow_dispatch`, bump `patch` / `minor` / `major`). That workflow rolls `[Unreleased]` into `## [X.Y.Z]`, bumps versions, tags `vX.Y.Z`, attaches `FanFicOrganizer-X.Y.Z.zip` plus the `fanfic-organizer.zip` alias, and prepends a notice on preview releases whose commits are included. Locally, `just release` / `python makeplugin.py release` still does the same cut; add `publish` to push and create the GitHub release. This tool does not cut 1.0+.
+
+**Preview pre-releases** are created automatically on every push to `main`. They use `X.Y.Z-preview.<GitHub run number>+<short SHA>` (next 0.x minor as `X.Y.Z`), tag `v` plus that string, and are marked GitHub pre-releases. The pipeline only *reads* `[Unreleased]` for notes; it never writes `CHANGELOG.md`. Prefer a standard release for daily use.
+
+**PR builds** upload `FanFicOrganizer-PR-<n>-<sha>.zip` and comment a direct download link for that zip. They do not create tags or GitHub releases.
 
 ### Pre-1.0
 
@@ -80,19 +88,20 @@ Do not dump test-only or internal chore work. Do not edit old version sections e
 
 ### Cutting a GitHub release
 
-Unreleased notes **are** the GitHub release body (plus the pre-1.0 disclaimer `makeplugin.py` appends until 1.0). Empty Unreleased cannot be released.
+Unreleased notes **are** the GitHub standard-release body (plus the pre-1.0 disclaimer `makeplugin.py` appends until 1.0). Empty Unreleased cannot be released. Preview tags do not consume Unreleased.
 
 ```bash
 python makeplugin.py changelog              # preview [Unreleased]
 pytest
+# Preferred: Actions → Release plugin → bump_type minor|patch
 just release                                # next 0.x minor (working tree)
 just release publish                        # cut + commit + push + zip + gh release
 just release patch                          # next 0.x patch instead
 ```
 
-Same as `python makeplugin.py release` / `--patch` / `--publish`.
+Same as `python makeplugin.py release` / `--patch` / `--bump` / `--publish`.
 
-`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `fanfic-organizer.zip`, and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section.
+`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `FanFicOrganizer-X.Y.Z.zip` (and copies `fanfic-organizer.zip`), and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section. Preview tags (`v*-preview*`) are not treated as standard releases.
 
 ## Tests and plugin install
 
