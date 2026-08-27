@@ -20,6 +20,7 @@ the standard Tags field instead of being dropped.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
 AO3_WORK_ID_RE = re.compile(
@@ -86,6 +87,25 @@ def book_matches_work(
     if url and existing_url.rstrip('/') == url.rstrip('/'):
         return True
     return False
+
+
+def existing_book_id_from_identifiers(
+    books: Iterable[tuple[Any, dict[str, Any] | None]],
+    record: dict[str, Any],
+) -> Any | None:
+    """Return the library book id that already stores this AO3 work, if any.
+
+    ``books`` is ``(book_id, identifiers)`` from the in-memory Calibre
+    identifier maps. Same match rules as ``book_matches_work`` (ao3 id or URL).
+    """
+    work_id = canonical_work_id(record)
+    url = canonical_work_url(record)
+    if not work_id and not url:
+        return None
+    for book_id, ids in books:
+        if book_matches_work(ids, work_id=work_id, url=url):
+            return book_id
+    return None
 
 
 def build_cleaned_payload(record: dict[str, Any]) -> dict[str, Any]:

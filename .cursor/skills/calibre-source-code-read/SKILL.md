@@ -81,16 +81,17 @@ Plugin counterparts: `calibre-plugin/importer.py` (`import_record`, `refresh_lib
 
 Background ao3kit jobs are **not** on Calibre’s GUI thread. The plugin **is**: `JobSupervisor.tick` runs every 1s on the GUI, reads JSONL, calls `import_record` per new work, then `refresh_library_ui`. Concurrent jobs each get a poll on that same timer.
 
-`refresh_library_ui` does:
+`refresh_library_ui` now:
 
-1. `library_view.model().refresh_ids(book_ids)` — `dataChanged` for existing rows. It does **not** call `BooksModel.books_added()`, which is Calibre’s own `beginInsertRows` path when adding books.
-2. `tags_view.recount()` — full tag-browser rebuild: `get_categories()` over **every** many-many field (Tags, Fandom, Relationships, Original Tags, …) then `rebuild_node_tree()` (`beginResetModel` on the tag tree).
+1. Calls `BooksModel.books_added(n)` when new rows were prepended (Calibre’s `beginInsertRows` path). That emits `count_changed_signal`, which rebuilds the tag browser once.
+2. Calls `library_view.model().refresh_ids(book_ids)` for the affected rows.
+3. Calls `tags_view.recount()` only when nothing was inserted (updates to existing books). Do not also `recount()` after `books_added` — that double-rebuilds the tag tree.
 
-`import_record` → `find_existing_book` runs up to four `search_getting_ids('identifiers:…')` queries. Identifier search (`db/search.py` keypair over `field_iter`) walks **every book**. A *miss* (the new-work case) pays for all three URL/ao3 queries.
+`find_existing_book` uses in-memory identifier maps (`new_api.all_field_for('identifiers', …)` / `get_identifiers`), matched with `book_matches_work`. Do **not** go back to `search_getting_ids('identifiers:…')` on the GUI thread: that walks every book per query, and a *miss* (new work) pays for several full scans.
 
-`db.create_book_entry` updates `db.data` so `BooksModel.rowCount()` grows without `beginInsertRows`. Calibre’s add-books UI calls `model.books_added(n)` after inserts; the plugin currently does not.
+`JsonlWriter` atomically rewrites the JSONL on each upsert (including when `epub_file` appears). Do not tail the file by byte offset.
 
-Measured with **stock Calibre 9.13** (`calibre-debug`) on AO3-like unique freeforms (not a small shared tag pool):
+Measured **before** those lookups/`books_added` with **stock Calibre 9.13** (`calibre-debug`) on AO3-like unique freeforms:
 
 | Library | Unique Tags + Original Tags | `find_existing` miss / new work | `create_book_entry` + `set_field` | `tags_view` rebuild (`recount`) | Tag-tree nodes |
 |---|---|---|---|---|---|
@@ -100,17 +101,9 @@ Measured with **stock Calibre 9.13** (`calibre-debug`) on AO3-like unique freefo
 | 20 new works, recount after each | | 11.1s total lookup | 1.8s writes | 12.2s recounts | **25s GUI** |
 | Same 20, writes then one recount | | (lookups omitted in that run) | 1.7s | 0.63s | **2.3s** |
 
-Visible-row tag painting stayed a few milliseconds (Qt only paints on-screen cells). A naïve “measure every row” proxy grew with row count (~171ms at 2000 shared-tag books) but that is **not** what the book list does on a normal refresh. Long tag columns matter because they inflate the **tag browser**, not because the table paints every character of every row.
+Visible-row tag painting stayed a few milliseconds (Qt only paints on-screen cells). Long tag columns inflate the **tag browser**, not because the table paints every row.
 
-So the freeze is not “background processes fighting Calibre.” It is the plugin importing on the GUI thread and rebuilding the tag browser (and doing O(library) identifier searches) as often as JSONL grows. Multiple jobs multiply those 1s ticks.
-
-**Preferred plugin-side mitigations** (stock APIs only):
-
-- Look up existing AO3 ids without `search_getting_ids` (in-memory identifier map, or one indexed query).
-- Batch library writes, then refresh **once**.
-- Call `model.books_added(n)` for new rows instead of only `refresh_ids`.
-- Throttle `tags_view.recount()` (every few seconds, or after the job), not after every work.
-- Keep `_poll_import` cheap: do not re-parse the whole JSONL on the GUI thread.
+Remaining cost on the GUI thread: per-work `create_book_entry` / `set_field`, and a tag-browser rebuild when the book count changes. JSONL is still re-read in full each tick. Further mitigations (stock APIs only): throttle `recount`, keep `_poll_import` cheap.
 
 Do not add a Calibre-fork API to “fix” this.
 
