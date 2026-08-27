@@ -14,6 +14,10 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ## [Unreleased]
 
+### Performance
+
+- Speed up live Search/import into the library: look up existing AO3 works from in-memory identifiers instead of full-library searches on the GUI thread, and notify the book list of new rows without rebuilding the tag browser twice.
+
 ## [0.30.0] - 2026-08-27
 
 ### Features

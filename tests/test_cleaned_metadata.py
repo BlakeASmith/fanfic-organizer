@@ -138,6 +138,36 @@ def test_work_id_from_url_and_book_match():
     assert not mod.book_matches_work({"url": "https://example.com/1"}, work_id="9")
 
 
+def test_existing_book_id_from_identifiers_matches_ao3_and_url():
+    mod = load_cleaned()
+    books = [
+        (1, {"ao3": "10", "url": "https://archiveofourown.org/works/10"}),
+        (2, {"url": "https://www.archiveofourown.org/works/20"}),
+        (3, {"isbn": "x"}),
+    ]
+    assert (
+        mod.existing_book_id_from_identifiers(
+            books, {"work_id": "10"}
+        )
+        == 1
+    )
+    assert (
+        mod.existing_book_id_from_identifiers(
+            books, {"url": "https://archiveofourown.org/works/20"}
+        )
+        == 2
+    )
+    assert (
+        mod.existing_book_id_from_identifiers(books, {"work_id": "99"}) is None
+    )
+
+
+def test_existing_book_id_skips_empty_record():
+    mod = load_cleaned()
+    books = [(1, {"ao3": "10"})]
+    assert mod.existing_book_id_from_identifiers(books, {}) is None
+
+
 def test_calibre_fields_split_relationships_and_completed():
     mod = load_cleaned()
     record = {

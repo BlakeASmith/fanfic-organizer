@@ -23,6 +23,7 @@ from calibre_plugins.fanfic_organizer.epub_plan import (
 from calibre_plugins.fanfic_organizer.importer import (
     attach_downloaded_epubs,
     import_record,
+    iter_identifier_maps,
     refresh_library_ui,
 )
 from calibre_plugins.fanfic_organizer.job_plans import merge_ready_with_jsonl
@@ -588,7 +589,9 @@ class JobSupervisor:
             db = apply_layout_columns(self.gui)
             update_existing = bool(plugin.get('update_existing', True))
             skip_existing_epub = bool(plugin.get('skip_existing_epub', True))
+            catalog = iter_identifier_maps(db)
             book_ids: list[Any] = []
+            added_count = 0
             dialog = self._dialogs.get(job_id)
             for record in new_records:
                 work_id = canonical_work_id(record)
@@ -600,6 +603,7 @@ class JobSupervisor:
                     update_existing=update_existing,
                     bundle_root=bundle,
                     skip_existing_epub=skip_existing_epub,
+                    catalog=catalog,
                 )
                 book_id = outcome.get('book_id')
                 action = outcome.get('action')
@@ -609,6 +613,8 @@ class JobSupervisor:
                 }
                 if book_id is not None:
                     book_ids.append(book_id)
+                if action == 'added':
+                    added_count += 1
                 title = record.get('title') or work_id
                 if dialog is not None and action in ('added', 'updated'):
                     try:
@@ -647,7 +653,7 @@ class JobSupervisor:
                         except RuntimeError:
                             dialog = None
             if book_ids:
-                refresh_library_ui(self.gui, book_ids)
+                refresh_library_ui(self.gui, book_ids, added_count=added_count)
             if new_records:
                 project = self._project()
                 if project is not None:
