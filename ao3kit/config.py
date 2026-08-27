@@ -256,6 +256,59 @@ class CoverSettings:
 
 
 @dataclass
+class RateLimitSettings:
+    """Host-wide AO3 limiter backoff and scaling (nested under ``rate:`` in config.yaml)."""
+
+    tag_soft_interval: float = 1.5
+    tag_max_interval: float = 8.0
+    max_interval: float = 60.0
+    jitter: float = 0.08
+    retry_after_tag_multiplier: float = 2.0
+    retry_after_tag_floor: float = 2.0
+    default_retry_after: float = 2.0
+    pressure_base_multiplier: float = 1.2
+    pressure_tag_multiplier: float = 1.5
+    pressure_floor: float = 1.5
+    success_streak: int = 8
+    success_speed_factor: float = 0.85
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> RateLimitSettings:
+        data = data or {}
+        known = {item.name for item in fields(cls)}
+        kwargs: dict[str, Any] = {}
+        for key, value in data.items():
+            if key not in known:
+                continue
+            kwargs[key] = value
+        settings = cls(**kwargs)
+        settings.tag_soft_interval = max(float(settings.tag_soft_interval), 0.1)
+        settings.tag_max_interval = max(float(settings.tag_max_interval), 0.1)
+        settings.max_interval = max(float(settings.max_interval), 0.1)
+        settings.jitter = min(max(float(settings.jitter), 0.0), 0.5)
+        settings.retry_after_tag_multiplier = max(
+            float(settings.retry_after_tag_multiplier), 1.0
+        )
+        settings.retry_after_tag_floor = max(float(settings.retry_after_tag_floor), 0.1)
+        settings.default_retry_after = max(float(settings.default_retry_after), 0.1)
+        settings.pressure_base_multiplier = max(
+            float(settings.pressure_base_multiplier), 1.0
+        )
+        settings.pressure_tag_multiplier = max(
+            float(settings.pressure_tag_multiplier), 1.0
+        )
+        settings.pressure_floor = max(float(settings.pressure_floor), 0.1)
+        settings.success_streak = max(int(settings.success_streak), 1)
+        settings.success_speed_factor = min(
+            max(float(settings.success_speed_factor), 0.1), 1.0
+        )
+        return settings
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class UserSettings:
     """Serializable user preferences (config.yaml)."""
 
@@ -270,8 +323,11 @@ class UserSettings:
     tag_cache_ttl_days: float = 90.0
     follow_canonical: bool = True
     include_metatags: bool = True
+    # Minimum seconds between AO3 work/search/download requests (host-wide floor).
+    min_request_interval: float = 1.5
     # Extra seconds the background tag warmer waits after each fetch.
     tag_warm_interval: float = 10.0
+    rate: RateLimitSettings = field(default_factory=RateLimitSettings)
     # On recompute, collections added by hand on a book become a pin rule.
     collections_remember_manual_adds: bool = True
     # Optional UI / scrape defaults
@@ -290,6 +346,13 @@ class UserSettings:
         else:
             kwargs["cover"] = CoverSettings.from_dict(
                 cover if isinstance(cover, dict) else None
+            )
+        rate = kwargs.get("rate")
+        if isinstance(rate, RateLimitSettings):
+            kwargs["rate"] = rate
+        else:
+            kwargs["rate"] = RateLimitSettings.from_dict(
+                rate if isinstance(rate, dict) else None
             )
         return cls(**kwargs)
 
@@ -490,6 +553,12 @@ def _read_settings(path: Path) -> UserSettings:
 def load_cover_settings(home: Path | None = None) -> CoverSettings:
     """Cover style from ``config.yaml`` (defaults if unset)."""
     return load_user_config(home=home).settings.cover
+
+
+def load_rate_limit_settings(home: Path | None = None) -> tuple[float, RateLimitSettings]:
+    """Minimum scrape interval and backoff/scaling knobs from ``config.yaml``."""
+    settings = load_user_config(home=home).settings
+    return float(settings.min_request_interval), settings.rate
 
 
 def merge_cover_settings(
