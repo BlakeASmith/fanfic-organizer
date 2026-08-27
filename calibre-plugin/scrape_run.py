@@ -78,7 +78,7 @@ def ids_to_csv(values: Any) -> str:
 def criteria_from_options(options: dict[str, Any]) -> dict[str, Any]:
     """JSON object accepted by ``SearchCriteria.from_dict`` / ``--criteria-file``."""
     language = _blank_none(options.get('language_id'))
-    return {
+    payload = {
         'tag_id': _blank_none(options.get('tag_id')),
         'sort_column': _blank_none(options.get('sort_column')) or 'kudos_count',
         'complete': complete_to_bool(options.get('complete')),
@@ -96,6 +96,10 @@ def criteria_from_options(options: dict[str, Any]) -> dict[str, Any]:
         'freeform_ids': parse_id_list(options.get('freeform_ids')),
         'character_ids': parse_id_list(options.get('character_ids')),
     }
+    list_path = _blank_none(options.get('list_path'))
+    if list_path:
+        payload['list_path'] = list_path
+    return payload
 
 
 def scrape_search_is_usable(options: dict[str, Any]) -> bool:

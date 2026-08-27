@@ -81,7 +81,7 @@ def test_parse_only_tag_works_url(capsys):
 
 
 def test_parse_work_page_url_rejected():
-    with pytest.raises(ValueError, match="works search"):
+    with pytest.raises(ValueError, match="AO3"):
         parse_url_payload("https://archiveofourown.org/works/50448730")
 
 

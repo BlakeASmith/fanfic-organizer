@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 from ao3kit.scrape import SORT_OPTIONS, SearchCriteria
@@ -189,6 +190,22 @@ def test_prepare_download_command_writes_jsonl(tmp_path: Path):
     assert "--no-simplify" in argv
     assert "--delay" not in argv
     assert argv[argv.index("--username") + 1] == "emily"
+
+
+def test_write_criteria_file_includes_list_path(tmp_path):
+    mod = load_scrape_run()
+    path = tmp_path / "criteria.json"
+    mod.write_criteria_file(
+        path,
+        {
+            "list_path": "/collections/anonymous/works",
+            "tag_id": "",
+            "sort_column": "hits",
+        },
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["list_path"] == "/collections/anonymous/works"
+    assert payload["sort_column"] == "hits"
 
 
 def test_scrape_search_is_usable():
