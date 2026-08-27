@@ -21,6 +21,10 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 - Add a manual **Release plugin** GitHub Actions workflow that bumps the version, rolls [Unreleased] into the new section, publishes the standard release, and notes superseded preview tags.
 - Attach a versioned `FanFicOrganizer-<version>.zip` on standard and preview releases (standard releases also keep the `fanfic-organizer.zip` download alias). Pull requests get a test zip comment, not a GitHub release.
 
+### Bug Fixes
+
+- Point PR build comments at the plugin zip download instead of the workflow run page.
+
 ## [0.30.0] - 2026-08-27
 
 ### Features

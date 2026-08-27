@@ -31,11 +31,16 @@ jobs:
           python makeplugin.py zip \
             --set-version "${{ steps.meta.outputs.version }}" \
             --output "${{ steps.meta.outputs.zip_name }}"
+      - name: Stage plugin files for a loadable artifact zip
+        run: |
+          mkdir -p staged-plugin
+          python3 -c "import zipfile; zipfile.ZipFile('${{ steps.meta.outputs.zip_name }}').extractall('staged-plugin')"
       - name: Upload artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
-          path: ${{ steps.meta.outputs.zip_name }}
+          path: staged-plugin/
           if-no-files-found: error
           retention-days: 14
       - name: Comment download link on the PR
@@ -46,18 +51,17 @@ jobs:
             const marker = '<!-- fanfic-organizer-pr-build -->';
             const zipName = '${{ steps.meta.outputs.zip_name }}';
             const version = '${{ steps.meta.outputs.version }}';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactUrl = '${{ steps.upload.outputs.artifact-url }}';
             const body = [
               marker,
               '## PR plugin build',
               '',
-              `Test zip: \`${zipName}\``,
               `Calibre plugin version: \`${version}\``,
               '',
-              'This is a **CI test build**, not a GitHub release or pre-release.',
-              'Prefer a [standard release](https://github.com/${{ github.repository }}/releases/latest) for daily use.',
+              `[Download ${zipName}](${artifactUrl})`,
               '',
-              `- [Download the artifact from this run](${runUrl})`,
+              'GitHub login is required to download the zip. This is a **CI test build**, not a GitHub release or pre-release.',
+              'Prefer a [standard release](https://github.com/${{ github.repository }}/releases/latest) for daily use.',
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,

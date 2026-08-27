@@ -31,8 +31,10 @@ def test_pr_workflow_does_not_create_releases():
     assert "git tag" not in text
     assert "prerelease" not in text
     assert "upload-artifact" in text
+    assert "artifact-url" in text
     assert "pull-requests: write" in text
     assert "pr-meta" in text
+    assert "Download the artifact from this run" not in text
 
 
 def test_release_workflow_is_manual_with_bump_and_skips_preview_tags():
