@@ -270,6 +270,8 @@ class UserSettings:
     tag_cache_ttl_days: float = 90.0
     follow_canonical: bool = True
     include_metatags: bool = True
+    # Minimum seconds between AO3 work/search/download requests (host-wide floor).
+    min_request_interval: float = 1.5
     # Extra seconds the background tag warmer waits after each fetch.
     tag_warm_interval: float = 10.0
     # On recompute, collections added by hand on a book become a pin rule.

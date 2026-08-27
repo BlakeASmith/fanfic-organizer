@@ -20,6 +20,7 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
     assert cfg.config_path.is_file()
     assert (cfg.rules_dir / "default.py").is_file()
     assert cfg.settings.tag_warm_interval == 10.0
+    assert cfg.settings.min_request_interval == 1.5
     assert cfg.settings.include_metatags is True
     assert cfg.settings.cover.enabled is True
     assert cfg.settings.cover.fields == ["title", "author", "wordcount", "score"]

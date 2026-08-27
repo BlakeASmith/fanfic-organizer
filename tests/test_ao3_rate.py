@@ -64,7 +64,7 @@ def test_crawl_delay_raises_floor():
 
 def test_configure_min_interval_respects_absolute_floor():
     assert configure_min_interval(0.1) >= ao3_rate.ABSOLUTE_MIN_INTERVAL
-    assert configure_min_interval(1.0) == pytest.approx(1.0)
+    assert configure_min_interval(1.0) == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert configure_min_interval(20.0) >= 20.0
 
 
@@ -90,6 +90,21 @@ def test_ensure_rate_limits_uses_engine_floor():
     assert interval_for_url(
         "https://archiveofourown.org/downloads/1/x.epub"
     ) >= DEFAULT_MIN_INTERVAL
+
+
+def test_ensure_rate_limits_reads_config_min_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    from ao3kit.config import init_user_config
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AO3KIT_HOME", str(home))
+    cfg = init_user_config(home=home)
+    cfg.update_settings(min_request_interval=2.25)
+    ao3_rate._STATE.base_interval = 0.4
+    ensure_rate_limits()
+    assert ao3_rate._STATE.base_interval == pytest.approx(2.25)
+    assert interval_for_url("https://archiveofourown.org/works/1") >= 2.25
 
 
 def test_configure_min_interval_raises_tag_lane_with_scrape_delay():

@@ -11,7 +11,7 @@ same host pace together:
 
 - adaptive spacing for light paths (tag profiles) — start fast, back off on pressure
 - a short dedicated interval for login (GET form + POST)
-- work, search, and EPUB downloads share the host-wide engine floor (default 1.0s, adaptive on pressure)
+- work, search, and EPUB downloads share the host-wide engine floor (default 1.5s, adaptive on pressure)
 - 429 + Retry-After pause every interface for that cooldown (not a new cruise interval)
 """
 
@@ -35,10 +35,10 @@ from ao3kit.rate_store import (
 
 ROBOTS_URL = "https://archiveofourown.org/robots.txt"
 # General work-page pacing when no adaptive tag lane applies.
-DEFAULT_MIN_INTERVAL = 1.0
+DEFAULT_MIN_INTERVAL = 1.5
 ABSOLUTE_MIN_INTERVAL = 1.0
 # Tag profiles start here and adapt up/down based on AO3 responses.
-TAG_SOFT_INTERVAL = 1.0
+TAG_SOFT_INTERVAL = 1.5
 TAG_MAX_INTERVAL = 8.0
 # Tag 429 without Retry-After: brief pause; the tag lane already doubles.
 TAG_DEFAULT_RETRY_AFTER = 2.0
@@ -243,7 +243,12 @@ def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
 
 
 def ensure_rate_limits() -> float:
-    """Refresh shared work/search/download floors from the limiter engine."""
+    """Refresh shared work/search/download floors from config + the limiter engine."""
+    from ao3kit.config import load_user_config
+
+    interval = float(load_user_config().settings.min_request_interval)
+    if interval > 0:
+        return configure_min_interval(interval)
     return configure_min_interval()
 
 

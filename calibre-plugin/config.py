@@ -119,6 +119,42 @@ class ConfigWidget(QWidget):
         )
         layout.addWidget(login)
 
+        pacing = QGroupBox('AO3 request pacing')
+        pacing_form = QFormLayout(pacing)
+        pacing_values = self._load_pacing_settings()
+        self.min_request_interval = QLineEdit()
+        self.min_request_interval.setText(
+            self._format_pacing_seconds(pacing_values.get('min_request_interval', 1.5))
+        )
+        self.min_request_interval.setPlaceholderText('1.5')
+        self.min_request_interval.setToolTip(
+            'Minimum seconds between AO3 work, search, download, and tag '
+            'requests on this computer. Shared across the plugin and CLI via '
+            'the host-wide rate limiter (XDG config min_request_interval). '
+            'The limiter still backs off on 429 responses.'
+        )
+        pacing_form.addRow('Min request interval (s)', self.min_request_interval)
+        self.tag_warm_interval = QLineEdit()
+        self.tag_warm_interval.setText(
+            self._format_pacing_seconds(pacing_values.get('tag_warm_interval', 10.0))
+        )
+        self.tag_warm_interval.setPlaceholderText('10')
+        self.tag_warm_interval.setToolTip(
+            'Extra pause after each tag-profile fetch during background tag '
+            'cache warming (XDG config tag_warm_interval). Does not slow '
+            'Search or Download when the warmer is idle.'
+        )
+        pacing_form.addRow('Tag cache warm interval (s)', self.tag_warm_interval)
+        pacing_form.addRow(
+            _hint(
+                'Defaults are slightly slower than before to reduce AO3 '
+                'throttling. Stored in ~/.config/fanfic-organizer/config.yaml '
+                '(or AO3KIT_HOME). CLI: python -m ao3kit config set '
+                'min_request_interval 2'
+            )
+        )
+        layout.addWidget(pacing)
+
         defaults = QGroupBox('Search and import defaults')
         defaults_form = QFormLayout(defaults)
         self.max_results = QLineEdit()
@@ -334,6 +370,7 @@ class ConfigWidget(QWidget):
         prefs['update_existing'] = self.update_existing.isChecked()
         prefs['import_full_series'] = self.import_full_series.isChecked()
         self._save_ao3kit_remember_adds(self.remember_collection_adds.isChecked())
+        self._save_pacing_settings()
         self._save_cover_settings()
         self.create_layout.setChecked(False)
         self.refresh_status()
@@ -393,7 +430,110 @@ class ConfigWidget(QWidget):
                 show=True,
             )
             return False
+        if not self._validate_pacing_fields():
+            return False
         return True
+
+    @staticmethod
+    def _format_pacing_seconds(value: object) -> str:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ''
+        if number <= 0:
+            return ''
+        text = f'{number:g}'
+        return text if text else ''
+
+    def _parse_pacing_seconds(self, widget: QLineEdit, label: str) -> float | None:
+        raw = widget.text().strip()
+        if not raw:
+            placeholder = widget.placeholderText().strip()
+            raw = placeholder or '0'
+        try:
+            value = float(raw)
+        except ValueError:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                f'{label} must be a number of seconds.',
+                show=True,
+            )
+            return None
+        if value <= 0:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                f'{label} must be greater than zero.',
+                show=True,
+            )
+            return None
+        return value
+
+    def _validate_pacing_fields(self) -> bool:
+        return (
+            self._parse_pacing_seconds(
+                self.min_request_interval, 'Min request interval'
+            )
+            is not None
+            and self._parse_pacing_seconds(
+                self.tag_warm_interval, 'Tag cache warm interval'
+            )
+            is not None
+        )
+
+    def _load_pacing_settings(self) -> dict:
+        try:
+            from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
+
+            code, stdout, _stderr = run_ao3kit(['config', 'show'])
+            if code == 0 and (stdout or '').strip():
+                data = json.loads(stdout)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {
+            'min_request_interval': 1.5,
+            'tag_warm_interval': 10.0,
+        }
+
+    def _save_pacing_settings(self) -> None:
+        min_interval = self._parse_pacing_seconds(
+            self.min_request_interval, 'Min request interval'
+        )
+        warm_interval = self._parse_pacing_seconds(
+            self.tag_warm_interval, 'Tag cache warm interval'
+        )
+        if min_interval is None or warm_interval is None:
+            return
+        try:
+            from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
+
+            for key, value in (
+                ('min_request_interval', min_interval),
+                ('tag_warm_interval', warm_interval),
+            ):
+                code, stdout, stderr = run_ao3kit(
+                    ['config', 'set', key, f'{value:g}']
+                )
+                if code != 0:
+                    error_dialog(
+                        self,
+                        'Fanfic Organizer',
+                        'Could not save AO3 request pacing in ao3kit.',
+                        det_msg=(stderr or stdout or f'exit {code}').strip(),
+                        show=True,
+                    )
+                    return
+        except Exception as exc:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                'Could not save AO3 request pacing in ao3kit.',
+                det_msg=str(exc),
+                show=True,
+            )
 
     def edit_cover_style(self) -> None:
         from calibre_plugins.fanfic_organizer.cover_ui import CoverStyleDialog
