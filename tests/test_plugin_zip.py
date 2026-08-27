@@ -22,6 +22,7 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
     assert "ao3kit/__init__.py" in names
     assert "ao3kit/cli.py" in names
     assert "ao3kit/htmlsoup.py" in names
+    assert "plugin_version.py" in names
     assert not any(name.startswith("vendor/") for name in names)
     assert "dev_project.json" not in names
 
@@ -61,6 +62,45 @@ def test_build_zip_excludes_dev_project_stamp(tmp_path: Path):
             stamp.write_text(previous, encoding="utf-8")
 
 
+def test_build_zip_injects_version_without_touching_source(tmp_path: Path):
+    plugin_init = Path(__file__).resolve().parents[1] / "calibre-plugin" / "__init__.py"
+    package_init = Path(__file__).resolve().parents[1] / "ao3kit" / "__init__.py"
+    before_plugin = plugin_init.read_text(encoding="utf-8")
+    before_package = package_init.read_text(encoding="utf-8")
+    version = "0.31.0-preview.452+7a4f9b2"
+    dest = tmp_path / f"FanFicOrganizer-{version}.zip"
+    makeplugin.build_zip(dest, vendor=False, version=version)
+    assert plugin_init.read_text(encoding="utf-8") == before_plugin
+    assert package_init.read_text(encoding="utf-8") == before_package
+    with zipfile.ZipFile(dest) as zf:
+        plugin_text = zf.read("__init__.py").decode("utf-8")
+        package_text = zf.read("ao3kit/__init__.py").decode("utf-8")
+    assert '__version_display__ = "0.31.0-preview.452+7a4f9b2"' in plugin_text
+    assert "__version__ = (0, 31, 0)" in plugin_text
+    assert '__version__ = "0.31.0-preview.452+7a4f9b2"' in package_text
+
+
+def test_makeplugin_zip_set_version_output(tmp_path: Path):
+    dest = tmp_path / "custom.zip"
+    assert (
+        makeplugin.main(
+            [
+                "zip",
+                "--no-vendor",
+                "--set-version",
+                "0.31.0-pr.12+abcdef1",
+                "--output",
+                str(dest),
+            ]
+        )
+        == 0
+    )
+    assert dest.is_file()
+    with zipfile.ZipFile(dest) as zf:
+        plugin_text = zf.read("__init__.py").decode("utf-8")
+    assert '__version_display__ = "0.31.0-pr.12+abcdef1"' in plugin_text
+
+
 def test_plugin_version_matches_ao3kit():
     text = (
         Path(__file__).resolve().parents[1] / "calibre-plugin" / "__init__.py"
@@ -70,6 +110,7 @@ def test_plugin_version_matches_ao3kit():
     end = text.index(")", start)
     parts = tuple(int(p.strip()) for p in text[start:end].split(","))
     assert ".".join(str(p) for p in parts) == ao3kit_version
+    assert f'__version_display__ = "{ao3kit_version}"' in text
 
 
 def test_vendor_requirement_lines_skip_native_packages():

@@ -20,7 +20,11 @@ from calibre_dev.plugin_install import (
     remove_legacy_calibre_plugins,
     start_calibre_gui,
 )
-from calibre_dev.release_urls import RELEASE_ZIP_NAME, release_zip_url
+from calibre_dev.release_urls import (
+    RELEASE_ZIP_NAME,
+    release_zip_url,
+    release_zip_urls,
+)
 
 
 def _log(message: str) -> None:
@@ -33,22 +37,33 @@ def download_release_zip(
     version: str | None = None,
     url: str | None = None,
 ) -> str:
-    """Download ``fanfic-organizer.zip`` and return the URL used."""
-    download_url = url or release_zip_url(version)
+    """Download the plugin zip and return the URL used."""
+    if url:
+        candidates = [url]
+    else:
+        candidates = release_zip_urls(version)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with urllib.request.urlopen(download_url, timeout=120) as response:
-            data = response.read()
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(
-            f"Could not download {download_url} (HTTP {exc.code})."
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not download {download_url}: {exc.reason}.") from exc
-    dest.write_bytes(data)
-    if not data:
-        raise RuntimeError(f"Download from {download_url} was empty.")
-    return download_url
+    last_error: Exception | None = None
+    for download_url in candidates:
+        try:
+            with urllib.request.urlopen(download_url, timeout=120) as response:
+                data = response.read()
+        except urllib.error.HTTPError as exc:
+            last_error = RuntimeError(
+                f"Could not download {download_url} (HTTP {exc.code})."
+            )
+            if exc.code == 404 and len(candidates) > 1:
+                continue
+            raise last_error from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f"Could not download {download_url}: {exc.reason}."
+            ) from exc
+        dest.write_bytes(data)
+        if not data:
+            raise RuntimeError(f"Download from {download_url} was empty.")
+        return download_url
+    raise RuntimeError("Could not download a plugin zip.")
 
 
 def install_release_zip(

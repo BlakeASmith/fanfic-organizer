@@ -28,6 +28,13 @@ NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
 def plugin_version_string(version: tuple[int, ...] | None = None) -> str:
     if version is None:
         try:
+            from calibre_plugins.fanfic_organizer import __version_display__ as display
+
+            if display:
+                return str(display)
+        except Exception:
+            pass
+        try:
             from calibre_plugins.fanfic_organizer import __version__ as installed
         except ImportError:
             try:
@@ -35,6 +42,9 @@ def plugin_version_string(version: tuple[int, ...] | None = None) -> str:
             except ImportError:
                 installed = (0, 0, 0)
         version = tuple(installed)
+    shown = getattr(version, 'display', None)
+    if shown:
+        return str(shown)
     return '.'.join(str(part) for part in version)
 
 

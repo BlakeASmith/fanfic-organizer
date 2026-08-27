@@ -19,6 +19,7 @@ from calibre_dev.release_urls import (
     RELEASE_ZIP_NAME,
     release_tag,
     release_zip_url,
+    release_zip_urls,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,11 +33,23 @@ def test_release_zip_url_latest():
 
 def test_release_zip_url_version():
     assert release_zip_url("0.26.1").endswith(
-        f"/releases/download/v0.26.1/{RELEASE_ZIP_NAME}"
+        "/releases/download/v0.26.1/FanFicOrganizer-0.26.1.zip"
     )
     assert release_zip_url("v0.26.1").endswith(
-        f"/releases/download/v0.26.1/{RELEASE_ZIP_NAME}"
+        "/releases/download/v0.26.1/FanFicOrganizer-0.26.1.zip"
     )
+
+
+def test_release_zip_url_encodes_preview_plus():
+    url = release_zip_url("0.31.0-preview.452+7a4f9b2")
+    assert "%2B" in url
+    assert url.endswith("FanFicOrganizer-0.31.0-preview.452%2B7a4f9b2.zip")
+
+
+def test_release_zip_urls_fall_back_to_alias():
+    urls = release_zip_urls("0.26.1")
+    assert urls[0].endswith("FanFicOrganizer-0.26.1.zip")
+    assert urls[1].endswith("fanfic-organizer.zip")
 
 
 def test_release_tag():

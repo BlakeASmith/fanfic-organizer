@@ -65,23 +65,24 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 
 | Command | What it does |
 |---|---|
-| `python makeplugin.py zip` / `just build` | Self-contained `fanfic-organizer.zip` (plugin + ao3kit + vendor from `requirements.txt`, skipping `lxml` and Pillow) for GitHub Releases. Native wheels are stripped. |
+| `python makeplugin.py zip` / `just build` | Self-contained plugin zip (plugin + ao3kit + vendor from `requirements.txt`, skipping `lxml` and Pillow). Default file is `fanfic-organizer.zip`; `--set-version` writes `FanFicOrganizer-<version>.zip` and embeds that version for Calibre. Native wheels are stripped. |
 | `python makeplugin.py install` / `just load-dev` | Remove leftover **AO3 Scraper**, `calibre-customize -b` as **Fanfic Organizer** (checkout jobs via `dev_project.json`). Then tell the user to restart. |
 | `python makeplugin.py install --restart` | Install, then quit and start Calibre. |
 | `python makeplugin.py restart` | Quit and start Calibre (no install). |
 | `python makeplugin.py status` | GUI running? Restart lock held? |
 | `python makeplugin.py changelog` | Print `[Unreleased]` (or `changelog 0.26.0` for a shipped section). |
-| `python makeplugin.py release` / `just release` | Cut `[Unreleased]` into the next 0.x minor (or `--patch` / `just release patch`). Add `--publish` / `just release publish` to commit, push, zip, and `gh release create`. 1.0+ is not supported. |
+| `python makeplugin.py release` / `just release` | Cut `[Unreleased]` into the next 0.x minor (or `--patch` / `--bump` / `just release patch`). Add `--publish` / `just release publish` to commit, push, zip, and `gh release create`. 1.0+ is not supported. GitHub Actions **Release plugin** (`workflow_dispatch`) is the same cut for the standard channel. |
 
-Checkout **install** is for developers. End users only ever load **fanfic-organizer.zip** from GitHub Releases. Tag `vX.Y.Z` runs `.github/workflows/release.yml`, which zips the plugin and attaches it using the matching CHANGELOG section as the release body.
+Checkout **install** is for developers. End users install a **standard** GitHub Release (`FanFicOrganizer-X.Y.Z.zip`, also attached as `fanfic-organizer.zip`). Every push to `main` also publishes a **preview** pre-release (`X.Y.Z-preview.<run>+<sha>`); those are for testers. Pull requests build a zip and comment an artifact link — they do not create GitHub releases. Tag `vX.Y.Z` (not `*-preview*`) runs `.github/workflows/release.yml` attach, which zips the plugin and sets the release body from the versioned CHANGELOG section.
 
 ### Changelog and GitHub Releases
 
 Keep [CHANGELOG.md](CHANGELOG.md) current. Standards are in [CONTRIBUTING.md](CONTRIBUTING.md#version-changelog-and-releases) and `.cursor/rules/changelog.mdc`.
 
 - User-facing work updates **[Unreleased]** in the same change (Conventional Commit type → heading).
-- Do not ship a tag with an empty Unreleased section.
-- `just release publish` is the usual release path; pushing the tag alone is enough for CI to attach the zip if the changelog was already cut.
+- Do not ship a standard tag with an empty Unreleased section. Preview pre-releases scrape Unreleased read-only and must not edit CHANGELOG.md.
+- Preferred standard-channel path: GitHub Actions **Release plugin** (`workflow_dispatch`). `just release publish` still works locally; pushing the `vX.Y.Z` tag is enough for CI to attach the zip if the changelog was already cut.
+- Preview tags are `vX.Y.Z-preview.<run>+<sha>` and marked pre-release. PR builds never create tags or GitHub releases.
 - Every **0.x** GitHub release body includes the pre-1.0 testing disclaimer (not fully tested; prefer **Stable** after the fact; try another tag if one will not run). Do not strip it. Mark **Stable** only after soak with no reported problems — see CONTRIBUTING.
 
 `--restart` / `restart` take a **host-wide lock** (`$XDG_RUNTIME_DIR/fanfic-organizer/calibre_restart.lock`, override `AO3KIT_CALIBRE_LOCK`). Only one agent can force-restart at a time. Pass `--agent-id <short-name>` so the holder is visible. CLI waits up to `--lock-timeout` seconds (default 15); if still busy, it exits without killing Calibre.

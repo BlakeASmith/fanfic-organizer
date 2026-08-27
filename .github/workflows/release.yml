@@ -1,36 +1,95 @@
 name: Release plugin
 
 on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: Version bump for the next standard (non-preview) release
+        required: true
+        default: minor
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  plugin:
+  cut-release:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build fanfic-organizer.zip
-        run: python makeplugin.py zip
-      - name: Changelog notes
-        if: startsWith(github.ref, 'refs/tags/')
-        run: python makeplugin.py changelog "${GITHUB_REF_NAME#v}" > /tmp/release-notes.md
+      - name: Cut changelog, bump versions, publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python makeplugin.py release --publish --bump "${{ inputs.bump_type }}"
+
+  attach-tag:
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/') &&
+      !contains(github.ref_name, 'preview') &&
+      !contains(github.ref_name, '-pr.')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve versioned zip name
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP_NAME="FanFicOrganizer-${VERSION}.zip"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          python makeplugin.py changelog "${VERSION}" > /tmp/release-notes.md
+      - name: Build plugin zips
+        run: |
+          python makeplugin.py zip \
+            --set-version "${{ steps.meta.outputs.version }}" \
+            --output "${{ steps.meta.outputs.zip_name }}"
+          cp "${{ steps.meta.outputs.zip_name }}" fanfic-organizer.zip
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fanfic-organizer
-          path: fanfic-organizer.zip
+          path: |
+            ${{ steps.meta.outputs.zip_name }}
+            fanfic-organizer.zip
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: fanfic-organizer.zip
+          files: |
+            ${{ steps.meta.outputs.zip_name }}
+            fanfic-organizer.zip
           body_path: /tmp/release-notes.md
+          prerelease: false
+          fail_on_unmatched_files: true
           generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Annotate included preview releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m calibre_dev.ci annotate-previews --version "${{ steps.meta.outputs.version }}"
