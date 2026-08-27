@@ -185,9 +185,9 @@ class CoverSettings:
     author_size: int = 62
     header_size: int = 28
     footer_size: int = 24
-    min_title_size: int = 32
+    min_title_size: int = 22
     min_author_size: int = 24
-    title_max_lines: int = 8
+    title_max_lines: int = 0
     author_max_lines: int = 3
     header_max_lines: int = 2
     title_leading: float = 1.08
@@ -265,7 +265,7 @@ class CoverSettings:
         settings.footer_size = max(int(settings.footer_size), 8)
         settings.min_title_size = max(8, min(int(settings.min_title_size), settings.title_size))
         settings.min_author_size = max(8, min(int(settings.min_author_size), settings.author_size))
-        settings.title_max_lines = max(int(settings.title_max_lines), 1)
+        settings.title_max_lines = max(int(settings.title_max_lines), 0)
         settings.author_max_lines = max(int(settings.author_max_lines), 1)
         settings.header_max_lines = max(int(settings.header_max_lines), 1)
         settings.title_leading = min(max(float(settings.title_leading), 0.8), 2.0)

@@ -88,6 +88,24 @@ PREVIEW_SAMPLES = (
         '344429',
         '62',
     ),
+    (
+        'extreme',
+        'Extreme title',
+        (
+            'in which there is a coffee shop, a time loop, three (3) fake dating '
+            'contracts, one (1) accidental marriage, the inherent eroticism of sharing '
+            'a tiny apartment, found family, identity porn, amnesia, a missing prince, '
+            'a talking sword, five soulmate tropes in a trench coat, and they were '
+            'roommates (oh my god they were roommates), or: a treatise on why the '
+            'author should have stopped adding subtitles around chapter forty-seven '
+            'but absolutely did not'
+        ),
+        'Jane AUs-ten',
+        'Star Wars - All Media Types',
+        'Rey/Ben Solo',
+        '344429',
+        '62',
+    ),
 )
 
 
@@ -110,9 +128,9 @@ def default_cover_dict() -> dict[str, Any]:
         'author_size': 62,
         'header_size': 28,
         'footer_size': 24,
-        'min_title_size': 32,
+        'min_title_size': 22,
         'min_author_size': 24,
-        'title_max_lines': 8,
+        'title_max_lines': 0,
         'author_max_lines': 3,
         'title_leading': 1.08,
         'author_leading': 1.08,
@@ -338,7 +356,7 @@ class CoverStyleDialog(QDialog):
         self.author_size = _int_spin(self._cover.get('author_size'), 12, 160, 62)
         self.header_size = _int_spin(self._cover.get('header_size'), 10, 80, 28)
         self.footer_size = _int_spin(self._cover.get('footer_size'), 10, 80, 24)
-        self.min_title_size = _int_spin(self._cover.get('min_title_size'), 12, 120, 32)
+        self.min_title_size = _int_spin(self._cover.get('min_title_size'), 12, 120, 22)
         self.uppercase_title = QCheckBox('Uppercase title')
         self.uppercase_title.setChecked(bool(self._cover.get('uppercase_title')))
         size_row = QWidget()
@@ -374,7 +392,8 @@ class CoverStyleDialog(QDialog):
         self.author_leading = _float_spin(
             self._cover.get('author_leading'), 0.80, 1.80, 1.08, decimals=2, step=0.02
         )
-        self.title_max_lines = _int_spin(self._cover.get('title_max_lines'), 1, 16, 8)
+        self.title_max_lines = _int_spin(self._cover.get('title_max_lines'), 0, 24, 0)
+        self.title_max_lines.setSpecialValueText('auto')
         self.author_max_lines = _int_spin(self._cover.get('author_max_lines'), 1, 8, 3)
         layout_form.addRow(self.auto_fit_title)
         layout_form.addRow('Side padding', self.padding)

@@ -23,7 +23,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Bug Fixes
 
-- Fix generated covers for long titles: tighten line spacing, shrink type to fit, and stop truncating with an ellipsis while there is room.
+- Fix generated covers for long titles: tighten line spacing, shrink type to fit, and use the space above the author instead of truncating with an ellipsis.
 - Improve cover text contrast with a darker field, white type, outline, shadow, and optional overlay.
 
 ## [0.28.0] - 2026-08-27

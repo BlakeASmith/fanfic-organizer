@@ -315,6 +315,47 @@ def test_short_title_keeps_large_type():
     assert len(title.lines) == 1
 
 
+EXTREME_TITLE = (
+    "in which there is a coffee shop, a time loop, three (3) fake dating "
+    "contracts, one (1) accidental marriage, the inherent eroticism of sharing "
+    "a tiny apartment, found family, identity porn, amnesia, a missing prince, "
+    "a talking sword, five soulmate tropes in a trench coat, and they were "
+    "roommates (oh my god they were roommates), or: a treatise on why the "
+    "author should have stopped adding subtitles around chapter forty-seven "
+    "but absolutely did not"
+)
+
+
+def test_extreme_title_uses_the_cover_instead_of_ellipsis():
+    info = CoverInfo(
+        title=EXTREME_TITLE,
+        author="Jane AUs-ten",
+        fandom="Star Wars - All Media Types",
+        wordcount=344429,
+        score=62,
+    )
+    title, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert author is not None
+    joined = " ".join(title.lines)
+    assert "…" not in joined
+    assert "forty-seven" in joined
+    assert "did not" in joined
+    assert title.size <= 40
+    assert len(title.lines) > 8
+    assert title.bottom <= author.y - 8
+
+
+def test_title_max_lines_still_truncates_when_set():
+    info = CoverInfo(title=EXTREME_TITLE, author="A")
+    title, _author, _footer, _headers = plan_cover_layout(
+        info, CoverSettings(title_max_lines=5, auto_fit_title=True)
+    )
+    assert title is not None
+    assert len(title.lines) <= 5
+    assert title.lines[-1].endswith("…")
+
+
 def test_long_unbroken_word_wraps():
     draw = _scratch_draw(600, 900)
     font = resolve_font(CoverSettings(), 88)

@@ -958,9 +958,11 @@ def _fit_wrapped(
             settings, size
         )
         last = (font, size, lines, separator, line_height)
-        fits_lines = max_lines <= 0 or len(lines) <= max_lines
-        fits_height = _block_height(len(lines), line_height) <= max_height
-        if fits_lines and fits_height:
+        height_ok = _block_height(len(lines), line_height) <= max_height
+        lines_ok = max_lines <= 0 or len(lines) <= max_lines
+        if height_ok and lines_ok:
+            return last
+        if height_ok and auto_fit and max_lines <= 0:
             return last
         if not auto_fit:
             break
@@ -991,7 +993,12 @@ def _fit_wrapped(
         )
     if _block_height(len(lines), line_height) > max_height and line_height > 1:
         allowed = max(1, int(max_height // line_height))
-        lines = _limit_lines(lines, min(max_lines or allowed, allowed))
+        cap = allowed
+        if max_lines > 0:
+            cap = min(cap, max_lines)
+        lines = _limit_lines(lines, cap)
+    elif max_lines > 0:
+        lines = _limit_lines(lines, max_lines)
     return font, size, lines, separator, line_height
 
 
@@ -1093,26 +1100,44 @@ def plan_cover_layout(
     title_block: CoverTextBlock | None = None
     if settings.shows("title") and info.title:
         title = info.title.upper() if settings.uppercase_title else info.title
-        title_top = max(height * settings.title_y, header_y + gap if headers else 0)
-        title_floor = (
+        pad_top = height * float(settings.padding)
+        band_top = (headers[-1].bottom + gap) if headers else pad_top
+        band_bottom = (
             author_block.y - gap
             if author_block is not None
             else (footer_top - gap if footer_block else height * 0.78)
         )
-        max_title_height = max(settings.min_title_size, title_floor - title_top)
-        _font, size, lines, sep, line_height = _fit_wrapped(
-            draw,
-            settings,
-            title,
-            start_size=settings.title_size,
-            min_size=settings.min_title_size,
-            max_width=max_width,
-            max_height=max_title_height,
-            max_lines=settings.title_max_lines,
-            leading=settings.title_leading,
-            wrap=wrap_title,
-            auto_fit=bool(settings.auto_fit_title),
+        preferred_top = max(height * settings.title_y, band_top)
+
+        def _fit_title(top: float) -> tuple[object, int, list[str], str, float]:
+            max_h = max(float(settings.min_title_size), band_bottom - top)
+            return _fit_wrapped(
+                draw,
+                settings,
+                title,
+                start_size=settings.title_size,
+                min_size=settings.min_title_size,
+                max_width=max_width,
+                max_height=max_h,
+                max_lines=settings.title_max_lines,
+                leading=settings.title_leading,
+                wrap=wrap_title,
+                auto_fit=bool(settings.auto_fit_title),
+            )
+
+        size_font, size, lines, sep, line_height = _fit_title(preferred_top)
+        title_top = preferred_top
+        truncated = bool(lines) and (
+            lines[-1].endswith("…")
+            or len(wrap_title(draw, size_font, title, max_width)) > len(lines)
         )
+        if (
+            settings.auto_fit_title
+            and truncated
+            and preferred_top > band_top + 1
+        ):
+            size_font, size, lines, sep, line_height = _fit_title(band_top)
+            title_top = band_top
         title_block = CoverTextBlock(
             kind="title",
             lines=lines,
