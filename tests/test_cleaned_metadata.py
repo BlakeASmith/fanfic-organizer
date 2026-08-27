@@ -238,6 +238,7 @@ def test_calibre_fields_heuristic_without_category_detail():
         "work_id": "1",
         "tags": ["Fluff", "Frank Langdon/Mel King"],
         "fandoms": ["The Pitt (TV)"],
+        "relationships": ["Frank Langdon/Mel King"],
         "cleaned": {
             "simplified": ["Fluff", "Frank Langdon/Mel King"],
             "fandoms": ["The Pitt (TV)"],
@@ -251,6 +252,49 @@ def test_calibre_fields_heuristic_without_category_detail():
     assert fields["collections"] == ["The Pitt (Frank/Mel)"]
     assert fields["tags"] == ["Fluff"]
     assert fields["original_tags"] == ["Fluff", "Frank Langdon/Mel King"]
+
+
+def test_calibre_fields_do_not_treat_slash_freeforms_as_relationships():
+    mod = load_cleaned()
+    record = {
+        "work_id": "1",
+        "tags": [
+            "Hurt/Comfort",
+            "Angst",
+            "James 'Bucky' Barnes/Steve Rogers",
+        ],
+        "fandoms": ["Marvel Cinematic Universe"],
+        "relationships": ["James 'Bucky' Barnes/Steve Rogers"],
+        "cleaned": {
+            "simplified": ["Hurt/Comfort", "Angst"],
+            "fandoms": ["Marvel Cinematic Universe"],
+            "relationships": ["James 'Bucky' Barnes/Steve Rogers"],
+            "tags": [
+                {
+                    "original": "Hurt/Comfort",
+                    "mapped": "Hurt/Comfort",
+                    "category": "Additional Tags",
+                    "dropped": False,
+                },
+                {
+                    "original": "Angst",
+                    "mapped": "Angst",
+                    "category": "Additional Tags",
+                    "dropped": False,
+                },
+                {
+                    "original": "James 'Bucky' Barnes/Steve Rogers",
+                    "mapped": "James 'Bucky' Barnes/Steve Rogers",
+                    "category": "Relationship",
+                    "dropped": False,
+                },
+            ],
+            "source": "rules",
+        },
+    }
+    fields = mod.calibre_fields_for_record(record)
+    assert fields["relationships"] == ["James 'Bucky' Barnes/Steve Rogers"]
+    assert fields["tags"] == ["Hurt/Comfort", "Angst"]
 
 
 def test_calibre_fields_prefer_cleaned_relationships():

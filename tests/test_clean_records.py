@@ -333,11 +333,48 @@ def test_enrich_record_splits_relationship_tags_and_simplifies_column():
     assert extra[0]["mapped"] == "Frank Langdon/Mel King"
 
 
-def test_looks_like_relationship():
-    from ao3kit.tags.clean import looks_like_relationship
-
-    assert looks_like_relationship("Frank Langdon/Mel King")
-    assert not looks_like_relationship("Hurt & Comfort")
+def test_enrich_record_drops_non_relationship_tags_from_relationships_column():
+    resolver = _resolver_with(
+        ResolvedTag(
+            original="James 'Bucky' Barnes/Steve Rogers",
+            resolved="James 'Bucky' Barnes/Steve Rogers",
+            status="canonical",
+            changed=False,
+            category="Relationship",
+        ),
+        ResolvedTag(
+            original="Hurt/Comfort",
+            resolved="Hurt/Comfort",
+            status="canonical",
+            changed=False,
+            category="Additional Tags",
+        ),
+        ResolvedTag(
+            original="Angst",
+            resolved="Angst",
+            status="canonical",
+            changed=False,
+            category="Additional Tags",
+        ),
+    )
+    engine = TagRulesEngine(TagRulesConfig(resolve_canonical=True), resolver)
+    enriched = enrich_record(
+        {
+            "work_id": "1",
+            "title": "T",
+            "tags": ["Hurt/Comfort", "Angst"],
+            "relationships": [
+                "James 'Bucky' Barnes/Steve Rogers",
+                "Hurt/Comfort",
+                "Angst",
+            ],
+        },
+        engine,
+        include_fandoms=False,
+    )
+    cleaned = enriched["cleaned"]
+    assert cleaned["simplified"] == ["Hurt/Comfort", "Angst"]
+    assert cleaned["relationships"] == ["James 'Bucky' Barnes/Steve Rogers"]
 
 
 def test_collect_remapping_lines_includes_relationship_column():

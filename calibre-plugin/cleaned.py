@@ -368,11 +368,6 @@ def _category_of(item: dict[str, Any]) -> str:
     return str(item.get('category') or '').strip().casefold()
 
 
-def _looks_like_relationship(name: str) -> bool:
-    """AO3 romantic ships use ``/``. Platonic ``&`` is left to AO3 category."""
-    return '/' in name
-
-
 AO3_SERIES_ID_RE = re.compile(
     r'(?:https?://)?(?:www\.)?archiveofourown\.org/series/(\d+)',
     re.IGNORECASE,
@@ -471,18 +466,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
                 continue
             if name.casefold() in fandom_keys:
                 continue
-            is_ship = category in RELATIONSHIP_CATEGORIES or (
-                not category and _looks_like_relationship(name)
-            )
-            if is_ship:
-                if category in RELATIONSHIP_CATEGORIES:
-                    if name.casefold() not in rel_keys:
-                        relationships.append(name)
-                        rel_keys.add(name.casefold())
-                    continue
-                if has_cleaned_rels:
-                    other_tags.append(name)
-                    continue
+            if category in RELATIONSHIP_CATEGORIES:
                 if name.casefold() not in rel_keys:
                     relationships.append(name)
                     rel_keys.add(name.casefold())
@@ -495,11 +479,6 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         for tag in cleaned_tag_names(record):
             key = tag.casefold()
             if key in fandom_keys or key in rel_keys:
-                continue
-            if _looks_like_relationship(tag):
-                if not has_cleaned_rels:
-                    relationships.append(tag)
-                    rel_keys.add(key)
                 continue
             other_tags.append(tag)
 
