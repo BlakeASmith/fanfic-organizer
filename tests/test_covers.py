@@ -13,15 +13,22 @@ from ao3kit.covers import (
     CoverInfo,
     apply_cover_to_epub,
     choose_colours,
+    contrast_ratio,
     cover_info_from_epub,
     cover_info_from_record,
+    ensure_contrast,
     epub_has_cover,
     extract_cover_bytes,
     inject_cover,
     main as cover_main,
     merge_cover_info,
+    parse_color,
+    plan_cover_layout,
     render_cover_image,
+    resolve_font,
+    wrap_title,
     _format_footer,
+    _scratch_draw,
 )
 
 pytest.importorskip("PIL")
@@ -98,11 +105,20 @@ def test_same_fandom_gets_same_colour():
 
 def test_fandom_color_override_and_solid_mode():
     info = CoverInfo(title="A", author="B", fandom="Harry Potter - J. K. Rowling")
-    mapped = CoverSettings(fandom_colors={"Harry Potter": "#740001"}, gradient=False)
+    mapped = CoverSettings(
+        fandom_colors={"Harry Potter": "#740001"},
+        gradient=False,
+        auto_contrast=False,
+    )
     top, bottom = choose_colours(info, mapped)
     assert top.lower() == "#740001"
     assert bottom.lower() == "#740001"
-    solid = CoverSettings(color_mode="solid", solid_color="#112233", gradient=False)
+    solid = CoverSettings(
+        color_mode="solid",
+        solid_color="#112233",
+        gradient=False,
+        auto_contrast=False,
+    )
     assert choose_colours(info, solid) == ("#112233", "#112233")
 
 
@@ -267,3 +283,135 @@ def test_cover_footer_includes_wordcount():
     assert _format_footer(info, hidden) == []
     raw = CoverInfo(score=62)
     assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 62"]
+
+
+def test_long_title_auto_fits_without_ellipsis():
+    info = CoverInfo(
+        title=(
+            "The One Where They All Get Together in a Coffee Shop "
+            "and Save the Galaxy (Again)"
+        ),
+        author="Jane AUs-ten",
+        fandom="Star Wars",
+        wordcount=125000,
+        score=72,
+    )
+    title, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert author is not None
+    joined = " ".join(title.lines)
+    assert "…" not in joined
+    assert "Galaxy" in joined
+    assert title.size < 88
+    assert title.line_height <= title.size * 1.2
+    assert title.bottom <= author.y - 8
+
+
+def test_short_title_keeps_large_type():
+    info = CoverInfo(title="Cameo", author="A", fandom="Star Wars")
+    title, _author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert title.size == 88
+    assert len(title.lines) == 1
+
+
+EXTREME_TITLE = (
+    "in which there is a coffee shop, a time loop, three (3) fake dating "
+    "contracts, one (1) accidental marriage, the inherent eroticism of sharing "
+    "a tiny apartment, found family, identity porn, amnesia, a missing prince, "
+    "a talking sword, five soulmate tropes in a trench coat, and they were "
+    "roommates (oh my god they were roommates), or: a treatise on why the "
+    "author should have stopped adding subtitles around chapter forty-seven "
+    "but absolutely did not"
+)
+
+
+def test_extreme_title_uses_the_cover_instead_of_ellipsis():
+    info = CoverInfo(
+        title=EXTREME_TITLE,
+        author="Jane AUs-ten",
+        fandom="Star Wars - All Media Types",
+        wordcount=344429,
+        score=62,
+    )
+    title, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert author is not None
+    joined = " ".join(title.lines)
+    assert "…" not in joined
+    assert "forty-seven" in joined
+    assert "did not" in joined
+    assert title.size <= 40
+    assert len(title.lines) > 8
+    assert title.bottom <= author.y - 8
+
+
+def test_title_max_lines_still_truncates_when_set():
+    info = CoverInfo(title=EXTREME_TITLE, author="A")
+    title, _author, _footer, _headers = plan_cover_layout(
+        info, CoverSettings(title_max_lines=5, auto_fit_title=True)
+    )
+    assert title is not None
+    assert len(title.lines) <= 5
+    assert title.lines[-1].endswith("…")
+
+
+def test_long_unbroken_word_wraps():
+    draw = _scratch_draw(600, 900)
+    font = resolve_font(CoverSettings(), 88)
+    lines = wrap_title(draw, font, "Supercalifragilisticexpialidocious", 180)
+    assert len(lines) > 1
+    assert all(line for line in lines)
+
+
+def test_auto_contrast_darkens_bright_mapped_color():
+    info = CoverInfo(title="Gold Hour", author="Sunny", fandom="Yellow Fandom")
+    settings = CoverSettings(
+        fandom_colors={"Yellow Fandom": "#e8c44a"},
+        gradient=False,
+        auto_contrast=True,
+        contrast_min_ratio=3.5,
+    )
+    top, _bottom = choose_colours(info, settings)
+    assert top.lower() != "#e8c44a"
+    rgb = parse_color(top)[:3]
+    assert contrast_ratio(rgb, (255, 255, 255)) >= 3.5
+
+
+def test_ensure_contrast_leaves_dark_colors_alone():
+    assert ensure_contrast("#740001", min_ratio=3.5).lower() == "#740001"
+
+
+def test_cover_settings_new_defaults():
+    settings = CoverSettings()
+    assert settings.auto_fit_title is True
+    assert settings.auto_contrast is True
+    assert settings.text_shadow is True
+    assert settings.text_stroke_px == 3
+    assert settings.title_leading == 1.08
+    assert settings.scrim == 0.22
+
+
+def test_settings_json_cli_overrides_preview(tmp_path: Path):
+    dest = tmp_path / "cover.png"
+    rc = cover_main(
+        [
+            "--preview",
+            "--title",
+            "Ship Happens",
+            "--author",
+            "Ann Thology",
+            "--fandom",
+            "Star Wars",
+            "--settings-json",
+            '{"width": 400, "height": 600, "scrim": 0.4, "text_stroke_px": 0}',
+            "-o",
+            str(dest),
+        ]
+    )
+    assert rc == 0
+    assert dest.is_file()
+    from PIL import Image
+
+    image = Image.open(dest)
+    assert image.size == (400, 600)

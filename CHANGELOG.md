@@ -22,6 +22,12 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 - Import works from AO3 collection pages, user work lists, and bookmark lists by pasting the listing URL in Search AO3 (same filters as site search where AO3 exposes them; bookmark URLs keep their own query filters).
 - Add AO3 request pacing controls to Plugin settings (min request interval and tag-cache warm interval). Defaults are slightly slower (1.5s between requests) to reduce throttling.
 - Expose advanced rate-limit settings in Plugin settings: max cruise interval, tag backoff multipliers, pressure scaling, jitter, and success-streak speed-up (`rate:` in config.yaml; CLI `config set rate.<key>`).
+- Add cover layout and contrast controls in Cover style (line spacing, positions, outline, dark overlay, auto-fit, text colours, and auto-darken for bright fandom colours).
+
+### Bug Fixes
+
+- Fix generated covers for long titles: tighten line spacing, shrink type to fit, and use the space above the author instead of truncating with an ellipsis.
+- Improve cover text contrast with a darker field, white type, outline, shadow, and optional overlay.
 
 ## [0.28.0] - 2026-08-27
 

@@ -185,13 +185,20 @@ class CoverSettings:
     author_size: int = 62
     header_size: int = 28
     footer_size: int = 24
-    title_max_lines: int = 5
-    author_max_lines: int = 2
+    min_title_size: int = 22
+    min_author_size: int = 24
+    title_max_lines: int = 0
+    author_max_lines: int = 3
     header_max_lines: int = 2
+    title_leading: float = 1.08
+    author_leading: float = 1.08
+    header_leading: float = 1.15
+    footer_leading: float = 1.15
+    auto_fit_title: bool = True
     title_color: str = "#ffffff"
-    author_color: str = "#ffffffcc"
-    header_color: str = "#ffffffcc"
-    footer_color: str = "#ffffffcc"
+    author_color: str = "#ffffff"
+    header_color: str = "#f5f5f5"
+    footer_color: str = "#f5f5f5"
     fields: list[str] = field(default_factory=lambda: list(DEFAULT_COVER_FIELDS))
     color_seed: str = "fandom"
     color_mode: str = "hash"
@@ -201,8 +208,8 @@ class CoverSettings:
     fandom_colors: dict[str, str] = field(default_factory=dict)
     saturation_min: float = 0.7
     saturation_max: float = 1.0
-    lightness_top: float = 0.35
-    lightness_bottom: float = 0.2
+    lightness_top: float = 0.26
+    lightness_bottom: float = 0.11
     seed_words: int = 2
     image_format: str = "png"
     jpeg_quality: int = 90
@@ -211,8 +218,14 @@ class CoverSettings:
     author_y: float = 0.82
     header_y: float = 0.07
     footer_y: float = 0.93
+    block_gap: float = 0.035
     uppercase_title: bool = False
-    text_shadow: bool = False
+    text_shadow: bool = True
+    text_stroke_px: int = 3
+    text_stroke_color: str = "#000000"
+    scrim: float = 0.22
+    auto_contrast: bool = True
+    contrast_min_ratio: float = 3.5
     border_px: int = 0
     border_color: str = "#ffffff40"
     cover_href: str = "media/cover.png"
@@ -246,6 +259,33 @@ class CoverSettings:
             settings.image_format = "jpeg"
         elif fmt != "png":
             settings.image_format = "png"
+        settings.title_size = max(int(settings.title_size), 8)
+        settings.author_size = max(int(settings.author_size), 8)
+        settings.header_size = max(int(settings.header_size), 8)
+        settings.footer_size = max(int(settings.footer_size), 8)
+        settings.min_title_size = max(8, min(int(settings.min_title_size), settings.title_size))
+        settings.min_author_size = max(8, min(int(settings.min_author_size), settings.author_size))
+        settings.title_max_lines = max(int(settings.title_max_lines), 0)
+        settings.author_max_lines = max(int(settings.author_max_lines), 1)
+        settings.header_max_lines = max(int(settings.header_max_lines), 1)
+        settings.title_leading = min(max(float(settings.title_leading), 0.8), 2.0)
+        settings.author_leading = min(max(float(settings.author_leading), 0.8), 2.0)
+        settings.header_leading = min(max(float(settings.header_leading), 0.8), 2.0)
+        settings.footer_leading = min(max(float(settings.footer_leading), 0.8), 2.0)
+        settings.padding = min(max(float(settings.padding), 0.04), 0.3)
+        settings.title_y = min(max(float(settings.title_y), 0.0), 1.0)
+        settings.author_y = min(max(float(settings.author_y), 0.0), 1.0)
+        settings.header_y = min(max(float(settings.header_y), 0.0), 1.0)
+        settings.footer_y = min(max(float(settings.footer_y), 0.0), 1.0)
+        settings.block_gap = min(max(float(settings.block_gap), 0.0), 0.2)
+        settings.scrim = min(max(float(settings.scrim), 0.0), 0.8)
+        settings.text_stroke_px = max(int(settings.text_stroke_px), 0)
+        settings.contrast_min_ratio = min(max(float(settings.contrast_min_ratio), 1.0), 8.0)
+        settings.lightness_top = min(max(float(settings.lightness_top), 0.04), 0.7)
+        settings.lightness_bottom = min(max(float(settings.lightness_bottom), 0.02), 0.7)
+        settings.auto_fit_title = bool(settings.auto_fit_title)
+        settings.auto_contrast = bool(settings.auto_contrast)
+        settings.text_shadow = bool(settings.text_shadow)
         return settings
 
     def to_dict(self) -> dict[str, Any]:

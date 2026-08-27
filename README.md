@@ -24,7 +24,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 
 - **Complete selected** — fill Series, import missing series parts, download missing EPUBs, simplify tags, recompute collections
 - Download missing native EPUBs (existing files are never replaced)
-- Generate covers (title, author, word count, quality score on a fandom-coloured field)
+- Generate covers (title, author, word count, quality score on a dark fandom-coloured field; long titles shrink to fit)
 - Import the rest of an AO3 series, or fill Calibre Series on books already in the library
 - Simplify tags, fandoms, and relationships (AO3 synonym collapse + keep/rename/drop rules; fandom metatags)
 - Edit, recompute, or add collections (shared rules plus per-work always/never pins)
