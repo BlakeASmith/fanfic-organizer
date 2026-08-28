@@ -10,6 +10,7 @@ work to manage fan-fiction and metadata cleaning etc.
 - [Ao3 downloader](https://github.com/nianeyna/ao3downloader)
 - [FanFicFare](https://github.com/jimmxinu/fanficfare)
 - Calibre **source** (read-only): `$HOME/src/calibre` — skill [Calibre source code read](.cursor/skills/calibre-source-code-read/SKILL.md). Never open PRs against `kovidgoyal/calibre`. The plugin must stay compatible with stock Calibre and must not use fork-only APIs.
+- GUI tests via computerUse: skill [Plugin GUI (computer use)](.cursor/skills/plugin-gui-computer-use/SKILL.md). Do not explore the tag browser, column picker, or library switcher — that map is in the skill.
 
 ## Project layout
 
