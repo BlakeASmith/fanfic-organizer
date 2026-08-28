@@ -637,8 +637,8 @@ def work_search_params_from_criteria(
 def parse_search_url(url: str) -> tuple[SearchCriteria, int]:
     """Parse an AO3 works search URL into criteria and a starting page number.
 
-    Accepts the filtered ``/works?...`` form and tag listing URLs
-    (``/tags/{name}/works``), including query-string filters on either.
+    Accepts the filtered ``/works?...`` form, ``/works/search?...``, and tag
+    listing URLs (``/tags/{name}/works``), including query-string filters.
     """
     parsed = urlparse(url)
     if parsed.netloc and "archiveofourown.org" not in parsed.netloc:
@@ -646,10 +646,10 @@ def parse_search_url(url: str) -> tuple[SearchCriteria, int]:
 
     path = unquote(parsed.path).rstrip("/")
     path_tag_id = _tag_id_from_works_path(path)
-    if path not in ("/works", "") and path_tag_id is None:
+    if path not in ("/works", "/works/search", "") and path_tag_id is None:
         raise ValueError(
-            "Expected an AO3 works search URL (/works or /tags/.../works), "
-            f"got path {parsed.path!r}"
+            "Expected an AO3 works search URL (/works, /works/search, or "
+            f"/tags/.../works), got path {parsed.path!r}"
         )
 
     params = parse_qs(parsed.query, keep_blank_values=True)
@@ -662,7 +662,9 @@ def build_search_url(criteria: SearchCriteria, page: int = 1) -> str:
     params = work_search_params_from_criteria(criteria)
     if page > 1:
         params.append(("page", str(page)))
-    return f"{AO3_BASE}/works?{urlencode(params, quote_via=quote)}"
+    # AO3's works index (/works?work_search=…) now renders Recent Works and
+    # ignores filters. The search form submits to /works/search.
+    return f"{AO3_BASE}/works/search?{urlencode(params, quote_via=quote)}"
 
 
 def parse_url_payload(url: str) -> dict[str, Any]:
@@ -689,7 +691,7 @@ def parse_url_payload(url: str) -> dict[str, Any]:
         return work_list_payload(parse_work_list_url(url))
     return {
         "kind": "search",
-        "list_path": "/works",
+        "list_path": "/works/search",
         "criteria": asdict(criteria),
         "start_page": start_page,
         "search_url": build_search_url(criteria, page=start_page),
@@ -787,6 +789,158 @@ def parse_work_blurb(blurb: BeautifulSoup) -> WorkRecord | None:
     )
 
 
+def _meta_tag_names(meta: BeautifulSoup, *dd_classes: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for dd_class in dd_classes:
+        for link in meta.select(f"dd.{dd_class} a.tag"):
+            name = link.get_text(strip=True)
+            key = name.casefold()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+    return names
+
+
+def _work_id_from_page(soup: BeautifulSoup, url: str = "") -> str | None:
+    if url:
+        match = re.search(r"/works/(\d+)", url)
+        if match:
+            return match.group(1)
+    canonical = soup.select_one("link[rel='canonical'][href]")
+    if canonical is not None:
+        match = re.search(r"/works/(\d+)", str(canonical.get("href") or ""))
+        if match:
+            return match.group(1)
+    for anchor in soup.select("a[href*='/works/']"):
+        match = re.search(r"/works/(\d+)", str(anchor.get("href") or ""))
+        if match:
+            return match.group(1)
+    download = soup.select_one("li.download a[href*='/downloads/']")
+    if download is not None:
+        match = re.search(r"/downloads/(\d+)", str(download.get("href") or ""))
+        if match:
+            return match.group(1)
+    return None
+
+
+def parse_work_page(html: str, *, url: str = "") -> WorkRecord | None:
+    """Parse an AO3 work show page (``/works/ID``) into a ``WorkRecord``."""
+    from ao3kit.http import is_login_wall
+
+    if is_login_wall(html):
+        return None
+    soup = parse_html(html)
+    work_id = _work_id_from_page(soup, url)
+    if not work_id:
+        return None
+
+    title_node = (
+        soup.select_one("h2.title")
+        or soup.select_one("div.preface h2")
+        or soup.select_one("#workskin h2.title")
+        or soup.select_one("#main.work-show h2.heading")
+        or soup.select_one("h2.heading")
+    )
+    title = title_node.get_text(strip=True) if title_node is not None else ""
+    author_link = soup.select_one("h3.byline a[rel='author']") or soup.select_one(
+        "a[rel='author']"
+    )
+    meta = soup.select_one("dl.work.meta") or soup
+    fandoms = _meta_tag_names(meta, "fandom")
+    relationships = _meta_tag_names(meta, "relationship")
+    tags = _meta_tag_names(meta, "warning", "character", "freeform", "relationship")
+    published = meta.select_one("dd.published")
+    return WorkRecord(
+        work_id=work_id,
+        url=url.split("?")[0].rstrip("/") if url else f"{AO3_BASE}/works/{work_id}",
+        title=title or f"AO3 work {work_id}",
+        author=author_link.get_text(strip=True) if author_link else None,
+        fandoms=fandoms,
+        tags=tags,
+        relationships=relationships,
+        date=published.get_text(strip=True) if published is not None else None,
+        metadata=WorkMetadata(
+            language=_stat_value(meta, "language"),
+            words=parse_int(_stat_value(meta, "words")),
+            chapters=parse_chapters(_stat_value(meta, "chapters")),
+            comments=parse_int(_stat_value(meta, "comments")),
+            kudos=parse_int(_stat_value(meta, "kudos")),
+            bookmarks=parse_int(_stat_value(meta, "bookmarks")),
+            hits=parse_int(_stat_value(meta, "hits")),
+        ),
+        series=parse_series_memberships(meta),
+    )
+
+
+_WORKS_FROM_PRESERVE = (
+    "cleaned",
+    "epub_file",
+    "epub_error",
+    "download_status",
+    "book_id",
+    "calibre_book_id",
+    "calibre_uuid",
+    "status",
+    "source",
+    "has_epub",
+    "comments",
+    "current_collections",
+)
+
+
+def scrape_known_works(
+    records: list[dict[str, Any]],
+    *,
+    session: requests.Session | None = None,
+    score_config: QualityScoreConfig | None = None,
+    on_status: Callable[[str], None] | None = None,
+    on_work: Callable[[WorkRecord], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch each known work page and merge metadata onto the seed records."""
+    session = session or create_session()
+    ensure_rate_limits()
+    out: list[dict[str, Any]] = []
+    pending = [
+        record
+        for record in records
+        if str(record.get("work_id") or "").strip()
+        or str(record.get("url") or "").strip()
+    ]
+    total = len(pending)
+    for index, record in enumerate(pending, start=1):
+        work = WorkRecord.from_dict(record)
+        url = ""
+        if work is not None:
+            url = work.url
+        else:
+            url = str(record.get("url") or "").strip()
+            work_id = str(record.get("work_id") or "").strip()
+            if not url and work_id:
+                url = f"{AO3_BASE}/works/{work_id}"
+        title = str(record.get("title") or (work.title if work else "") or url)
+        if on_status:
+            on_status(f"[{index}/{total}] Fetching {title}…")
+        html = fetch_page(url, session=session)
+        parsed = parse_work_page(html, url=url)
+        merged = dict(record)
+        if parsed is None:
+            if on_status:
+                on_status(f"Could not parse work page for {title}.")
+            out.append(merged)
+            continue
+        data = parsed.to_dict(score_config=score_config)
+        merged.update(data)
+        for key in _WORKS_FROM_PRESERVE:
+            if key in record:
+                merged[key] = record[key]
+        out.append(merged)
+        if on_work:
+            on_work(parsed)
+    return out
+
+
 def parse_search_page(html: str) -> SearchPage:
     soup = parse_html(html)
     page_start, page_end, total_results = parse_result_count(soup)
@@ -856,7 +1010,7 @@ def scrape_search(
 
     target = WorkListTarget(
         kind="search",
-        list_path="/works",
+        list_path="/works/search",
         criteria=criteria,
         start_page=start_page,
     )
@@ -1112,6 +1266,10 @@ def main(argv: list[str] | None = None) -> int:
         help="JSONL of seed works; look up series membership without adding other parts",
     )
     parser.add_argument(
+        "--works-from",
+        help="JSONL of known works; fetch each work page and write metadata",
+    )
+    parser.add_argument(
         "--include-series",
         action="store_true",
         help="After a search, also include every other work in the same series",
@@ -1189,6 +1347,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--fill-series-from cannot be combined with --include-series")
     if args.fill_series_from and args.download:
         parser.error("--fill-series-from cannot be combined with --download")
+    if args.works_from and args.series_from:
+        parser.error("Use only one of --works-from or --series-from")
+    if args.works_from and args.fill_series_from:
+        parser.error("Use only one of --works-from or --fill-series-from")
+    if args.works_from and args.similar_from:
+        parser.error("Use only one of --works-from or --similar-from")
+    if args.works_from and args.series_id:
+        parser.error("--works-from cannot be combined with --series-id")
     if args.series_id and args.similar_from:
         parser.error("--series-id cannot be combined with --similar-from")
 
@@ -1263,7 +1429,45 @@ def main(argv: list[str] | None = None) -> int:
 
     works: list[WorkRecord] = []
 
-    if args.fill_series_from:
+    if args.works_from:
+        try:
+            seed_records = load_jsonl_records(args.works_from)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        if not seed_records:
+            parser.error("No works found in --works-from")
+        if args.verbose:
+            print(
+                f"Fetching {len(seed_records)} work page(s).",
+                file=sys.stderr,
+            )
+        writer.replace_all(seed_records)
+        records = scrape_known_works(
+            seed_records,
+            session=session,
+            score_config=score_config,
+            on_status=on_status,
+            on_work=on_work,
+        )
+        writer.replace_all(records)
+        works = [work for work in (WorkRecord.from_dict(row) for row in records) if work]
+        if args.include_series and works:
+            from ao3kit.series import expand_with_series
+
+            if args.verbose:
+                print("Including other works from the same series…", file=sys.stderr)
+            works = expand_with_series(
+                works,
+                session=session,
+                fetch_missing=True,
+                on_status=on_status,
+                on_work=on_work,
+                on_page=on_page,
+            )
+            writer.replace_all(
+                [work.to_dict(score_config=score_config) for work in works]
+            )
+    elif args.fill_series_from:
         from ao3kit.series import fill_record_dicts
 
         try:
@@ -1400,7 +1604,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             list_path = criteria_data.get("list_path")
             criteria = SearchCriteria.from_dict(criteria_data)
-            if list_path and list_path != "/works":
+            if list_path and list_path not in ("/works", "/works/search"):
                 from ao3kit.work_lists import WorkListTarget, scrape_work_list
 
                 target = WorkListTarget(

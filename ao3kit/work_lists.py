@@ -68,7 +68,7 @@ class WorkListTarget:
             query = urlencode(params, quote_via=quote)
             return f"{AO3_BASE}{self.list_path}?{query}" if query else f"{AO3_BASE}{self.list_path}"
 
-        if self.kind == "search" and self.list_path == "/works":
+        if self.kind == "search" and self.list_path in ("/works", "/works/search"):
             return build_search_url(self.criteria, page=page)
 
         params = work_search_params_from_criteria(self.criteria)

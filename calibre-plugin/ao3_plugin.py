@@ -140,6 +140,10 @@ class FanficOrganizerPlugin(InterfaceAction):
         complete.setStatusTip(
             'Fill series, import missing parts, download EPUBs, and simplify tags'
         )
+        fill = selected.addAction('Fill from AO3', self.fill_selected_from_ao3)
+        fill.setStatusTip(
+            'Identify from URL, EPUB, or title+author, then fill missing metadata'
+        )
         selected.addSeparator()
         selected.addAction('Download EPUB', self.download_selected_epubs)
         selected.addAction('Generate covers', self.generate_covers_for_selected)
@@ -470,6 +474,63 @@ class FanficOrganizerPlugin(InterfaceAction):
             skipped,
             job_dir,
             merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
+
+    def fill_selected_from_ao3(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        from pathlib import Path
+
+        from calibre_plugins.fanfic_organizer.job_plans import plan_identify_selected
+        from calibre_plugins.fanfic_organizer.selected import (
+            export_selected_epubs_for_cover,
+            load_selected_for_identify,
+        )
+
+        ready, skipped = load_selected_for_identify(self.gui.current_db, book_ids)
+        if not ready:
+            extra = ''
+            if skipped:
+                extra = '\n\n' + '\n'.join(
+                    f'{item.get("title")}: {item.get("reason")}' for item in skipped[:8]
+                )
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'None of the selected books have an AO3 URL, EPUB, or title '
+                'to identify from.' + extra,
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('identify')
+        if job_dir is None:
+            return
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        ready = export_selected_epubs_for_cover(
+            self.gui.current_db, ready, epub_dir
+        )
+        plan_identify_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings(
+                {
+                    'download_epubs': bool(prefs.get('download_epubs', True)),
+                    'simplify_tags': bool(prefs.get('simplify_tags', False)),
+                    'include_series': bool(prefs.get('import_full_series', False)),
+                    'update_existing': True,
+                },
+                plugin_runtime_settings(),
+            ),
         )
         self.jobs().start_prepared(job_dir)
 
