@@ -148,6 +148,21 @@ def test_build_download_argv_skips_zip_and_auto_simplify():
     assert "--delay" not in argv
 
 
+def test_build_download_argv_cover_flag():
+    mod = load_scrape_run()
+    with_cover = mod.build_download_argv(
+        "/tmp/results.jsonl", "/tmp/bundle", {"cover": True}
+    )
+    without = mod.build_download_argv(
+        "/tmp/results.jsonl", "/tmp/bundle", {"cover": False}
+    )
+    default = mod.build_download_argv("/tmp/results.jsonl", "/tmp/bundle", {})
+    assert "--cover" in with_cover
+    assert "--no-cover" in without
+    assert "--cover" not in default
+    assert "--no-cover" not in default
+
+
 def test_build_cover_argv():
     mod = load_scrape_run()
     argv = mod.build_cover_argv(

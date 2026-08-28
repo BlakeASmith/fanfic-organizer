@@ -17,6 +17,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 - Search AO3 from Calibre: paste a works-search URL or an AO3 series URL, or fill the form
 - **Search similar…** from selected library books (pick fandoms, ships, characters, extra tags)
 - Import `results.jsonl` or `ao3-import.zip` produced outside Calibre
+- **Process library…** — simplify tags, fill Series, import series-mates, download missing EPUBs, generate covers, and/or recompute collections for the whole open library without selecting every row; shows a local work estimate (uncached tags, missing EPUBs, incomplete series) before starting ([demo](demos/README.md#process-library))
 - Works appear in the library as they scrape; native EPUBs attach as each file finishes
 - Optional: download native AO3 EPUBs, simplify tags on import, update existing books, always import the rest of each series
 
@@ -66,7 +67,7 @@ If Calibre is already open, quit it completely and reopen so the plugin loads.
 2. Restart Calibre.
 3. Open a **new** fanfic library (or one you are happy to write). Plugin settings → optional AO3 login.
 
-Search, import, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not in that library.
+Search, import, process library, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not in that library.
 
 Checkout development (install from this repo, cut a release) is in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 

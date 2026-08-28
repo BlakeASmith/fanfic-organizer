@@ -10,6 +10,7 @@ Usage:
   python -m ao3kit config ...
   python -m ao3kit login    # test AO3 username/password
   python -m ao3kit rate     # limiter snapshot + AO3 request log
+  python -m ao3kit library  # estimate unmatched tags / missing EPUBs from JSONL
 """
 
 from __future__ import annotations
@@ -53,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "rate",
         help="Host-wide AO3 rate-limit snapshot and collected request log",
+    )
+    sub.add_parser(
+        "library",
+        help="Whole-library helpers (estimate unmatched tags / missing EPUBs from JSONL)",
     )
 
     if not argv:
@@ -110,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.rate import main as rate_main
 
         return rate_main(rest)
+
+    if command == "library":
+        from ao3kit.library import main as library_main
+
+        return library_main(rest)
 
     parser.error(f"Unknown command: {command}")
     return 2

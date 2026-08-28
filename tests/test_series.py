@@ -196,3 +196,14 @@ def test_fill_record_dicts_preserves_cleaned(monkeypatch):
     assert filled[0]["cleaned"] == {"simplified": ["Fluff"]}
     assert filled[0]["series"][0]["series_id"] == "6133236"
     assert len(filled) == 1
+
+
+def test_fill_record_dicts_keeps_records_without_work_id(monkeypatch):
+    monkeypatch.setattr("ao3kit.series.fill_series_from_work_pages", lambda *a, **k: set())
+    records = [
+        {"title": "Local", "calibre_uuid": "abc", "tags": ["Fluff"]},
+        {"work_id": "1", "title": "AO3"},
+    ]
+    filled = fill_record_dicts(records, session=object())
+    assert [row.get("title") for row in filled] == ["Local", "AO3"]
+    assert filled[0]["calibre_uuid"] == "abc"

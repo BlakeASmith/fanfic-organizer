@@ -34,6 +34,9 @@ _PRESERVE_RECORD_KEYS = (
     "epub_file",
     "epub_error",
     "download_status",
+    "calibre_uuid",
+    "calibre_book_id",
+    "current_collections",
 )
 
 
@@ -174,13 +177,14 @@ def fill_record_dicts(
     """Fill ``series`` on existing JSONL records without adding series-mates."""
     session = session or create_session()
     ensure_rate_limits()
-    paired: list[tuple[dict[str, Any], WorkRecord]] = []
+    slots: list[tuple[str, Any]] = []
     works: list[WorkRecord] = []
     for record in records:
         work = WorkRecord.from_dict(record)
         if work is None:
+            slots.append(("keep", record))
             continue
-        paired.append((record, work))
+        slots.append(("work", (record, work)))
         works.append(work)
     looked_up = fill_series_from_work_pages(
         works,
@@ -194,7 +198,11 @@ def fill_record_dicts(
             f"Series lookup finished ({in_series}/{len(works)} in a series)."
         )
     out: list[dict[str, Any]] = []
-    for record, work in paired:
+    for kind, payload in slots:
+        if kind == "keep":
+            out.append(payload)
+            continue
+        record, work = payload
         merged = dict(record)
         data = work.to_dict(score_config=score_config)
         for key in _PRESERVE_RECORD_KEYS:
@@ -310,9 +318,11 @@ def expand_record_dicts(
     """Expand JSONL-shaped records with series-mates. Preserves ``cleaned`` / EPUB fields."""
     originals: dict[str, dict[str, Any]] = {}
     works: list[WorkRecord] = []
+    passthrough: list[dict[str, Any]] = []
     for record in records:
         work = WorkRecord.from_dict(record)
         if work is None:
+            passthrough.append(record)
             continue
         originals[work.work_id] = record
         works.append(work)
@@ -332,4 +342,5 @@ def expand_record_dicts(
             if key in src:
                 data[key] = src[key]
         out.append(data)
+    out.extend(passthrough)
     return out

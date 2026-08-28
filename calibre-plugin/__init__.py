@@ -6,11 +6,14 @@ from calibre_plugins.fanfic_organizer.plugin_version import CalibreVersion
 
 __version__ = (0, 31, 0)
 __version_display__ = "0.31.0"
+
+
 class FanficOrganizerBase(InterfaceActionBase):
     name = 'Fanfic Organizer'
     description = (
         'Search AO3, download EPUBs, generate covers, import into a Calibre '
-        'library, identify selected books from a work URL / EPUB / title+author '
+        'library, process the whole library without selecting every book, '
+        'identify selected books from a work URL / EPUB / title+author '
         'and fill missing metadata, complete selected books (series, EPUBs, tags), '
         'import series, fill Series on existing books, run searches '
         'and other work as background jobs (attach logs, detach, stop), warm '
