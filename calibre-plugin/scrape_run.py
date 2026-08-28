@@ -306,6 +306,72 @@ def prepare_fill_series_command(
     return argv, output
 
 
+def build_identify_argv(
+    hints: str,
+    output: str,
+    options: dict[str, Any],
+    *,
+    bundle: str | None = None,
+    search: bool = True,
+) -> list[str]:
+    argv = ['identify', '--from', hints, '-o', output, '--verbose']
+    if bundle:
+        argv.extend(['--bundle', bundle])
+    if not search:
+        argv.append('--no-search')
+    _append_credentials(argv, options)
+    return argv
+
+
+def prepare_identify_command(
+    records: list[dict[str, Any]],
+    tmp: str | Path,
+    options: dict[str, Any] | None = None,
+    *,
+    bundle: str | Path | None = None,
+    search: bool = True,
+) -> tuple[list[str], Path]:
+    """Write hint JSONL and return ``(argv, output_jsonl)`` for identify."""
+    options = options or {}
+    dest = Path(tmp)
+    dest.mkdir(parents=True, exist_ok=True)
+    hints = dest / 'hints.jsonl'
+    output = dest / 'identified.jsonl'
+    write_records_jsonl(hints, records)
+    argv = build_identify_argv(
+        str(hints),
+        str(output),
+        options,
+        bundle=str(bundle) if bundle else None,
+        search=search,
+    )
+    return argv, output
+
+
+def prepare_works_from_command(
+    records: list[dict[str, Any]],
+    tmp: str | Path,
+    options: dict[str, Any] | None = None,
+) -> tuple[list[str], Path, Path]:
+    """Write seed JSONL and return ``(argv, output_jsonl, dest)`` for work-page fetch."""
+    options = options or {}
+    dest = Path(tmp) / 'bundle'
+    dest.mkdir(parents=True, exist_ok=True)
+    seeds = dest / 'seeds.jsonl'
+    output = dest / 'results.jsonl'
+    write_records_jsonl(seeds, records)
+    argv = ['scrape', '--works-from', str(seeds), '-o', str(output), '--verbose']
+    if options.get('include_series'):
+        argv.append('--include-series')
+    if options.get('download_epubs'):
+        argv.append('--download')
+        argv.extend(['--epub-dir', str(dest)])
+        argv.append('--no-zip')
+        argv.append('--no-simplify')
+    _append_credentials(argv, options)
+    return argv, output, dest
+
+
 def prepare_download_command(
     records: list[dict[str, Any]],
     tmp: str | Path,

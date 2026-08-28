@@ -4,8 +4,8 @@ from calibre.customize import InterfaceActionBase
 
 from calibre_plugins.fanfic_organizer.plugin_version import CalibreVersion
 
-__version__ = (0, 30, 0)
-__version_display__ = "0.30.0"
+__version__ = (0, 31, 0)
+__version_display__ = "0.31.0"
 
 
 class FanficOrganizerBase(InterfaceActionBase):
@@ -13,8 +13,9 @@ class FanficOrganizerBase(InterfaceActionBase):
     description = (
         'Search AO3, download EPUBs, generate covers, import into a Calibre '
         'library, process the whole library without selecting every book, '
-        'complete selected books (series, EPUBs, tags), import series, '
-        'fill Series on existing books, run searches '
+        'identify selected books from a work URL / EPUB / title+author '
+        'and fill missing metadata, complete selected books (series, EPUBs, tags), '
+        'import series, fill Series on existing books, run searches '
         'and other work as background jobs (attach logs, detach, stop), warm '
         'the tag cache in the background, graph tag relationships, set up '
         'collection and tag rules, recompute or edit collections for selected '

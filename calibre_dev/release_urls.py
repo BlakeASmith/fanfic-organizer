@@ -36,8 +36,9 @@ def github_asset_url(tag: str, filename: str) -> str:
 def release_zip_url(version: str | None = None) -> str:
     """Download URL for a release zip.
 
-    Latest (no version) uses the stable ``fanfic-organizer.zip`` alias.
-    A specific version prefers ``FanFicOrganizer-<version>.zip``.
+    A specific version uses ``FanFicOrganizer-<version>.zip``.
+    Latest (no version) falls back to the historical ``fanfic-organizer.zip``
+    alias used by older GitHub releases.
     """
     if version:
         tag = release_tag(version)
@@ -48,8 +49,36 @@ def release_zip_url(version: str | None = None) -> str:
     )
 
 
+def pick_zip_download_url(assets: list[dict], tag: str = "") -> str | None:
+    """Prefer ``FanFicOrganizer-<version>.zip``, then any versioned zip, then the old alias."""
+    items = [asset for asset in assets if isinstance(asset, dict)]
+    version = tag[1:] if str(tag).startswith("v") else str(tag)
+    wanted = versioned_zip_name(version) if version else ""
+
+    def _url_for(name: str) -> str | None:
+        for asset in items:
+            if str(asset.get("name") or "") != name:
+                continue
+            url = str(asset.get("browser_download_url") or "").strip()
+            if url:
+                return url
+        return None
+
+    if wanted:
+        found = _url_for(wanted)
+        if found:
+            return found
+    for asset in items:
+        name = str(asset.get("name") or "")
+        if name.startswith(f"{VERSIONED_ZIP_PREFIX}-") and name.endswith(".zip"):
+            url = str(asset.get("browser_download_url") or "").strip()
+            if url:
+                return url
+    return _url_for(RELEASE_ZIP_NAME)
+
+
 def release_zip_urls(version: str | None = None) -> list[str]:
-    """Candidate download URLs, newest naming first, then the stable alias."""
+    """Candidate download URLs: versioned name first, then the historical alias."""
     if not version:
         return [release_zip_url()]
     tag = release_tag(version)
@@ -65,6 +94,7 @@ __all__ = [
     "RELEASE_ZIP_NAME",
     "VERSIONED_ZIP_PREFIX",
     "github_asset_url",
+    "pick_zip_download_url",
     "release_tag",
     "release_zip_url",
     "release_zip_urls",

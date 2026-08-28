@@ -358,6 +358,117 @@ def load_selected_for_epub_download(
     return plan_missing_epub_downloads(snapshot_selected_for_epub(db, book_ids))
 
 
+REASON_NO_IDENTIFY_HINT = 'no AO3 URL, EPUB, or title to identify from'
+
+
+def _usable_identify_title(title: Any) -> str:
+    text = str(title or '').strip()
+    if not text or text.casefold() in {'unknown', 'untitled', 'no title'}:
+        return ''
+    return text
+
+
+def _usable_identify_authors(authors: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(authors, (list, tuple, set)):
+        names = [str(item).strip() for item in authors if str(item).strip()]
+    elif authors:
+        names = [str(authors).strip()]
+    skip = {'unknown', 'unknown author', 'anonymous', 'anon'}
+    return [name for name in names if name.casefold() not in skip]
+
+
+def load_selected_for_identify(
+    db,
+    book_ids: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(ready, skipped)`` for Fill from AO3.
+
+    A book is usable if it has an AO3 id/URL, comments/identifiers that
+    contain one, an EPUB to scan, or a real title (author optional).
+    """
+    from calibre_plugins.fanfic_organizer.cleaned import work_id_from_url
+
+    ready: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for book_id in book_ids:
+        title = '?'
+        comments = ''
+        identifiers: dict[str, Any] = {}
+        mi = None
+        try:
+            mi = db.get_metadata(book_id, index_is_id=True)
+            title = mi.title or title
+            comments = str(getattr(mi, 'comments', None) or '')
+            identifiers = mi.get_identifiers() or {}
+        except Exception:
+            mi = None
+        record = record_from_calibre_book(db, book_id, require_work_id=False)
+        if record is None:
+            record = {'title': title}
+            authors = list(getattr(mi, 'authors', None) or []) if mi is not None else []
+            if authors:
+                record['authors'] = authors
+                record['author'] = authors[0]
+        if not record.get('title'):
+            record['title'] = title
+        record['book_id'] = book_id
+        record['calibre_book_id'] = book_id
+        if comments:
+            record['comments'] = comments
+        if identifiers:
+            record['identifiers'] = dict(identifiers)
+        has_epub = book_has_epub(db, book_id)
+        work_id = str(record.get('work_id') or '').strip()
+        url = str(record.get('url') or '').strip()
+        found = bool(
+            work_id
+            or url
+            or work_id_from_url(comments)
+            or work_id_from_url(identifiers)
+            or has_epub
+            or _usable_identify_title(record.get('title'))
+        )
+        if not found:
+            skipped.append(
+                {
+                    'book_id': book_id,
+                    'title': title,
+                    'reason': REASON_NO_IDENTIFY_HINT,
+                }
+            )
+            continue
+        ready.append(
+            {
+                'book_id': book_id,
+                'record': record,
+                'title': title,
+                'has_epub': has_epub,
+            }
+        )
+    return ready, skipped
+
+
+def stamp_ao3_identifiers(db, book_id: int, work_id: str, url: str = '') -> bool:
+    """Write ``ao3`` / ``url`` identifiers so later import can match this book."""
+    work_id = str(work_id or '').strip()
+    if not work_id:
+        return False
+    try:
+        mi = db.get_metadata(book_id, index_is_id=True)
+    except Exception:
+        return False
+    identifiers = dict(mi.get_identifiers() or {})
+    identifiers['ao3'] = work_id
+    identifiers['url'] = str(url or '').strip() or f'https://archiveofourown.org/works/{work_id}'
+    mi.set_identifiers(identifiers)
+    try:
+        db.set_metadata(book_id, mi, force_changes=True)
+    except TypeError:
+        db.set_metadata(book_id, mi)
+    return True
+
+
 def load_selected_similar_records(
     db,
     book_ids: list[int],

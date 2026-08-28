@@ -26,7 +26,14 @@ from calibre_plugins.fanfic_organizer.importer import (
     iter_identifier_maps,
     refresh_library_ui,
 )
-from calibre_plugins.fanfic_organizer.job_plans import merge_ready_with_jsonl
+from calibre_plugins.fanfic_organizer.job_plans import (
+    apply_identify_choices,
+    load_identify_jsonl,
+    merge_identify_ready,
+    merge_ready_with_jsonl,
+    plan_fill_from_ao3,
+    split_identify_records,
+)
 from calibre_plugins.fanfic_organizer.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.fanfic_organizer.jobs import (
     first_line,
@@ -61,6 +68,8 @@ from calibre_plugins.fanfic_organizer.selected import (
     apply_cover_records,
     apply_series_records,
     book_has_epub,
+    copy_book_epub,
+    stamp_ao3_identifiers,
 )
 
 
@@ -727,6 +736,8 @@ class JobSupervisor:
             return self._ingest_series(plugin)
         if action == 'apply_covers':
             return self._ingest_covers(plugin)
+        if action == 'resolve_identify':
+            return self._ingest_identify(plugin)
         return f'Unknown ingest action {action!r}.', ''
 
     def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
@@ -910,6 +921,128 @@ class JobSupervisor:
             self.gui,
             [item['book_id'] for item in outcomes if item.get('book_id') is not None],
         )
+        return summary, '\n'.join(detail_lines)
+
+    def _ingest_identify(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        from calibre_plugins.fanfic_organizer.dialogs import IdentifyWorksDialog
+        from calibre_plugins.fanfic_organizer.scrape_run import merge_plugin_settings
+        from calibre_plugins.fanfic_organizer.prefs import plugin_runtime_settings
+
+        payload = read_json(Path(plugin.get('items_json') or '')) or {}
+        ready = payload.get('ready') or []
+        skipped = list(payload.get('skipped') or [])
+        jsonl = plugin.get('jsonl')
+        records = load_identify_jsonl(jsonl) if jsonl else []
+        if not records:
+            records = [item.get('record') or {} for item in ready]
+        identified, ambiguous, failed = split_identify_records(records)
+        if ambiguous:
+            titles = {
+                item.get('book_id'): item.get('title')
+                for item in ready
+                if item.get('book_id') is not None
+            }
+            dialog = IdentifyWorksDialog(self.gui, ambiguous, titles=titles)
+            if dialog.exec_():
+                picked = apply_identify_choices(
+                    identified + ambiguous, dialog.choices()
+                )
+                kept = {
+                    str(item.get('book_id') or item.get('calibre_book_id') or '')
+                    for item in picked
+                }
+                for item in ambiguous:
+                    book_id = str(item.get('book_id') or item.get('calibre_book_id') or '')
+                    if book_id and book_id not in kept:
+                        skipped.append(
+                            {
+                                'book_id': item.get('book_id'),
+                                'title': item.get('title'),
+                                'reason': 'skipped in the picker',
+                            }
+                        )
+                identified = picked
+            else:
+                skipped.extend(
+                    {
+                        'book_id': item.get('book_id'),
+                        'title': item.get('title'),
+                        'reason': 'skipped in the picker',
+                    }
+                    for item in ambiguous
+                )
+                ambiguous = []
+        skipped.extend(
+            {
+                'book_id': item.get('book_id'),
+                'title': item.get('title'),
+                'reason': item.get('reason') or item.get('status') or 'not identified',
+            }
+            for item in failed
+        )
+        fill_ready = merge_identify_ready(ready, identified)
+        db = apply_layout_columns(self.gui)
+        stamped = 0
+        for item in fill_ready:
+            record = item.get('record') or {}
+            work_id = str(record.get('work_id') or '').strip()
+            book_id = item.get('book_id')
+            if book_id is None or not work_id:
+                continue
+            if stamp_ao3_identifiers(
+                db, int(book_id), work_id, str(record.get('url') or '')
+            ):
+                stamped += 1
+        if stamped:
+            refresh_library_ui(
+                self.gui,
+                [item['book_id'] for item in fill_ready if item.get('book_id') is not None],
+            )
+        if not fill_ready:
+            n_fail = len(skipped)
+            noun = 'book' if n_fail == 1 else 'books'
+            return (
+                f'Could not identify any of the selected {noun}.',
+                '\n'.join(
+                    f'{item.get("title")}: {item.get("reason")}'
+                    for item in skipped[:20]
+                ),
+            )
+        job_dir = self.prepare_job_dir('fill')
+        if job_dir is None:
+            return (
+                f'Identified {len(fill_ready)} book(s) but could not start the fill job.',
+                '',
+            )
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        epub_dir.mkdir(parents=True, exist_ok=True)
+        for item in fill_ready:
+            record = item.get('record') or {}
+            work_id = str(record.get('work_id') or '').strip()
+            book_id = item.get('book_id')
+            if work_id and book_id is not None:
+                copy_book_epub(db, int(book_id), epub_dir / f'{work_id}.epub')
+        options = merge_plugin_settings(
+            dict(plugin.get('fill_options') or {}),
+            plugin_runtime_settings(),
+        )
+        options['update_existing'] = True
+        plan_fill_from_ao3(fill_ready, skipped, job_dir, options)
+        started = self.start_prepared(job_dir, attach=True)
+        n = len(fill_ready)
+        noun = 'book' if n == 1 else 'books'
+        summary = f'Identified {n} {noun}'
+        if skipped:
+            summary += f'; skipped {len(skipped)}'
+        if started:
+            summary += '. Filling metadata from AO3…'
+        else:
+            summary += ' but the fill job did not start.'
+        detail_lines = [
+            f"{item.get('title') or item.get('book_id')}: "
+            f"AO3 {(item.get('record') or {}).get('work_id')}"
+            for item in fill_ready
+        ]
         return summary, '\n'.join(detail_lines)
 
     def _mark_ingest(self, job_dir: Path, ingest: str, error: str | None = None) -> None:

@@ -20,8 +20,10 @@ try:
         describe_scrape,
         prepare_download_command,
         prepare_fill_series_command,
+        prepare_identify_command,
         prepare_scrape_command,
         prepare_series_from_command,
+        prepare_works_from_command,
         write_records_jsonl,
     )
 except ImportError:  # pytest loads this file without the Calibre package
@@ -34,8 +36,10 @@ except ImportError:  # pytest loads this file without the Calibre package
         describe_scrape,
         prepare_download_command,
         prepare_fill_series_command,
+        prepare_identify_command,
         prepare_scrape_command,
         prepare_series_from_command,
+        prepare_works_from_command,
         write_records_jsonl,
     )
 
@@ -498,6 +502,92 @@ def plan_library_job(
     )
 
 
+def plan_identify_selected(
+    ready: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    job_dir: Path,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """Identify selected books, then Calibre ingest may prompt and fill."""
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    bundle = work / 'bundle'
+    bundle.mkdir(parents=True, exist_ok=True)
+    records = [item['record'] for item in ready]
+    argv, jsonl = prepare_identify_command(
+        records, work, options, bundle=bundle, search=True
+    )
+    items_path = work / 'items.json'
+    write_json(items_path, {'ready': ready, 'skipped': skipped})
+    n = len(ready)
+    noun = 'book' if n == 1 else 'books'
+    fill_options = {
+        'download_epubs': bool(options.get('download_epubs', True)),
+        'simplify_tags': bool(options.get('simplify_tags', False)),
+        'include_series': bool(options.get('include_series', False)),
+        'update_existing': True,
+        'username': options.get('username') or '',
+        'password': options.get('password') or '',
+    }
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Identify AO3 works ({n} {noun})',
+            'kind': 'identify',
+            'steps': [argv],
+            'plugin': {
+                'action': 'resolve_identify',
+                'jsonl': str(jsonl),
+                'items_json': str(items_path),
+                'bundle_root': str(bundle),
+                'fill_options': fill_options,
+            },
+            'result': _jsonl_result(jsonl, label='book'),
+        },
+    )
+
+
+def plan_fill_from_ao3(
+    ready: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    job_dir: Path,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """Fetch work pages (and optional EPUBs/tags) for already-identified books."""
+    work = job_dir / 'work'
+    records = [item['record'] for item in ready]
+    if options.get('include_series'):
+        argv, jsonl, dest = prepare_series_from_command(records, work, options)
+    else:
+        argv, jsonl, dest = prepare_works_from_command(records, work, options)
+    steps = [argv]
+    out = jsonl
+    if options.get('simplify_tags'):
+        cleaned = work / 'cleaned.jsonl'
+        steps.append(build_enrich_argv(str(jsonl), str(cleaned), options))
+        out = cleaned
+    items_path = work / 'items.json'
+    write_json(items_path, {'ready': ready, 'skipped': skipped})
+    n = len(ready)
+    noun = 'book' if n == 1 else 'books'
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Fill from AO3 ({n} {noun})',
+            'kind': 'fill',
+            'steps': steps,
+            'plugin': _import_plugin(
+                jsonl=out,
+                bundle_root=dest if options.get('download_epubs') else None,
+                update_existing=True,
+                results_jsonl=jsonl,
+                skipped=skipped,
+            ),
+            'result': _jsonl_result(out),
+        },
+    )
+
+
 def plan_graph_serve(job_dir: Path, *, port: int | None = None) -> dict[str, Any]:
     """Singleton live viewer (``jobs/graph``). Does not write Calibre."""
     work = job_dir / 'work'
@@ -560,5 +650,113 @@ def merge_ready_with_jsonl(
                 key = None
             if key is not None and key in by_book_id:
                 updated['record'] = by_book_id[key]
+        merged.append(updated)
+    return merged
+
+
+def load_identify_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """Load identify JSONL (work id is optional on ambiguous/failed rows)."""
+    records: list[dict[str, Any]] = []
+    dest = Path(path)
+    if not dest.is_file():
+        return records
+    for line in dest.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def split_identify_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    identified: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for record in records:
+        status = str(record.get('status') or '').strip()
+        work_id = str(record.get('work_id') or '').strip()
+        if status == 'identified' and work_id:
+            identified.append(record)
+        elif status == 'ambiguous':
+            ambiguous.append(record)
+        else:
+            failed.append(record)
+    return identified, ambiguous, failed
+
+
+def apply_identify_choices(
+    records: list[dict[str, Any]],
+    choices: dict[Any, Any],
+) -> list[dict[str, Any]]:
+    """Apply ``{book_id: work_id}`` picks; skip empty choices."""
+    mapped = {
+        str(key).strip(): str(value).strip()
+        for key, value in (choices or {}).items()
+        if str(key).strip()
+    }
+    out: list[dict[str, Any]] = []
+    for record in records:
+        status = str(record.get('status') or '').strip()
+        if status == 'identified' and str(record.get('work_id') or '').strip():
+            out.append(dict(record))
+            continue
+        if status != 'ambiguous':
+            continue
+        book_id = record.get('book_id')
+        if book_id is None:
+            book_id = record.get('calibre_book_id')
+        picked = mapped.get(str(book_id or '').strip(), '')
+        if not picked:
+            continue
+        updated = dict(record)
+        for candidate in record.get('candidates') or []:
+            if str((candidate or {}).get('work_id') or '').strip() != picked:
+                continue
+            for key, value in candidate.items():
+                if key in {'status', 'source', 'reason', 'candidates', 'score'}:
+                    continue
+                updated[key] = value
+            break
+        updated['work_id'] = picked
+        url = str(updated.get('url') or '').strip()
+        if not url:
+            updated['url'] = f'https://archiveofourown.org/works/{picked}'
+        updated['status'] = 'identified'
+        updated['source'] = str(updated.get('source') or 'search')
+        updated.pop('candidates', None)
+        updated.pop('reason', None)
+        out.append(updated)
+    return out
+
+
+def merge_identify_ready(
+    ready: list[dict[str, Any]],
+    identified: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach identified work records onto the original ``{book_id, record}`` rows."""
+    by_book: dict[str, dict[str, Any]] = {}
+    for record in identified:
+        book_id = record.get('book_id')
+        if book_id is None:
+            book_id = record.get('calibre_book_id')
+        if book_id is None:
+            continue
+        by_book[str(book_id)] = record
+    merged: list[dict[str, Any]] = []
+    for item in ready:
+        book_id = item.get('book_id')
+        record = by_book.get(str(book_id))
+        if record is None:
+            continue
+        updated = dict(item)
+        updated['record'] = record
+        updated['title'] = record.get('title') or item.get('title')
         merged.append(updated)
     return merged
