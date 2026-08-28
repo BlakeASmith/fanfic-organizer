@@ -24,6 +24,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 ### Bug Fixes
 
 - Point PR build comments at the plugin zip download instead of the workflow run page.
+- Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
 
 ### Performance
 

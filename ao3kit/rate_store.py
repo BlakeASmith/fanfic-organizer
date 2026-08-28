@@ -247,6 +247,11 @@ class SharedRateStore:
             )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+        # Autocommit except for explicit BEGIN IMMEDIATE in update/claim_slot.
+        # Implicit DEFERRED transactions can upgrade locks and let two jobs
+        # overlap if ``now`` was sampled before the exclusive lock.
+        conn.isolation_level = None
+        conn.execute("PRAGMA busy_timeout=60000")
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
         _ensure_event_columns(conn)
@@ -260,9 +265,8 @@ class SharedRateStore:
                   success_streak, crawl_delay, updated_at
                 ) VALUES (1, ?, ?, ?, 0, NULL, ?)
                 """,
-                (now, 1.0, 1.0, now),
+                (now, 1.5, 1.5, now),
             )
-        conn.commit()
         self._conn = conn
         return conn
 
@@ -327,21 +331,33 @@ class SharedRateStore:
         interval: float,
         *,
         max_wait: float | None = None,
+        stale_after: float | None = None,
+        stale_wait: float | None = None,
     ) -> tuple[float, RateSnapshot]:
         """Reserve the next request slot. Returns (seconds_to_wait, snapshot).
 
-        ``max_wait`` caps leftover delay and rewinds ``next_allowed_at`` so a
-        far-future lock (timeout claim, cancelled 429) does not keep blocking.
+        ``now`` is sampled *inside* the exclusive lock so a job that waited
+        for SQLite cannot rewind ``next_allowed_at`` into the past and let
+        another process claim an overlapping slot.
+
+        ``max_wait`` caps leftover delay (login). ``stale_after`` / ``stale_wait``
+        rewind a far-future lock (crash / cancelled 429) without punching
+        through a live Retry-After that is still within ``stale_after``.
         """
-        now = time.time()
         wait_holder = [0.0]
+        interval = max(float(interval), 0.0)
 
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            wait = max(0.0, snap.next_allowed_at - now)
+            now = time.time()
+            leftover = max(0.0, snap.next_allowed_at - now)
+            wait = leftover
+            if stale_after is not None and leftover > float(stale_after):
+                cap = leftover if stale_wait is None else max(float(stale_wait), 0.0)
+                wait = min(wait, cap)
             if max_wait is not None:
                 wait = min(wait, max(float(max_wait), 0.0))
             wait_holder[0] = wait
-            next_at = now + wait + max(float(interval), 0.0)
+            next_at = now + wait + interval
             return RateSnapshot(
                 next_allowed_at=next_at,
                 base_interval=snap.base_interval,
@@ -457,37 +473,42 @@ class SharedRateStore:
             header = 1 if event.retry_after_from_header else 0
         with self._local:
             conn = self._connect()
-            conn.execute(
-                """
-                INSERT INTO rate_events (
-                  ts, kind, method, path, status, outcome, wait_s,
-                  interval_s, elapsed_s, retry_after_s,
-                  retry_after_from_header, attempt,
-                  base_interval, tag_interval, success_streak, pid
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.ts,
-                    event.kind,
-                    event.method,
-                    event.path,
-                    event.status,
-                    event.outcome,
-                    event.wait_s,
-                    event.interval_s,
-                    event.elapsed_s,
-                    event.retry_after_s,
-                    header,
-                    event.attempt,
-                    event.base_interval,
-                    event.tag_interval,
-                    event.success_streak,
-                    event.pid,
-                ),
-            )
-            self._bump_hourly(conn, event)
-            self._maybe_prune(conn)
-            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO rate_events (
+                      ts, kind, method, path, status, outcome, wait_s,
+                      interval_s, elapsed_s, retry_after_s,
+                      retry_after_from_header, attempt,
+                      base_interval, tag_interval, success_streak, pid
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.ts,
+                        event.kind,
+                        event.method,
+                        event.path,
+                        event.status,
+                        event.outcome,
+                        event.wait_s,
+                        event.interval_s,
+                        event.elapsed_s,
+                        event.retry_after_s,
+                        header,
+                        event.attempt,
+                        event.base_interval,
+                        event.tag_interval,
+                        event.success_streak,
+                        event.pid,
+                    ),
+                )
+                self._bump_hourly(conn, event)
+                self._maybe_prune(conn)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def recent_events(
         self,
@@ -754,20 +775,30 @@ class SharedRateStore:
     def clear_events(self) -> int:
         with self._local:
             conn = self._connect()
-            row = conn.execute("SELECT COUNT(*) AS n FROM rate_events").fetchone()
-            n = int(row["n"] if row else 0)
-            conn.execute("DELETE FROM rate_events")
-            conn.commit()
-            return n
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT COUNT(*) AS n FROM rate_events").fetchone()
+                n = int(row["n"] if row else 0)
+                conn.execute("DELETE FROM rate_events")
+                conn.commit()
+                return n
+            except Exception:
+                conn.rollback()
+                raise
 
     def clear_hourly(self) -> int:
         with self._local:
             conn = self._connect()
-            row = conn.execute("SELECT COUNT(*) AS n FROM rate_hourly").fetchone()
-            n = int(row["n"] if row else 0)
-            conn.execute("DELETE FROM rate_hourly")
-            conn.commit()
-            return n
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT COUNT(*) AS n FROM rate_hourly").fetchone()
+                n = int(row["n"] if row else 0)
+                conn.execute("DELETE FROM rate_hourly")
+                conn.commit()
+                return n
+            except Exception:
+                conn.rollback()
+                raise
 
     def read_robots(self) -> tuple[str, float] | None:
         """Return ``(robots.txt body, fetched_at wall-clock)`` or None."""

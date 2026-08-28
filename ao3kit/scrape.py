@@ -25,7 +25,6 @@ from ao3kit.http import (
     create_session,
     get_text,
 )
-from ao3kit.rate import ensure_rate_limits
 
 RESULT_COUNT_RE = re.compile(
     r"(?P<start>\d+)\s*-\s*(?P<end>\d+)\s+of\s+(?P<total>[\d,]+)\s+(?:Works?|Bookmarks)",
