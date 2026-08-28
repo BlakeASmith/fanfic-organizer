@@ -436,7 +436,7 @@ def format_library_estimate(
         if options.needs_ao3_id() and estimate.without_ao3:
             lines.append(
                 f'{estimate.without_ao3} book(s) have no AO3 id — skipped for '
-                'series/download (simplify still runs on books with an id).'
+                'series/download; simplify still runs on them.'
             )
 
     if options.fill_series or options.import_series:
@@ -476,6 +476,8 @@ def format_library_estimate(
             bits.append(f'{estimate.without_ao3} have no AO3 id')
         if bits:
             lines.append('Skipped: ' + '; '.join(bits) + '.')
+        if not estimate.missing_epub:
+            lines.append('The download step will be skipped (nothing to fetch).')
 
     if options.generate_covers:
         lines.append('')
@@ -531,7 +533,13 @@ def select_library_job_books(
     options: LibraryJobOptions,
 ) -> tuple[list[LibraryBook], list[dict[str, Any]]]:
     """Keep books that can run the chosen jobs; explain skips."""
-    require_ao3 = options.needs_ao3_id()
+    local_tasks = (
+        options.simplify_tags
+        or options.generate_covers
+        or options.recompute_collections
+    )
+    # Skip no-AO3 books only when every chosen task needs a work id.
+    require_ao3 = options.needs_ao3_id() and not local_tasks
     ready: list[LibraryBook] = []
     skipped: list[dict[str, Any]] = []
     for book in books:

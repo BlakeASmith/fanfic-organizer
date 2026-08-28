@@ -354,6 +354,14 @@ def plan_cover_selected(
     )
 
 
+def _record_has_ao3(record: dict[str, Any] | None) -> bool:
+    rec = record or {}
+    return bool(
+        str(rec.get('work_id') or '').strip()
+        or str(rec.get('url') or '').strip()
+    )
+
+
 def _dedupe_actions(actions: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -409,14 +417,16 @@ def plan_library_job(
     elif cover_flag is False:
         series_opts['cover'] = False
 
-    if import_series:
+    ao3_records = [record for record in records if _record_has_ao3(record)]
+
+    if import_series and ao3_records:
         argv, jsonl, dest = prepare_series_from_command(records, work, series_opts)
         steps.append(argv)
         current = jsonl
         plugin['bundle_root'] = str(dest)
         plugin['results_jsonl'] = str(jsonl)
         actions.append('import_records')
-    elif fill_series:
+    elif fill_series and ao3_records:
         argv, jsonl = prepare_fill_series_command(records, work, options)
         steps.append(argv)
         current = jsonl

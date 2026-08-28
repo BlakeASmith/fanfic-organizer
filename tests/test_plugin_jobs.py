@@ -406,7 +406,7 @@ def test_plan_library_job_skips_download_when_all_have_epub(tmp_path: Path):
     assert "attach_epubs" not in spec["plugin"].get("actions", [])
 
 
-def test_plan_library_job_skips_download_when_all_have_epub(tmp_path: Path):
+def test_plan_library_job_empty_when_download_only_all_have_epub(tmp_path: Path):
     plans = load_job_plans()
     spec = plans.plan_library_job(
         [
@@ -418,9 +418,51 @@ def test_plan_library_job_skips_download_when_all_have_epub(tmp_path: Path):
             }
         ],
         [],
-        tmp_path / "library-3",
-        {"simplify_tags": True, "download_epubs": True},
+        tmp_path / "library-4",
+        {"download_epubs": True, "simplify_tags": False},
     )
-    assert spec["steps"][0][:2] == ["tags", "enrich"]
-    assert spec["plugin"]["action"] == "apply_cleaned"
-    assert "attach_epubs" not in spec["plugin"].get("actions", [])
+    assert spec["steps"] == []
+
+
+def test_plan_library_job_enrich_keeps_books_without_ao3(tmp_path: Path):
+    plans = load_job_plans()
+    spec = plans.plan_library_job(
+        [
+            {
+                "book_id": 1,
+                "title": "Has id",
+                "has_epub": False,
+                "record": {
+                    "work_id": "11",
+                    "url": "https://archiveofourown.org/works/11",
+                    "title": "Has id",
+                },
+            },
+            {
+                "book_id": 2,
+                "title": "Local only",
+                "has_epub": False,
+                "record": {
+                    "title": "Local only",
+                    "tags": ["Fluff"],
+                    "calibre_uuid": "uuid-2",
+                    "calibre_book_id": 2,
+                },
+            },
+        ],
+        [],
+        tmp_path / "library-5",
+        {"simplify_tags": True, "download_epubs": True, "cover_on_download": False},
+    )
+    assert spec["steps"][0][0] == "download"
+    assert spec["steps"][1][:2] == ["tags", "enrich"]
+    jsonl = Path(spec["plugin"]["jsonl"])
+    # enrich output path; input still has both books
+    input_jsonl = tmp_path / "library-5" / "work" / "input.jsonl"
+    rows = [
+        json.loads(line)
+        for line in input_jsonl.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {row.get("title") for row in rows} == {"Has id", "Local only"}
+    assert jsonl.name == "cleaned.jsonl"

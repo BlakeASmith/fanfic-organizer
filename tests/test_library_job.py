@@ -128,6 +128,36 @@ def test_estimate_simplify_counts_uncached(tmp_path: Path):
     assert "no AO3 URLs are loaded" in text
 
 
+def test_format_estimate_notes_no_ao3_still_simplified():
+    mod = load_library_job()
+    books = [
+        _book(mod, book_id=1, title="Has id", identifiers={"ao3": "11"}, tags=("Fluff",)),
+        _book(mod, book_id=2, title="Local", tags=("Angst",)),
+    ]
+    options = mod.LibraryJobOptions(simplify_tags=True, download_epubs=True)
+    estimate = mod.estimate_library_job(books, options, cache_path=None)
+    text = mod.format_library_estimate(estimate, options)
+    assert "1 book(s) have no AO3 id" in text
+    assert "simplify still runs on them" in text
+    skipped = mod.format_library_estimate(
+        mod.estimate_library_job(
+            [
+                _book(
+                    mod,
+                    book_id=1,
+                    title="Has file",
+                    identifiers={"ao3": "11"},
+                    has_epub=True,
+                )
+            ],
+            mod.LibraryJobOptions(simplify_tags=False, download_epubs=True),
+            cache_path=None,
+        ),
+        mod.LibraryJobOptions(simplify_tags=False, download_epubs=True),
+    )
+    assert "The download step will be skipped" in skipped
+
+
 def test_options_from_prefs_defaults_to_simplify_only():
     mod = load_library_job()
     options = mod.options_from_prefs({})
@@ -168,3 +198,9 @@ def test_select_library_job_books_skips_without_ao3_when_needed():
     )
     assert [book.book_id for book in all_ready] == [1, 2]
     assert none_skipped == []
+    mixed, mixed_skip = mod.select_library_job_books(
+        books,
+        mod.LibraryJobOptions(simplify_tags=True, download_epubs=True),
+    )
+    assert [book.book_id for book in mixed] == [1, 2]
+    assert mixed_skip == []

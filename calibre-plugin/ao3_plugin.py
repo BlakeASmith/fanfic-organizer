@@ -364,7 +364,18 @@ class FanficOrganizerPlugin(InterfaceAction):
         )
         if chosen.download_epubs:
             job_options['cover'] = bool(chosen.cover_on_download)
-        plan_library_job(ready, skipped, job_dir, job_options)
+        spec = plan_library_job(ready, skipped, job_dir, job_options)
+        if not spec.get('steps'):
+            import shutil
+
+            shutil.rmtree(job_dir, ignore_errors=True)
+            error_dialog(
+                self.gui,
+                'Process library',
+                'Nothing to do with the current options for this library.',
+                show=True,
+            )
+            return
         self.jobs().start_prepared(job_dir)
 
     def show_scrape_dialog(self):
