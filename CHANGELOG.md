@@ -15,6 +15,8 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-28
+
 ### Features
 
 - Add **Fill from AO3** for selected books: identify a work from its AO3 URL, the EPUB, or title + author (picker when several works match), then fill missing metadata and EPUBs.
