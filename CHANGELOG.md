@@ -15,6 +15,10 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Documentation
+
+- Add a Fill from AO3 screen recording and screenshots under [`demos/`](demos/README.md).
+
 ## [0.31.0] - 2026-08-28
 
 ### Features
