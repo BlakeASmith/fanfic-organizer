@@ -140,6 +140,17 @@ def _append_optional(argv: list[str], flag: str, value: Any) -> None:
     argv.extend([flag, text])
 
 
+def _append_cover_flag(argv: list[str], options: dict[str, Any] | None) -> None:
+    """Pass ``--cover`` / ``--no-cover`` when the caller set an explicit value."""
+    if not options:
+        return
+    value = options.get('cover')
+    if value is True:
+        argv.append('--cover')
+    elif value is False:
+        argv.append('--no-cover')
+
+
 def merge_plugin_settings(
     options: dict[str, Any],
     settings: dict[str, Any] | None = None,
@@ -266,6 +277,7 @@ def prepare_series_from_command(
         argv.extend(['--epub-dir', str(dest)])
         argv.append('--no-zip')
         argv.append('--no-simplify')
+        _append_cover_flag(argv, options)
     _append_credentials(argv, options)
     return argv, output, dest
 
@@ -323,6 +335,7 @@ def build_download_argv(
         '--no-zip',
         '--no-simplify',
     ]
+    _append_cover_flag(argv, options)
     _append_credentials(argv, options)
     return argv
 

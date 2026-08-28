@@ -127,6 +127,183 @@ class ImportJsonlDialog(QDialog):
         }
 
 
+class ProcessLibraryDialog(QDialog):
+    """Choose whole-library jobs without selecting every book."""
+
+    def __init__(self, parent, *, estimate_text: str, options=None):
+        super().__init__(parent)
+        self.setWindowTitle('Process library')
+        self.setMinimumWidth(520)
+        self.resize(560, 640)
+
+        from calibre_plugins.fanfic_organizer.library_job import (
+            LibraryJobOptions,
+        )
+
+        self._options_cls = LibraryJobOptions
+        options = options or LibraryJobOptions()
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'Apply Fanfic Organizer jobs to <b>every book in the currently '
+            'open library</b> (including the virtual library, if any). You do '
+            'not need to select all rows — that can freeze a large library.\n\n'
+            'Pick what to run, then start one background job. The estimate '
+            'uses the library and the local tag cache only; it does not load '
+            'AO3 URLs.'
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        tasks = QGroupBox('Work to do')
+        tasks_layout = QVBoxLayout(tasks)
+        self.simplify_tags = QCheckBox(
+            'Simplify tags, fandoms & relationships'
+        )
+        self.simplify_tags.setChecked(bool(options.simplify_tags))
+        self.simplify_tags.setToolTip(
+            'AO3 synonym collapse plus your tag rules. Uncached names are '
+            'fetched from AO3; names already in the tag cache stay local.'
+        )
+        tasks_layout.addWidget(self.simplify_tags)
+
+        self.fill_series = QCheckBox('Fill Series on books already in the library')
+        self.fill_series.setChecked(bool(options.fill_series))
+        self.fill_series.setToolTip(
+            'Look up AO3 series membership for books that are missing a '
+            'series id, name, or part number. Does not import extra works.'
+        )
+        tasks_layout.addWidget(self.fill_series)
+
+        self.import_series = QCheckBox('Import the rest of each series')
+        self.import_series.setChecked(bool(options.import_series))
+        self.import_series.setToolTip(
+            'Fetch every other work on the same AO3 series and add missing '
+            'parts to this library. Search filters do not apply. Can add '
+            'many books.'
+        )
+        tasks_layout.addWidget(self.import_series)
+
+        self.download_epubs = QCheckBox('Download missing native EPUBs')
+        self.download_epubs.setChecked(bool(options.download_epubs))
+        self.download_epubs.setToolTip(
+            'Download AO3 EPUBs for books that have a work id and no EPUB. '
+            'Existing files are never replaced.'
+        )
+        tasks_layout.addWidget(self.download_epubs)
+
+        self.generate_covers = QCheckBox('Generate covers')
+        self.generate_covers.setChecked(bool(options.generate_covers))
+        self.generate_covers.setToolTip(
+            'Stamp a generated cover onto existing EPUBs (and Calibre '
+            'thumbnails). Local; no AO3.'
+        )
+        tasks_layout.addWidget(self.generate_covers)
+
+        self.recompute_collections = QCheckBox('Recompute collections from rules')
+        self.recompute_collections.setChecked(bool(options.recompute_collections))
+        self.recompute_collections.setToolTip(
+            'Apply collection rules to every book. Included automatically '
+            'when simplify is checked. Local; no AO3.'
+        )
+        tasks_layout.addWidget(self.recompute_collections)
+        layout.addWidget(tasks)
+
+        settings = QGroupBox('This job')
+        settings_layout = QVBoxLayout(settings)
+        self.update_existing = QCheckBox(
+            'Update existing books matched by AO3 work id or URL'
+        )
+        self.update_existing.setChecked(bool(options.update_existing))
+        settings_layout.addWidget(self.update_existing)
+        self.cover_on_download = QCheckBox(
+            'Generate covers on newly downloaded EPUBs'
+        )
+        self.cover_on_download.setChecked(bool(options.cover_on_download))
+        settings_layout.addWidget(self.cover_on_download)
+        layout.addWidget(settings)
+
+        estimate_box = QGroupBox('Estimate')
+        estimate_layout = QVBoxLayout(estimate_box)
+        self.estimate = QPlainTextEdit()
+        self.estimate.setReadOnly(True)
+        self.estimate.setPlainText(estimate_text)
+        try:
+            self.estimate.setMinimumHeight(180)
+        except Exception:
+            pass
+        estimate_layout.addWidget(self.estimate)
+        layout.addWidget(estimate_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.start_btn = buttons.button(QDialogButtonBox.Ok)
+        self.start_btn.setText('Start job')
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        for widget in (
+            self.simplify_tags,
+            self.fill_series,
+            self.import_series,
+            self.download_epubs,
+            self.generate_covers,
+            self.recompute_collections,
+        ):
+            widget.toggled.connect(self._sync_dependent)
+        self._sync_dependent()
+        self._estimate_callback = None
+
+    def set_estimate_text(self, text: str) -> None:
+        self.estimate.setPlainText(text)
+
+    def set_estimate_callback(self, callback) -> None:
+        self._estimate_callback = callback
+        for widget in (
+            self.simplify_tags,
+            self.fill_series,
+            self.import_series,
+            self.download_epubs,
+            self.generate_covers,
+            self.recompute_collections,
+        ):
+            widget.toggled.connect(self._refresh_estimate)
+
+    def _refresh_estimate(self, *_args) -> None:
+        if self._estimate_callback is None:
+            return
+        text = self._estimate_callback(self.values())
+        if text:
+            self.set_estimate_text(text)
+
+    def _sync_dependent(self, *_args) -> None:
+        import_on = self.import_series.isChecked()
+        if import_on:
+            self.fill_series.setChecked(True)
+        self.fill_series.setEnabled(not import_on)
+        simplify_on = self.simplify_tags.isChecked()
+        self.recompute_collections.setEnabled(not simplify_on)
+        if simplify_on:
+            self.recompute_collections.setChecked(True)
+        self.cover_on_download.setEnabled(self.download_epubs.isChecked())
+        self.update_existing.setEnabled(self.import_series.isChecked())
+        self.start_btn.setEnabled(self.values().any_selected())
+
+    def values(self):
+        return self._options_cls(
+            simplify_tags=self.simplify_tags.isChecked(),
+            fill_series=self.fill_series.isChecked()
+            or self.import_series.isChecked(),
+            import_series=self.import_series.isChecked(),
+            download_epubs=self.download_epubs.isChecked(),
+            generate_covers=self.generate_covers.isChecked(),
+            recompute_collections=self.recompute_collections.isChecked()
+            or self.simplify_tags.isChecked(),
+            cover_on_download=self.cover_on_download.isChecked(),
+            update_existing=self.update_existing.isChecked(),
+        )
+
+
 def _form_line(placeholder: str = '', text: str = '') -> QLineEdit:
     widget = QLineEdit()
     if placeholder:

@@ -18,7 +18,7 @@ pytest
 
 Calibre **source** for reading GUI/library internals lives at `$HOME/src/calibre` (the [BlakeASmith/calibre](https://github.com/BlakeASmith/calibre) fork). Clone it if missing; update with `git -C "$HOME/src/calibre" pull --ff-only origin master`. Agents: follow `.cursor/skills/calibre-source-code-read/SKILL.md`. Do not open PRs against `kovidgoyal/calibre`. The plugin must keep working on stock Calibre and must not depend on fork-only additions.
 
-Open a **throwaway Calibre library**. Search, import, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
+Open a **throwaway Calibre library**. Search, import, process library, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
 
 ```bash
 python makeplugin.py install   # or: just load-dev
@@ -41,7 +41,7 @@ Restart Calibre yourself unless you are iterating on plugin UI and need the GUI 
 | Jobs / logs / retry | `ao3kit/jobs.py`; plugin `job_*.py` |
 | Covers | `ao3kit/covers.py`; plugin `cover_ui.py` |
 | Calibre columns / import | `calibre-plugin/importer.py`, `columns.py`, `cleaned.py` |
-| Plugin menu / settings | `ao3_plugin.py`, `config.py`, `dialogs.py` |
+| Plugin menu / settings | `ao3_plugin.py`, `config.py`, `dialogs.py`, `library_job.py` |
 
 Known copies (do not invent a third): `calibre-plugin/similar.py` mirrors `ao3kit/similar.py`; `SORT_OPTIONS` lives in `ao3kit/scrape.py` and `calibre-plugin/scrape_run.py` (tests check they match).
 

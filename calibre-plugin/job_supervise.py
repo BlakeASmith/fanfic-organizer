@@ -673,11 +673,15 @@ class JobSupervisor:
         plugin: dict[str, Any],
         status: dict[str, Any],
     ) -> None:
-        action = str(plugin.get('action') or 'none')
+        raw_actions = plugin.get('actions')
+        if isinstance(raw_actions, list) and raw_actions:
+            actions = [str(item or '').strip() or 'none' for item in raw_actions]
+        else:
+            actions = [str(plugin.get('action') or 'none')]
         root = self.jobs_dir()
         job_dir = root / job_id if root is not None else None
         dialog = self._dialogs.get(job_id)
-        if action in ('', 'none'):
+        if all(action in ('', 'none') for action in actions):
             if job_dir is not None:
                 self._mark_ingest(job_dir, 'none')
             self._notify(job_id, status.get('message') or 'Finished.', ok=True)
@@ -687,20 +691,18 @@ class JobSupervisor:
                 dialog.mark_working('Writing into Calibre library…')
             except RuntimeError:
                 pass
-        if action == 'import_records':
-            summary, detail = self._ingest_import(plugin)
-        elif action == 'attach_epubs':
-            summary, detail = self._ingest_epubs(job_id, plugin)
-        elif action == 'apply_cleaned':
-            summary, detail = self._ingest_apply(plugin, collections=False)
-        elif action == 'apply_collections':
-            summary, detail = self._ingest_apply(plugin, collections=True)
-        elif action == 'apply_series':
-            summary, detail = self._ingest_series(plugin)
-        elif action == 'apply_covers':
-            summary, detail = self._ingest_covers(plugin)
-        else:
-            summary, detail = f'Unknown ingest action {action!r}.', ''
+        summaries: list[str] = []
+        details: list[str] = []
+        for action in actions:
+            if action in ('', 'none'):
+                continue
+            summary, detail = self._ingest_action(job_id, plugin, action)
+            if summary:
+                summaries.append(summary)
+            if detail:
+                details.append(detail)
+        summary = ' '.join(summaries) if summaries else 'Finished.'
+        detail = '\n\n'.join(details)
         if job_dir is not None:
             self._mark_ingest(job_dir, 'done')
         cleanup = plugin.get('cleanup_dir')
@@ -709,6 +711,23 @@ class JobSupervisor:
 
             shutil.rmtree(cleanup, ignore_errors=True)
         self._notify(job_id, summary, ok=True, detail=detail)
+
+    def _ingest_action(
+        self, job_id: str, plugin: dict[str, Any], action: str
+    ) -> tuple[str, str]:
+        if action == 'import_records':
+            return self._ingest_import(plugin)
+        if action == 'attach_epubs':
+            return self._ingest_epubs(job_id, plugin)
+        if action == 'apply_cleaned':
+            return self._ingest_apply(plugin, collections=False)
+        if action == 'apply_collections':
+            return self._ingest_apply(plugin, collections=True)
+        if action == 'apply_series':
+            return self._ingest_series(plugin)
+        if action == 'apply_covers':
+            return self._ingest_covers(plugin)
+        return f'Unknown ingest action {action!r}.', ''
 
     def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
         jsonl = plugin.get('jsonl')
@@ -750,7 +769,7 @@ class JobSupervisor:
         payload = read_json(Path(plugin.get('items_json') or '')) or {}
         ready = payload.get('ready') or []
         skipped = payload.get('skipped') or []
-        jsonl = plugin.get('jsonl')
+        jsonl = plugin.get('results_jsonl') or plugin.get('jsonl')
         bundle = plugin.get('bundle_root')
         downloaded: list[dict[str, Any]] = []
         if jsonl and Path(jsonl).is_file():

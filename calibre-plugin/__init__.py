@@ -12,7 +12,8 @@ class FanficOrganizerBase(InterfaceActionBase):
     name = 'Fanfic Organizer'
     description = (
         'Search AO3, download EPUBs, generate covers, import into a Calibre '
-        'library, complete selected books (series, EPUBs, tags), import series, '
+        'library, process the whole library without selecting every book, '
+        'complete selected books (series, EPUBs, tags), import series, '
         'fill Series on existing books, run searches '
         'and other work as background jobs (attach logs, detach, stop), warm '
         'the tag cache in the background, graph tag relationships, set up '
