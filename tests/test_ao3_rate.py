@@ -47,6 +47,7 @@ def test_path_is_robots_disallow_matches_ao3_star_rules():
 AO3_THROTTLED_URLS = (
     "https://archiveofourown.org/works/1",
     "https://archiveofourown.org/works?commit=Search",
+    "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo",
     "https://archiveofourown.org/tags/Fluff/works",
     "https://archiveofourown.org/series/123",
     "https://archiveofourown.org/collections/anonymous/works",
@@ -62,11 +63,15 @@ def test_interval_for_url_search_and_download_match_work_lane():
     work = interval_for_url("https://archiveofourown.org/works/1")
     tag = interval_for_url("https://archiveofourown.org/tags/Fluff")
     listing = interval_for_url("https://archiveofourown.org/works?commit=Search")
+    search = interval_for_url(
+        "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo"
+    )
     download = interval_for_url("https://archiveofourown.org/downloads/1/x.epub")
     series = interval_for_url("https://archiveofourown.org/series/99")
     tag_works = interval_for_url("https://archiveofourown.org/tags/Fluff/works")
     assert work == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert listing == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert search == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert download == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert series == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert tag_works == pytest.approx(DEFAULT_MIN_INTERVAL)
@@ -355,6 +360,12 @@ def test_url_kind_classifies_common_paths():
     assert (
         url_kind(
             "https://archiveofourown.org/works?commit=Sort+and+Filter"
+        )
+        == "search"
+    )
+    assert (
+        url_kind(
+            "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo"
         )
         == "search"
     )
