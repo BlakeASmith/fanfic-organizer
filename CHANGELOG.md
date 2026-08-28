@@ -24,6 +24,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Fetch AO3 work searches from `/works/search` so title and filter queries match again (the `/works?` listing now shows Recent Works and ignored filters).
 - Point PR build comments at the plugin zip download instead of the workflow run page.
 
 ### Performance

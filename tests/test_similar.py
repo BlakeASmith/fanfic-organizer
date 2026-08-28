@@ -175,7 +175,7 @@ def test_cleaned_category_detail():
 def test_similar_payload_default_search_url():
     payload = similar_payload([CLANDESTINE])
     assert payload["criteria"]["tag_id"] == "Harry Potter - J. K. Rowling"
-    assert "archiveofourown.org/works?" in payload["search_url"]
+    assert "archiveofourown.org/works/search?" in payload["search_url"]
     assert "Harry" in payload["search_url"]
     assert payload["facets"]["authors"] == ["my_castlescrumbling"]
 

@@ -26,7 +26,7 @@ def test_parse_url_payload_extracts_criteria():
     assert payload["criteria"]["sort_column"] == "kudos_count"
     assert payload["criteria"]["language_id"] == "en"
     assert "Doctor Who" in (payload["criteria"]["tag_id"] or "")
-    assert "archiveofourown.org/works?" in payload["search_url"]
+    assert "archiveofourown.org/works/search?" in payload["search_url"]
 
 
 def test_scrape_parse_only_prints_json(capsys):
@@ -47,13 +47,25 @@ def test_scrape_requires_output_without_parse_only():
         scrape_main(["--tag-id", "Doctor Who (2005)"])
 
 
+def test_parse_works_search_url():
+    payload = parse_url_payload(
+        "https://archiveofourown.org/works/search?"
+        "work_search%5Bquery%5D=title%3A%20%22Home%22"
+    )
+    assert payload["kind"] == "search"
+    assert payload["list_path"] == "/works/search"
+    assert payload["criteria"]["query"] == 'title: "Home"'
+    assert "archiveofourown.org/works/search?" in payload["search_url"]
+    assert "Home" in payload["search_url"]
+
+
 def test_parse_tag_works_url():
     payload = parse_url_payload(
         "https://archiveofourown.org/tags/Doctor%20Who%20(2005)/works"
     )
     assert payload["criteria"]["tag_id"] == "Doctor Who (2005)"
     assert payload["start_page"] == 1
-    assert "archiveofourown.org/works?" in payload["search_url"]
+    assert "archiveofourown.org/works/search?" in payload["search_url"]
     assert "Doctor" in payload["search_url"]
 
 

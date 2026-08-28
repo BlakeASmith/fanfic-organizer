@@ -638,8 +638,8 @@ def work_search_params_from_criteria(
 def parse_search_url(url: str) -> tuple[SearchCriteria, int]:
     """Parse an AO3 works search URL into criteria and a starting page number.
 
-    Accepts the filtered ``/works?...`` form and tag listing URLs
-    (``/tags/{name}/works``), including query-string filters on either.
+    Accepts the filtered ``/works?...`` form, ``/works/search?...``, and tag
+    listing URLs (``/tags/{name}/works``), including query-string filters.
     """
     parsed = urlparse(url)
     if parsed.netloc and "archiveofourown.org" not in parsed.netloc:
@@ -647,10 +647,10 @@ def parse_search_url(url: str) -> tuple[SearchCriteria, int]:
 
     path = unquote(parsed.path).rstrip("/")
     path_tag_id = _tag_id_from_works_path(path)
-    if path not in ("/works", "") and path_tag_id is None:
+    if path not in ("/works", "/works/search", "") and path_tag_id is None:
         raise ValueError(
-            "Expected an AO3 works search URL (/works or /tags/.../works), "
-            f"got path {parsed.path!r}"
+            "Expected an AO3 works search URL (/works, /works/search, or "
+            f"/tags/.../works), got path {parsed.path!r}"
         )
 
     params = parse_qs(parsed.query, keep_blank_values=True)
@@ -663,7 +663,9 @@ def build_search_url(criteria: SearchCriteria, page: int = 1) -> str:
     params = work_search_params_from_criteria(criteria)
     if page > 1:
         params.append(("page", str(page)))
-    return f"{AO3_BASE}/works?{urlencode(params, quote_via=quote)}"
+    # AO3's works index (/works?work_search=…) now renders Recent Works and
+    # ignores filters. The search form submits to /works/search.
+    return f"{AO3_BASE}/works/search?{urlencode(params, quote_via=quote)}"
 
 
 def parse_url_payload(url: str) -> dict[str, Any]:
@@ -690,7 +692,7 @@ def parse_url_payload(url: str) -> dict[str, Any]:
         return work_list_payload(parse_work_list_url(url))
     return {
         "kind": "search",
-        "list_path": "/works",
+        "list_path": "/works/search",
         "criteria": asdict(criteria),
         "start_page": start_page,
         "search_url": build_search_url(criteria, page=start_page),
@@ -1009,7 +1011,7 @@ def scrape_search(
 
     target = WorkListTarget(
         kind="search",
-        list_path="/works",
+        list_path="/works/search",
         criteria=criteria,
         start_page=start_page,
     )
@@ -1603,7 +1605,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             list_path = criteria_data.get("list_path")
             criteria = SearchCriteria.from_dict(criteria_data)
-            if list_path and list_path != "/works":
+            if list_path and list_path not in ("/works", "/works/search"):
                 from ao3kit.work_lists import WorkListTarget, scrape_work_list
 
                 target = WorkListTarget(
