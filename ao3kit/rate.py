@@ -287,10 +287,13 @@ def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
 
 
 def ensure_rate_limits() -> float:
-    """Refresh shared work/search/download floors from config + the limiter engine."""
-    interval = refresh_rate_settings_from_config()
-    if interval > 0:
-        return configure_min_interval(interval)
+    """Refresh shared work/search/download floors from config + the limiter engine.
+
+    Raises the host-wide floor to the configured minimum but does **not**
+    reset an elevated adaptive interval. A new job must not wipe backoff
+    another job just applied.
+    """
+    refresh_rate_settings_from_config()
     return configure_min_interval()
 
 
@@ -413,12 +416,20 @@ def note_request_success(url: str) -> None:
 
 
 def _is_work_listing_url(url: str) -> bool:
-    path = urlparse(url).path or "/"
+    path = (urlparse(url).path or "/").rstrip("/") or "/"
+    if path.startswith("/series/"):
+        return True
     if path.startswith("/collections/") and path.endswith("/works"):
         return True
     if path.startswith("/users/") and (
-        path.endswith("/works") or path.endswith("/works/collected") or path.endswith("/bookmarks")
+        path.endswith("/works")
+        or path.endswith("/works/collected")
+        or path.endswith("/bookmarks")
     ):
+        return True
+    if path.startswith("/tags/") and path.endswith("/works"):
+        return True
+    if path in {"/works", "/works/search"}:
         return True
     return False
 
@@ -449,11 +460,16 @@ def path_is_robots_disallow(url: str) -> bool:
 
 def _is_tag_profile_url(url: str) -> bool:
     parsed = urlparse(url)
-    path = parsed.path or "/"
+    path = (parsed.path or "/").rstrip("/") or "/"
     if not path.startswith("/tags/"):
         return False
-    # /tags/search is heavy; individual /tags/Name pages are light.
-    return path != "/tags/search" and not path.startswith("/tags/search/")
+    rest = path[len("/tags/") :]
+    if not rest or rest == "search" or rest.startswith("search/"):
+        return False
+    # /tags/Name/works and /tags/Name/bookmarks are listings, not profiles.
+    if "/" in rest:
+        return False
+    return True
 
 
 def _is_login_url(url: str) -> bool:
@@ -725,6 +741,12 @@ def clear_rate_hourly() -> int:
 
 
 def interval_for_url(url: str) -> float:
+    """Seconds to reserve before this URL. Every AO3 path has a floor.
+
+    Login uses a short dedicated interval. Tag profiles use the adaptive tag
+    lane. Search, work, download, series, robots.txt, and any other AO3 path
+    share the host-wide config floor (never zero).
+    """
     snap = _clamp_snapshot(_STATE.store.read())
     base = snap.base_interval
     tag = snap.tag_interval
@@ -732,11 +754,13 @@ def interval_for_url(url: str) -> float:
     if crawl:
         base = max(base, crawl)
         tag = max(tag, crawl)
+    floor = _floor(crawl)
+    min_iv = _configured_min_interval()
     if _is_login_url(url):
         return max(LOGIN_MIN_INTERVAL, crawl or 0.0)
     if _is_tag_profile_url(url):
-        return tag
-    return base
+        return max(tag, floor, min_iv)
+    return max(base, floor, min_iv)
 
 
 def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> float:
@@ -750,18 +774,13 @@ def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> fl
     interval = interval_for_url(url)
     cfg = _rcfg()
     jittered = interval * random.uniform(1.0 - cfg.jitter, 1.0 + cfg.jitter)
-    leftover = max(0.0, _STATE.store.read().next_allowed_at - time.time())
-    max_wait: float | None = None
-    if _is_login_url(url) and leftover > LOGIN_MAX_WAIT:
-        max_wait = LOGIN_MAX_WAIT
-    elif leftover > STALE_LOCK_SECONDS:
-        max_wait = STALE_LOCK_WAIT
-        _emit(
-            on_status,
-            f"Stale AO3 rate lock ({leftover:.0f}s left from an earlier 429) — "
-            f"waiting {STALE_LOCK_WAIT:.0f}s instead…",
-        )
-    wait, _snap = _STATE.store.claim_slot(jittered, max_wait=max_wait)
+    is_login = _is_login_url(url)
+    wait, _snap = _STATE.store.claim_slot(
+        jittered,
+        max_wait=LOGIN_MAX_WAIT if is_login else None,
+        stale_after=None if is_login else STALE_LOCK_SECONDS,
+        stale_wait=STALE_LOCK_WAIT,
+    )
     if wait > 0.05:
         _emit(on_status, f"Rate limit: waiting {wait:.1f}s before AO3 request…")
         time.sleep(wait)
@@ -775,6 +794,7 @@ def _disk_robots_fresh(fetched_at: float) -> bool:
 def _fetch_robots_text(fetcher: Callable[[], str] | None) -> str:
     if fetcher is not None:
         return fetcher()
+    wait_for_request(ROBOTS_URL)
     import requests
 
     response = requests.get(
