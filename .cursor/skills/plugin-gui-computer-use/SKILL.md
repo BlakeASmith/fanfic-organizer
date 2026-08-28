@@ -21,7 +21,7 @@ Dismiss **Update available** / What’s New / crash reporter with Cancel or Esc.
 
 ## Setup (parent agent, before computerUse)
 
-1. Throwaway library only. Search / Import / Fill from AO3 / Complete / Tag purge **write the open library**.
+1. Throwaway library only. Search / Import / Process library / Fill from AO3 / Complete / Tag purge **write the open library**.
 2. Prepare books **before** starting the GUI. `calibredb` refuses the library while Calibre has it open.
 3. `python3 makeplugin.py install` (no `--restart` unless this session must reload plugin UI now). Lock-aware restart only; never `killall calibre`.
 4. `python3 makeplugin.py status`. If the GUI is up on the wrong library, switch once or start a new GUI with the right path.
@@ -93,6 +93,7 @@ Series is Calibre’s built-in field (AO3 series name + index). Identifiers: `ur
 - Search AO3 and import...
 - Search similar... *(needs a selection)*
 - Import JSONL or zip...
+- Process library... *(no selection; whole open library)*
 - **Selected books (N)** *(disabled if N=0)*
   - Complete selected
   - Fill from AO3
@@ -114,6 +115,8 @@ Series is Calibre’s built-in field (AO3 series name + index). Identifiers: `ur
 - Plugin settings...
 
 Fill from AO3 picker title: **Fill from AO3 — pick the matching work**. First radio is pre-checked. **Skip this book** / **OK** / **Cancel**. Cancel skips remaining ambiguous books.
+
+Process library dialog title: **Process library**. **Start job** / **Cancel**. No selection needed. Estimate text updates when you toggle tasks.
 
 ## Jobs
 

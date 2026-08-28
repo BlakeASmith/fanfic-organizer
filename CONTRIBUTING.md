@@ -18,7 +18,7 @@ pytest
 
 Calibre **source** for reading GUI/library internals lives at `$HOME/src/calibre` (the [BlakeASmith/calibre](https://github.com/BlakeASmith/calibre) fork). Clone it if missing; update with `git -C "$HOME/src/calibre" pull --ff-only origin master`. Agents: follow `.cursor/skills/calibre-source-code-read/SKILL.md`. Do not open PRs against `kovidgoyal/calibre`. The plugin must keep working on stock Calibre and must not depend on fork-only additions.
 
-Open a **throwaway Calibre library**. Search, import, process library, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
+Open a **throwaway Calibre library**. Search, import, process library, fill from AO3, complete, and tag purge write the library that is open. Config, cache, jobs, and the AO3 session are **not** stored in that library: they follow the [XDG Base Directory](https://specifications.freedesktop.org/basedir/latest/) spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`). pytest sets `XDG_*` under a temp dir so it does not write your real home.
 
 GUI testing with computerUse: follow [Plugin GUI (computer use)](.cursor/skills/plugin-gui-computer-use/SKILL.md) (menu map, columns, throwaway library). Do not spend time collapsing the tag browser or discovering Calibre chrome.
 

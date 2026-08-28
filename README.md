@@ -17,7 +17,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 - Search AO3 from Calibre: paste a works-search URL or an AO3 series URL, or fill the form
 - **Search similar…** from selected library books (pick fandoms, ships, characters, extra tags)
 - Import `results.jsonl` or `ao3-import.zip` produced outside Calibre
-- **Process library…** — simplify tags, fill Series, import series-mates, download missing EPUBs, generate covers, and/or recompute collections for the whole open library without selecting every row; shows a local work estimate (uncached tags, missing EPUBs, incomplete series) before starting
+- **Process library…** — simplify tags, fill Series, import series-mates, download missing EPUBs, generate covers, and/or recompute collections for the whole open library without selecting every row; shows a local work estimate (uncached tags, missing EPUBs, incomplete series) before starting ([demo](demos/README.md#process-library))
 - Works appear in the library as they scrape; native EPUBs attach as each file finishes
 - Optional: download native AO3 EPUBs, simplify tags on import, update existing books, always import the rest of each series
 
