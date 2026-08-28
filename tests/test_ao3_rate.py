@@ -587,6 +587,9 @@ def test_concurrent_job_claims_do_not_overlap(tmp_path: Path):
     import threading
 
     db = tmp_path / "rate.sqlite"
+    bootstrap = SharedRateStore(db)
+    bootstrap.read()
+    bootstrap.close()
     barrier = threading.Barrier(8)
     next_ats: list[float] = []
     lock = threading.Lock()

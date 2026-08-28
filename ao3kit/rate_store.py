@@ -218,6 +218,19 @@ def _ensure_event_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE rate_events ADD COLUMN {name} {typ}")
 
 
+def _retry_if_locked(fn, *, attempts: int = 20, delay: float = 0.05):
+    last: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            last = exc
+            if "locked" not in str(exc).lower() or attempt == attempts - 1:
+                raise
+            time.sleep(delay * (attempt + 1))
+    raise last  # pragma: no cover
+
+
 class SharedRateStore:
     """Serialize rate-limit claims across processes via SQLite ``BEGIN IMMEDIATE``."""
 
@@ -245,8 +258,13 @@ class SharedRateStore:
                 timeout=60,
                 check_same_thread=False,
             )
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=60000")
+
+            def _enable_wal() -> None:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+
+            _retry_if_locked(_enable_wal)
         # Autocommit except for explicit BEGIN IMMEDIATE in update/claim_slot.
         # Implicit DEFERRED transactions can upgrade locks and let two jobs
         # overlap if ``now`` was sampled before the exclusive lock.
