@@ -2,7 +2,7 @@
 
 Demos of Fanfic Organizer in Calibre. The plugin is the product; these files are recordings of the real UI, not mockups.
 
-## Fill from AO3
+## Fill from AO3[^recorded]
 
 **Selected books → Fill from AO3** identifies works already in the library, then fills missing AO3 metadata (and native EPUBs when that setting is on).
 
@@ -17,3 +17,5 @@ After **OK**, Fill writes identifiers, Fandom, tags, and the rest onto those row
 ![Coming Home after Fill from AO3](fill-from-ao3-filled.jpg)
 
 [Screen recording](fill-from-ao3-identify-and-picker.mp4) (select two books → Fill from AO3 → picker → filled library).
+
+[^recorded]: Recorded 28 August 2026 against Fanfic Organizer [0.31.0](https://github.com/BlakeASmith/fanfic-organizer/releases/tag/v0.31.0). Later releases may look different.
