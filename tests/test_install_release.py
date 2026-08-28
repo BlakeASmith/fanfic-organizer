@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -10,6 +11,7 @@ import pytest
 from calibre_dev.install_release import (
     download_release_zip,
     install_release_zip,
+    latest_zip_candidates,
     post_install_message,
     run_install,
 )
@@ -17,6 +19,7 @@ from calibre_dev.release_urls import (
     GITHUB_REPO,
     RAW_INSTALL_SH,
     RELEASE_ZIP_NAME,
+    pick_zip_download_url,
     release_tag,
     release_zip_url,
     release_zip_urls,
@@ -52,6 +55,30 @@ def test_release_zip_urls_fall_back_to_alias():
     assert urls[1].endswith("fanfic-organizer.zip")
 
 
+def test_pick_zip_download_url_prefers_versioned_asset():
+    assets = [
+        {
+            "name": "fanfic-organizer.zip",
+            "browser_download_url": "https://example.com/alias.zip",
+        },
+        {
+            "name": "FanFicOrganizer-0.31.0.zip",
+            "browser_download_url": "https://example.com/versioned.zip",
+        },
+    ]
+    assert pick_zip_download_url(assets, tag="v0.31.0") == "https://example.com/versioned.zip"
+
+
+def test_pick_zip_download_url_uses_legacy_alias_when_needed():
+    assets = [
+        {
+            "name": "fanfic-organizer.zip",
+            "browser_download_url": "https://example.com/alias.zip",
+        }
+    ]
+    assert pick_zip_download_url(assets, tag="v0.26.1") == "https://example.com/alias.zip"
+
+
 def test_release_tag():
     assert release_tag("0.26.1") == "v0.26.1"
     assert release_tag("v0.26.1") == "v0.26.1"
@@ -62,9 +89,13 @@ def test_raw_install_sh_points_at_repo():
     assert GITHUB_REPO in RAW_INSTALL_SH
 
 
-def test_download_release_zip(tmp_path: Path):
+def test_download_release_zip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     payload = b"fake zip bytes"
     dest = tmp_path / RELEASE_ZIP_NAME
+    versioned = (
+        "https://github.com/BlakeASmith/fanfic-organizer/releases/"
+        "download/v0.31.0/FanFicOrganizer-0.31.0.zip"
+    )
 
     class FakeResponse:
         def read(self) -> bytes:
@@ -78,11 +109,15 @@ def test_download_release_zip(tmp_path: Path):
 
     def fake_urlopen(url, timeout=120):
         assert timeout == 120
-        assert url == release_zip_url()
+        assert url == versioned
         return FakeResponse()
 
     import urllib.request
 
+    monkeypatch.setattr(
+        "calibre_dev.install_release.latest_zip_candidates",
+        lambda: [versioned],
+    )
     original = urllib.request.urlopen
     urllib.request.urlopen = fake_urlopen
     try:
@@ -90,8 +125,40 @@ def test_download_release_zip(tmp_path: Path):
     finally:
         urllib.request.urlopen = original
 
-    assert used == release_zip_url()
+    assert used == versioned
     assert dest.read_bytes() == payload
+
+
+def test_latest_zip_candidates_prefers_github_asset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "tag_name": "v0.31.0",
+                    "assets": [
+                        {
+                            "name": "FanFicOrganizer-0.31.0.zip",
+                            "browser_download_url": "https://example.com/FanFicOrganizer-0.31.0.zip",
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "calibre_dev.install_release.urllib.request.urlopen",
+        lambda request, timeout=30: FakeResponse(),
+    )
+    urls = latest_zip_candidates()
+    assert urls[0] == "https://example.com/FanFicOrganizer-0.31.0.zip"
+    assert "fanfic-organizer.zip" in urls[-1]
 
 
 def test_install_release_zip_calls_customize(

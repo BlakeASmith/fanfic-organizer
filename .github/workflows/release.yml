@@ -63,25 +63,20 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
           python makeplugin.py changelog "${VERSION}" > /tmp/release-notes.md
-      - name: Build plugin zips
+      - name: Build plugin zip
         run: |
           python makeplugin.py zip \
             --set-version "${{ steps.meta.outputs.version }}" \
             --output "${{ steps.meta.outputs.zip_name }}"
-          cp "${{ steps.meta.outputs.zip_name }}" fanfic-organizer.zip
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fanfic-organizer
-          path: |
-            ${{ steps.meta.outputs.zip_name }}
-            fanfic-organizer.zip
+          name: ${{ steps.meta.outputs.zip_name }}
+          path: ${{ steps.meta.outputs.zip_name }}
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ steps.meta.outputs.zip_name }}
-            fanfic-organizer.zip
+          files: ${{ steps.meta.outputs.zip_name }}
           body_path: /tmp/release-notes.md
           prerelease: false
           fail_on_unmatched_files: true

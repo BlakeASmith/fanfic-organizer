@@ -44,3 +44,7 @@ def test_release_workflow_is_manual_with_bump_and_skips_preview_tags():
     assert "python makeplugin.py release --publish --bump" in text
     assert "!contains(github.ref_name, 'preview')" in text
     assert "annotate-previews" in text
+    assert "fanfic-organizer.zip" not in text
+    assert "cp " not in text
+    assert 'files: ${{ steps.meta.outputs.zip_name }}' in text
+    assert "name: Build plugin zip" in text

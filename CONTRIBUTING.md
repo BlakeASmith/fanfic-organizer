@@ -49,7 +49,7 @@ Known copies (do not invent a third): `calibre-plugin/similar.py` mirrors `ao3ki
 
 One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__init__.py` must match (`__version_display__` is the same `X.Y.Z` on the source tree). `pyproject.toml` reads the package attribute.
 
-**Standard releases** (what most users should install) are cut from GitHub Actions → **Release plugin** (`workflow_dispatch`, bump `patch` / `minor` / `major`). That workflow rolls `[Unreleased]` into `## [X.Y.Z]`, bumps versions, tags `vX.Y.Z`, attaches `FanFicOrganizer-X.Y.Z.zip` plus the `fanfic-organizer.zip` alias, and prepends a notice on preview releases whose commits are included. Locally, `just release` / `python makeplugin.py release` still does the same cut; add `publish` to push and create the GitHub release. This tool does not cut 1.0+.
+**Standard releases** (what most users should install) are cut from GitHub Actions → **Release plugin** (`workflow_dispatch`, bump `patch` / `minor` / `major`). That workflow rolls `[Unreleased]` into `## [X.Y.Z]`, bumps versions, tags `vX.Y.Z`, attaches `FanFicOrganizer-X.Y.Z.zip`, and prepends a notice on preview releases whose commits are included. Locally, `just release` / `python makeplugin.py release` still does the same cut; add `publish` to push and create the GitHub release. This tool does not cut 1.0+.
 
 **Preview pre-releases** are created automatically on every push to `main`. They use `X.Y.Z-preview.<GitHub run number>+<short SHA>` (next 0.x minor as `X.Y.Z`), tag `v` plus that string, and are marked GitHub pre-releases. The pipeline only *reads* `[Unreleased]` for notes; it never writes `CHANGELOG.md`. Prefer a standard release for daily use.
 
@@ -101,7 +101,7 @@ just release patch                          # next 0.x patch instead
 
 Same as `python makeplugin.py release` / `--patch` / `--bump` / `--publish`.
 
-`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `FanFicOrganizer-X.Y.Z.zip` (and copies `fanfic-organizer.zip`), and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section. Preview tags (`v*-preview*`) are not treated as standard releases.
+`--publish` commits the changelog/version files (`chore(release): X.Y.Z`), pushes, builds `FanFicOrganizer-X.Y.Z.zip`, and runs `gh release create` with those notes. Pushing the `vX.Y.Z` tag also runs CI, which rebuilds the zip and sets the release body from the versioned CHANGELOG section. Preview tags (`v*-preview*`) are not treated as standard releases.
 
 ## Tests and plugin install
 

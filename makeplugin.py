@@ -290,7 +290,7 @@ def _cmd_changelog(version: str | None) -> int:
 
 def _publish_release(version: str, notes: str) -> None:
     from calibre_dev.preview import annotate_superseded_previews
-    from calibre_dev.versioning import STABLE_ZIP_NAME, plugin_zip_name, release_tag_name
+    from calibre_dev.versioning import plugin_zip_name, release_tag_name
 
     tag = release_tag_name(version)
     _git(["add", *RELEASE_PATHS])
@@ -298,8 +298,6 @@ def _publish_release(version: str, notes: str) -> None:
     _git(["push", "origin", "HEAD"])
     dest = ROOT / plugin_zip_name(version)
     build_zip(dest, version=version)
-    alias = ROOT / STABLE_ZIP_NAME
-    shutil.copy2(dest, alias)
     from ao3kit.paths import cache_dir
 
     notes_path = cache_dir() / "release-notes.md"
@@ -312,7 +310,6 @@ def _publish_release(version: str, notes: str) -> None:
             "create",
             tag,
             str(dest),
-            str(alias),
             "--title",
             tag,
             "--notes-file",
@@ -397,8 +394,7 @@ def _cmd_release(
     if publish:
         _publish_release(version, notes)
         print(
-            f"Published GitHub release v{version} with {plugin_zip_name(version)} "
-            "and fanfic-organizer.zip.",
+            f"Published GitHub release v{version} with {plugin_zip_name(version)}.",
             file=sys.stderr,
         )
     else:

@@ -54,7 +54,7 @@ The plugin and optional CLI share one core. Prefer implementing behavior in `ao3
 
 ## Calibre plugin (new library)
 
-End users install **fanfic-organizer.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). The plugin shows up in Calibre as **Fanfic Organizer**. That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config, cache, jobs, and the AO3 session follow the XDG Base Directory spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not the Calibre library.
+End users install **FanFicOrganizer-X.Y.Z.zip** from GitHub Releases (Preferences → Plugins → Load plugin from file). The plugin shows up in Calibre as **Fanfic Organizer**. That zip includes the Qt UI, `ao3kit/`, and vendored pure-Python deps (`requests`, PyYAML, …). Calibre already has `lxml`. Jobs run with `calibre-debug -e run_ao3kit.py` so there is no separate Python or git checkout. Config, cache, jobs, and the AO3 session follow the XDG Base Directory spec (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not the Calibre library.
 
 A git checkout wins when plugin settings **Project path** is set, `AO3KIT_PROJECT` is set, or `python makeplugin.py install` wrote `calibre-plugin/dev_project.json` (copied into the installed plugin). Otherwise the bundled zip runtime is used. `python makeplugin.py install` stays `calibre-customize -b` (plugin UI only, shells out to the checkout). `python makeplugin.py zip` is the fat release artifact.
 
@@ -74,7 +74,7 @@ Installing and restarting are separate. **Default is install only.** Do not quit
 | `python makeplugin.py changelog` | Print `[Unreleased]` (or `changelog 0.26.0` for a shipped section). |
 | `python makeplugin.py release` / `just release` | Cut `[Unreleased]` into the next 0.x minor (or `--patch` / `--bump` / `just release patch`). Add `--publish` / `just release publish` to commit, push, zip, and `gh release create`. 1.0+ is not supported. GitHub Actions **Release plugin** (`workflow_dispatch`) is the same cut for the standard channel. |
 
-Checkout **install** is for developers. End users install a **standard** GitHub Release (`FanFicOrganizer-X.Y.Z.zip`, also attached as `fanfic-organizer.zip`). Every push to `main` also publishes a **preview** pre-release (`X.Y.Z-preview.<run>+<sha>`); those are for testers. Pull requests build a zip and comment an artifact link — they do not create GitHub releases. Tag `vX.Y.Z` (not `*-preview*`) runs `.github/workflows/release.yml` attach, which zips the plugin and sets the release body from the versioned CHANGELOG section.
+Checkout **install** is for developers. End users install a **standard** GitHub Release (`FanFicOrganizer-X.Y.Z.zip`). Every push to `main` also publishes a **preview** pre-release (`X.Y.Z-preview.<run>+<sha>`); those are for testers. Pull requests build a zip and comment an artifact link — they do not create GitHub releases. Tag `vX.Y.Z` (not `*-preview*`) runs `.github/workflows/release.yml` attach, which zips the plugin and sets the release body from the versioned CHANGELOG section.
 
 ### Changelog and GitHub Releases
 
