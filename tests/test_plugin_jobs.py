@@ -306,3 +306,116 @@ def test_merge_ready_with_jsonl():
     )
     assert merged[0]["record"]["title"] == "new"
     assert merged[0]["book_id"] == 1
+
+
+def test_plan_identify_selected(tmp_path: Path):
+    plans = load_job_plans()
+    job_dir = tmp_path / "identify-1"
+    spec = plans.plan_identify_selected(
+        [
+            {
+                "book_id": 4,
+                "title": "Time Storm",
+                "record": {
+                    "title": "Time Storm",
+                    "author": "whovian",
+                    "book_id": 4,
+                    "epub_file": "epubs/book-4.epub",
+                },
+                "has_epub": True,
+            }
+        ],
+        [],
+        job_dir,
+        {"username": "emily", "password": "secret", "download_epubs": True},
+    )
+    assert spec["kind"] == "identify"
+    assert spec["steps"][0][0] == "identify"
+    assert "--from" in spec["steps"][0]
+    assert "--bundle" in spec["steps"][0]
+    assert spec["plugin"]["action"] == "resolve_identify"
+    assert spec["plugin"]["fill_options"]["download_epubs"] is True
+    assert spec["plugin"]["fill_options"]["update_existing"] is True
+    assert (job_dir / "work" / "hints.jsonl").is_file()
+
+
+def test_plan_fill_from_ao3_uses_works_from(tmp_path: Path):
+    plans = load_job_plans()
+    job_dir = tmp_path / "fill-1"
+    spec = plans.plan_fill_from_ao3(
+        [
+            {
+                "book_id": 4,
+                "record": {
+                    "work_id": "90876776",
+                    "url": "https://archiveofourown.org/works/90876776",
+                    "title": "Time Storm",
+                },
+            }
+        ],
+        [],
+        job_dir,
+        {"download_epubs": True, "simplify_tags": True, "include_series": False},
+    )
+    assert spec["kind"] == "fill"
+    assert spec["steps"][0][0] == "scrape"
+    assert "--works-from" in spec["steps"][0]
+    assert "--download" in spec["steps"][0]
+    assert spec["steps"][1][:2] == ["tags", "enrich"]
+    assert spec["plugin"]["action"] == "import_records"
+    assert spec["plugin"]["update_existing"] is True
+
+
+def test_plan_fill_from_ao3_include_series(tmp_path: Path):
+    plans = load_job_plans()
+    job_dir = tmp_path / "fill-series-1"
+    spec = plans.plan_fill_from_ao3(
+        [
+            {
+                "book_id": 4,
+                "record": {
+                    "work_id": "90876776",
+                    "title": "Time Storm",
+                },
+            }
+        ],
+        [],
+        job_dir,
+        {"download_epubs": False, "include_series": True},
+    )
+    assert "--series-from" in spec["steps"][0]
+    assert "--works-from" not in spec["steps"][0]
+
+
+def test_apply_identify_choices_and_merge_ready():
+    plans = load_job_plans()
+    identified, ambiguous, failed = plans.split_identify_records(
+        [
+            {"book_id": 1, "status": "identified", "work_id": "9", "title": "One"},
+            {
+                "book_id": 2,
+                "status": "ambiguous",
+                "title": "Storm",
+                "candidates": [
+                    {"work_id": "11", "title": "Time Storm", "author": "A"},
+                    {"work_id": "22", "title": "Time Storm", "author": "B"},
+                ],
+            },
+            {"book_id": 3, "status": "not_found", "title": "Nope"},
+        ]
+    )
+    assert failed[0]["book_id"] == 3
+    merged_rows = plans.apply_identify_choices(
+        identified + ambiguous, {2: "11", 1: "ignored"}
+    )
+    assert [row["work_id"] for row in merged_rows] == ["9", "11"]
+    ready = plans.merge_identify_ready(
+        [
+            {"book_id": 1, "title": "old", "record": {"title": "old"}},
+            {"book_id": 2, "title": "Storm", "record": {"title": "Storm"}},
+            {"book_id": 9, "title": "other", "record": {}},
+        ],
+        merged_rows,
+    )
+    assert [item["book_id"] for item in ready] == [1, 2]
+    assert ready[1]["record"]["work_id"] == "11"
