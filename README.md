@@ -23,6 +23,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 **Selected books**
 
 - **Complete selected** — fill Series, import missing series parts, download missing EPUBs, simplify tags, recompute collections
+- **Fill from AO3** — identify selected books from a work URL, the EPUB, or title + author (picker when several works match), then fill missing metadata and EPUBs
 - Download missing native EPUBs (existing files are never replaced)
 - Generate covers (title, author, word count, quality score on a dark fandom-coloured field; long titles shrink to fit)
 - Import the rest of an AO3 series, or fill Calibre Series on books already in the library

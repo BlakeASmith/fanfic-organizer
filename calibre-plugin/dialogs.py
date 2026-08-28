@@ -7,6 +7,7 @@ import json
 from PyQt5.Qt import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -21,6 +22,7 @@ from PyQt5.Qt import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     Qt,
@@ -2059,4 +2061,123 @@ class WarmLogDialog(QDialog):
         self.log.setPlainText(text)
         if follow:
             bar.setValue(bar.maximum())
+
+
+def _candidate_label(candidate: dict) -> str:
+    title = str(candidate.get('title') or 'Untitled').strip()
+    author = str(candidate.get('author') or '').strip()
+    if not author:
+        authors = candidate.get('authors') or []
+        if isinstance(authors, (list, tuple)) and authors:
+            author = ', '.join(str(item) for item in authors if str(item).strip())
+        elif authors:
+            author = str(authors)
+    fandoms = candidate.get('fandoms') or []
+    fandom = ''
+    if isinstance(fandoms, (list, tuple)) and fandoms:
+        fandom = str(fandoms[0])
+    meta = candidate.get('metadata') or {}
+    words = meta.get('words') if isinstance(meta, dict) else None
+    kudos = meta.get('kudos') if isinstance(meta, dict) else None
+    work_id = str(candidate.get('work_id') or '').strip()
+    parts = [title]
+    if author:
+        parts.append(f'by {author}')
+    extras = []
+    if fandom:
+        extras.append(fandom)
+    if isinstance(words, int):
+        extras.append(f'{words:,} words')
+    if isinstance(kudos, int):
+        extras.append(f'{kudos:,} kudos')
+    if work_id:
+        extras.append(f'AO3 {work_id}')
+    line = ' '.join(parts)
+    if extras:
+        line += ' — ' + ' · '.join(extras)
+    return line
+
+
+class IdentifyWorksDialog(QDialog):
+    """Pick the AO3 work when title+author search returns more than one match."""
+
+    SKIP = ''
+
+    def __init__(self, parent, ambiguous: list[dict], titles: dict | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Fill from AO3 — pick the matching work')
+        self.setMinimumWidth(640)
+        self.resize(720, 520)
+        self._groups: dict[str, QButtonGroup] = {}
+        titles = titles or {}
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'More than one AO3 work matches some of the selected books. '
+            'Pick the right one for each book, or skip it.'
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(0, 0, 0, 0)
+
+        for record in ambiguous:
+            book_id = record.get('book_id')
+            if book_id is None:
+                book_id = record.get('calibre_book_id')
+            key = str(book_id or '')
+            if not key:
+                continue
+            book_title = (
+                titles.get(book_id)
+                or titles.get(key)
+                or record.get('title')
+                or f'Book {key}'
+            )
+            author = str(record.get('author') or '').strip()
+            heading = str(book_title)
+            if author:
+                heading += f' by {author}'
+            box = QGroupBox(heading)
+            box_layout = QVBoxLayout(box)
+            group = QButtonGroup(box)
+            group.setExclusive(True)
+            candidates = list(record.get('candidates') or [])
+            for index, candidate in enumerate(candidates):
+                work_id = str((candidate or {}).get('work_id') or '').strip()
+                radio = QRadioButton(_candidate_label(candidate or {}))
+                radio.setProperty('work_id', work_id)
+                if index == 0:
+                    radio.setChecked(True)
+                group.addButton(radio)
+                box_layout.addWidget(radio)
+            skip = QRadioButton('Skip this book')
+            skip.setProperty('work_id', self.SKIP)
+            group.addButton(skip)
+            box_layout.addWidget(skip)
+            self._groups[key] = group
+            inner_layout.addWidget(box)
+
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def choices(self) -> dict[str, str]:
+        picked: dict[str, str] = {}
+        for book_id, group in self._groups.items():
+            button = group.checkedButton()
+            work_id = ''
+            if button is not None:
+                work_id = str(button.property('work_id') or '')
+            picked[book_id] = work_id
+        return picked
 
