@@ -15,6 +15,10 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Documentation
+
+- Add a computer-use skill for Calibre plugin GUI tests (menu map, columns, throwaway library; skip tag-browser/column exploration).
+
 ## [0.31.0] - 2026-08-28
 
 ### Features
