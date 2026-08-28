@@ -27,6 +27,10 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 - Fetch AO3 work searches from `/works/search` so title and filter queries match again (the `/works?` listing now shows Recent Works and ignored filters).
 - Point PR build comments at the plugin zip download instead of the workflow run page.
 
+### Documentation
+
+- Add a Fill from AO3 screen recording and screenshots under [`demos/`](demos/README.md).
+
 ### Performance
 
 - Speed up live Search/import into the library: look up existing AO3 works from in-memory identifiers instead of full-library searches on the GUI thread, and notify the book list of new rows without rebuilding the tag browser twice.
