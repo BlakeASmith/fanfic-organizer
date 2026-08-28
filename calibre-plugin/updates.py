@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Check GitHub Releases for plugin updates and install fanfic-organizer.zip."""
+"""Check GitHub Releases for plugin updates and install the plugin zip."""
 
 from __future__ import annotations
 

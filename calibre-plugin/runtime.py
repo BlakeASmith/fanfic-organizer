@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Bundled ao3kit runtime for a Calibre plugin zip (Calibre-free).
 
-GitHub releases ship ``fanfic-organizer.zip`` with ``ao3kit/``, pure-Python
-``vendor/``, and ``run_ao3kit.py``. Calibre's frozen Python ignores
+GitHub releases ship ``FanFicOrganizer-<version>.zip`` with ``ao3kit/``,
+pure-Python ``vendor/``, and ``run_ao3kit.py``. Calibre's frozen Python ignores
 ``PYTHONPATH`` and cannot ``python -m``, so jobs run:
 
     calibre-debug -e run_ao3kit.py -- scrape …

@@ -15,18 +15,29 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
+
+### Documentation
+
+- Add a Fill from AO3 screen recording and screenshots under [`demos/`](demos/README.md).
+- Add a computer-use skill for Calibre plugin GUI tests (menu map, columns, throwaway library; skip tag-browser/column exploration).
+
+## [0.31.0] - 2026-08-28
+
 ### Features
 
 - Add **Fill from AO3** for selected books: identify a work from its AO3 URL, the EPUB, or title + author (picker when several works match), then fill missing metadata and EPUBs.
 - Publish an automated GitHub pre-release on every commit to `main` (`X.Y.Z-preview.<run>+<sha>`), with versioned plugin zips and the same version shown in Calibre.
 - Add a manual **Release plugin** GitHub Actions workflow that bumps the version, rolls [Unreleased] into the new section, publishes the standard release, and notes superseded preview tags.
-- Attach a versioned `FanFicOrganizer-<version>.zip` on standard and preview releases (standard releases also keep the `fanfic-organizer.zip` download alias). Pull requests get a test zip comment, not a GitHub release.
+- Attach a versioned `FanFicOrganizer-<version>.zip` on standard and preview releases. Pull requests get a test zip comment, not a GitHub release.
 
 ### Bug Fixes
 
 - Fetch AO3 work searches from `/works/search` so title and filter queries match again (the `/works?` listing now shows Recent Works and ignored filters).
 - Point PR build comments at the plugin zip download instead of the workflow run page.
-- Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
+- Attach only `FanFicOrganizer-<version>.zip` on standard GitHub releases (no extra `fanfic-organizer.zip` alias).
 
 ### Performance
 
