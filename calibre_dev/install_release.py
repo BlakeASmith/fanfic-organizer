@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -21,14 +22,54 @@ from calibre_dev.plugin_install import (
     start_calibre_gui,
 )
 from calibre_dev.release_urls import (
+    GITHUB_REPO,
     RELEASE_ZIP_NAME,
+    pick_zip_download_url,
     release_zip_url,
     release_zip_urls,
 )
 
+GITHUB_LATEST_API = (
+    f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+)
+USER_AGENT = "Fanfic-Organizer-Installer"
+
 
 def _log(message: str) -> None:
     print(f"fanfic-organizer install: {message}")
+
+
+def latest_zip_candidates() -> list[str]:
+    """Resolve the latest standard-release zip, preferring the versioned name."""
+    urls: list[str] = []
+    try:
+        request = urllib.request.Request(
+            GITHUB_LATEST_API,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": USER_AGENT,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
+        payload = None
+    if isinstance(payload, dict):
+        picked = pick_zip_download_url(
+            payload.get("assets") or [],
+            tag=str(payload.get("tag_name") or ""),
+        )
+        if picked:
+            urls.append(picked)
+        tag = str(payload.get("tag_name") or "").strip()
+        if tag:
+            for candidate in release_zip_urls(tag):
+                if candidate not in urls:
+                    urls.append(candidate)
+    for candidate in release_zip_urls():
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
 
 
 def download_release_zip(
@@ -40,8 +81,10 @@ def download_release_zip(
     """Download the plugin zip and return the URL used."""
     if url:
         candidates = [url]
-    else:
+    elif version:
         candidates = release_zip_urls(version)
+    else:
+        candidates = latest_zip_candidates()
     dest.parent.mkdir(parents=True, exist_ok=True)
     last_error: Exception | None = None
     for download_url in candidates:
@@ -73,7 +116,7 @@ def install_release_zip(
     remove_legacy: bool = True,
     apply_gui_names: bool = True,
 ) -> None:
-    """Install ``fanfic-organizer.zip`` with ``calibre-customize -a``."""
+    """Install a Fanfic Organizer plugin zip with ``calibre-customize -a``."""
     customize_bin = customize or find_calibre_customize()
     if remove_legacy:
         remove_legacy_calibre_plugins(customize_bin)
@@ -136,8 +179,12 @@ def run_install(
         if installed_from is None:
             cleanup_dir = Path(tempfile.mkdtemp(prefix="fanfic-organizer-install-"))
             installed_from = cleanup_dir / RELEASE_ZIP_NAME
-            download_url = release_zip_url(version)
-            _log(f"Downloading {download_url}")
+            if zip_url:
+                _log(f"Downloading {zip_url}")
+            elif version:
+                _log(f"Downloading {release_zip_url(version)}")
+            else:
+                _log("Downloading latest GitHub release zip")
             download_url = download_release_zip(
                 installed_from,
                 version=version,
@@ -205,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--zip",
         type=Path,
         metavar="PATH",
-        help="Install an existing fanfic-organizer.zip instead of downloading.",
+        help="Install an existing plugin zip instead of downloading.",
     )
     parser.add_argument(
         "--no-install-calibre",

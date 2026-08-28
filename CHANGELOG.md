@@ -19,11 +19,12 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 - Publish an automated GitHub pre-release on every commit to `main` (`X.Y.Z-preview.<run>+<sha>`), with versioned plugin zips and the same version shown in Calibre.
 - Add a manual **Release plugin** GitHub Actions workflow that bumps the version, rolls [Unreleased] into the new section, publishes the standard release, and notes superseded preview tags.
-- Attach a versioned `FanFicOrganizer-<version>.zip` on standard and preview releases (standard releases also keep the `fanfic-organizer.zip` download alias). Pull requests get a test zip comment, not a GitHub release.
+- Attach a versioned `FanFicOrganizer-<version>.zip` on standard and preview releases. Pull requests get a test zip comment, not a GitHub release.
 
 ### Bug Fixes
 
 - Point PR build comments at the plugin zip download instead of the workflow run page.
+- Attach only `FanFicOrganizer-<version>.zip` on standard GitHub releases (no extra `fanfic-organizer.zip` alias).
 
 ### Performance
 
