@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meltdown — The Colander Clash</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="halftone"></div>
+  <header class="masthead">
+    <div class="mast-stat" id="attack-label">Attack: 5</div>
+    <div class="mast-title">
+      <h1>Colander Kid</h1>
+      <p class="moniker">The Wailing Wonder</p>
+    </div>
+    <div class="mast-stat" id="health-label">Health: 35</div>
+  </header>
+
+  <main id="app">
+    <section id="screen-stance" class="panel hidden">
+      <div class="hero-card">
+        <img src="/assets/colander_kid_card.jpg" alt="Colander Kid trading card">
+      </div>
+      <div class="copy">
+        <h2>Plastic Strainer of Destiny</h2>
+        <p>Choose your opening stance. You can swap later — each swap grants <strong>4 Block</strong>.</p>
+        <div class="stance-picks">
+          <button data-stance="Sieve" class="comic-btn blue">
+            <span>Sieve Mode</span>
+            <small>Exile the first Status/Curse drawn each turn and redraw.</small>
+          </button>
+          <button data-stance="Dome" class="comic-btn red">
+            <span>Dome Mode</span>
+            <small>Block stays. 50% leftover Block Bonks the frontmost villain.</small>
+          </button>
+        </div>
+        <label class="seed-row">Seed <input id="seed" type="number" value="1" min="1"></label>
+        <button id="new-run" class="comic-btn yellow">New Run</button>
+      </div>
+    </section>
+
+    <section id="screen-combat" class="hidden">
+      <div class="battlefield">
+        <aside class="hero-pane">
+          <img class="hero-bust" src="/assets/colander_kid_card.jpg" alt="Colander Kid">
+          <div class="vitals">
+            <div class="bar hp"><span id="hero-hp-fill"></span></div>
+            <div class="vital-readout"><span id="hero-hp"></span> Patience · <span id="hero-block"></span> Block</div>
+            <div class="vital-readout"><span id="hero-ap"></span> AP · <span id="hero-stance"></span></div>
+          </div>
+          <div class="tantrum">
+            <div class="tantrum-label">TANTRUM METER <span id="tantrum-count">0/5</span></div>
+            <div id="tantrum-pips" class="pips"></div>
+          </div>
+          <div id="hero-statuses" class="status-row"></div>
+          <div id="relic-list" class="relic-list"></div>
+        </aside>
+        <section class="enemy-row" id="enemy-row"></section>
+      </div>
+      <div class="hand-dock">
+        <div class="hand-meta">
+          <span id="pile-counts"></span>
+          <button id="end-turn" class="comic-btn red">End Turn</button>
+        </div>
+        <div id="hand" class="hand"></div>
+      </div>
+      <aside id="log" class="log"></aside>
+    </section>
+
+    <section id="screen-pick" class="panel hidden">
+      <h2 id="pick-title">Choose a card</h2>
+      <p id="pick-blurb"></p>
+      <div id="pick-grid" class="pick-grid"></div>
+      <button id="pick-skip" class="comic-btn yellow">Skip</button>
+    </section>
+
+    <section id="screen-end" class="panel hidden">
+      <h2 id="end-title">The End</h2>
+      <p id="end-blurb"></p>
+      <button id="play-again" class="comic-btn red">Play again</button>
+    </section>
+  </main>
+
+  <footer class="footer-bar">
+    <span>Attack: 5</span>
+    <span>Health: 3</span>
+    <strong>Wailing Wonder</strong>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
