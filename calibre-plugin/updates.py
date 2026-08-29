@@ -35,7 +35,12 @@ def github_releases_api() -> str:
 ZIP_ASSET_NAME = "fanfic-organizer.zip"
 VERSIONED_ZIP_PREFIX = "FanFicOrganizer-"
 LEGACY_PLUGIN_NAMES = ("AO3 Scraper", "Wranglekit")
-VERSION_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+SEMVER_RE = re.compile(
+    r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+    r"(?:-(?P<pre>[0-9A-Za-z.-]+))?"
+    r"(?:\+(?P<build>[0-9A-Za-z.-]+))?$"
+)
+PREVIEW_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-preview(?:\.|$|\+)")
 USER_AGENT = "Fanfic-Organizer-Plugin-Updater"
 RESTART_DELAY_S = 2.0
 SHUTDOWN_WAIT_S = 20.0
@@ -47,26 +52,118 @@ class UpdateError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ParsedVersion:
+    major: int
+    minor: int
+    patch: int
+    prerelease: str | None = None
+    build: str | None = None
+
+    @property
+    def base(self) -> tuple[int, int, int]:
+        return self.major, self.minor, self.patch
+
+    @property
+    def is_preview(self) -> bool:
+        return bool(self.prerelease and self.prerelease.startswith("preview"))
+
+    @property
+    def is_stable(self) -> bool:
+        return not self.prerelease and not self.build
+
+    def text(self) -> str:
+        value = f"{self.major}.{self.minor}.{self.patch}"
+        if self.prerelease:
+            value = f"{value}-{self.prerelease}"
+        if self.build:
+            value = f"{value}+{self.build}"
+        return value
+
+
+@dataclass(frozen=True)
 class ReleaseInfo:
     version: tuple[int, int, int]
+    version_display: str
+    is_preview: bool
     tag: str
     name: str
     published_at: str
     body: str
     html_url: str
     download_url: str
+    parsed: ParsedVersion
     asset_size: int | None = None
 
     @property
     def version_text(self) -> str:
-        return plugin_version_string(self.version)
+        return self.version_display
+
+
+def _prerelease_sort_key(prerelease: str | None) -> tuple:
+    if not prerelease:
+        return (1,)
+    parts = prerelease.split(".")
+    key: list[tuple[int, int | str]] = []
+    for part in parts:
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part))
+    return (0, tuple(key))
+
+
+def version_sort_key(parsed: ParsedVersion) -> tuple:
+    return (
+        parsed.major,
+        parsed.minor,
+        parsed.patch,
+        _prerelease_sort_key(parsed.prerelease),
+    )
+
+
+def compare_parsed_versions(left: ParsedVersion, right: ParsedVersion) -> int:
+    left_key = version_sort_key(left)
+    right_key = version_sort_key(right)
+    if left_key > right_key:
+        return 1
+    if left_key < right_key:
+        return -1
+    return 0
+
+
+def parse_semver(value: str) -> ParsedVersion:
+    match = SEMVER_RE.fullmatch((value or "").strip())
+    if not match:
+        raise UpdateError(f"release tag is not SemVer: {value!r}")
+    return ParsedVersion(
+        major=int(match["major"]),
+        minor=int(match["minor"]),
+        patch=int(match["patch"]),
+        prerelease=match["pre"],
+        build=match["build"],
+    )
 
 
 def parse_version(value: str) -> tuple[int, int, int]:
-    match = VERSION_RE.fullmatch((value or "").strip())
-    if not match:
-        raise UpdateError(f"release tag is not X.Y.Z: {value!r}")
-    return int(match["major"]), int(match["minor"]), int(match["patch"])
+    return parse_semver(value).base
+
+
+def is_preview_tag(tag: str) -> bool:
+    text = (tag or "").strip()
+    if PREVIEW_TAG_RE.search(text):
+        return True
+    try:
+        return parse_semver(text).is_preview
+    except UpdateError:
+        return False
+
+
+def installed_version_parsed() -> ParsedVersion:
+    try:
+        return parse_semver(installed_version_text())
+    except UpdateError:
+        major, minor, patch = installed_version()
+        return ParsedVersion(major, minor, patch)
 
 
 def installed_version() -> tuple[int, int, int]:
@@ -139,13 +236,16 @@ def _pick_zip_asset(
 
 
 def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
-    if record.get("draft") or record.get("prerelease"):
+    if record.get("draft"):
         return None
     tag = str(record.get("tag_name") or "").strip()
     if not tag:
         return None
+    prerelease = bool(record.get("prerelease"))
+    if prerelease and not is_preview_tag(tag):
+        return None
     try:
-        version = parse_version(tag)
+        parsed = parse_semver(tag)
     except UpdateError:
         return None
     asset = _pick_zip_asset(record.get("assets") or [], tag=tag)
@@ -156,13 +256,16 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
         return None
     size = asset.get("size")
     return ReleaseInfo(
-        version=version,
+        version=parsed.base,
+        version_display=parsed.text(),
+        is_preview=parsed.is_preview,
         tag=tag if tag.startswith("v") else f"v{tag.lstrip('v')}",
         name=str(record.get("name") or tag),
         published_at=str(record.get("published_at") or ""),
         body=str(record.get("body") or "").strip(),
         html_url=str(record.get("html_url") or "").strip(),
         download_url=download_url,
+        parsed=parsed,
         asset_size=int(size) if isinstance(size, int) else None,
     )
 
@@ -179,13 +282,20 @@ def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
         parsed = release_from_api(record)
         if parsed is not None:
             releases.append(parsed)
-    releases.sort(key=lambda item: item.version, reverse=True)
+    releases.sort(key=lambda item: version_sort_key(item.parsed), reverse=True)
     return releases
 
 
 def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
-    ordered = sorted(releases, key=lambda item: item.version, reverse=True)
+    ordered = sorted(
+        releases, key=lambda item: version_sort_key(item.parsed), reverse=True
+    )
     return ordered[0] if ordered else None
+
+
+def latest_stable_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
+    stable = [item for item in releases if not item.is_preview]
+    return latest_release(stable)
 
 
 def summarize_release_notes(body: str, *, limit: int = 4000) -> str:
@@ -417,12 +527,7 @@ def download_and_install(release: ReleaseInfo) -> Path:
 
 
 def compare_to_installed(release: ReleaseInfo) -> int:
-    current = installed_version()
-    if release.version > current:
-        return 1
-    if release.version < current:
-        return -1
-    return 0
+    return compare_parsed_versions(release.parsed, installed_version_parsed())
 
 
 def format_published_at(value: str) -> str:
