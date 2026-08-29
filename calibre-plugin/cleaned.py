@@ -618,6 +618,7 @@ def record_from_library_fields(
     relationships: list[str] | None = None,
     characters: list[str] | None = None,
     wordcount: int | None = None,
+    comments: str | None = None,
     raw_record: dict[str, Any] | None = None,
     is_complete: bool | None = None,
     series_name: str | None = None,
@@ -629,6 +630,15 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
+    from ao3kit.covers import summary_text_from_comments
+
+    def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
+        if not str(record.get('summary') or '').strip() and comments:
+            summary = summary_text_from_comments(comments)
+            if summary:
+                record['summary'] = summary
+        return record
+
     ids = dict(identifiers or {})
     author_list = _unique_names(authors)
     restored_series = _series_from_calibre(
@@ -661,7 +671,7 @@ def record_from_library_fields(
             record['characters'] = _unique_names(characters)
         if restored_series and not series_memberships_from_record(record):
             record['series'] = restored_series
-        return record
+        return _attach_summary(record)
 
     work_id = str(ids.get('ao3') or '').strip() or (work_id_from_url(ids.get('url')) or '')
     url = str(ids.get('url') or '').strip() or (work_url(work_id) or '')
@@ -714,7 +724,7 @@ def record_from_library_fields(
         record['relationships'] = _unique_names(relationships)
     if restored_series:
         record['series'] = restored_series
-    return record
+    return _attach_summary(record)
 
 
 def _series_from_calibre(

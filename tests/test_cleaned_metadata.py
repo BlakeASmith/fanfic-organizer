@@ -427,6 +427,17 @@ def test_record_from_library_fields_prefers_raw_json():
     assert "cleaned" not in record
 
 
+def test_record_from_library_fields_uses_comments_for_summary():
+    mod = load_cleaned()
+    record = mod.record_from_library_fields(
+        title="A Work",
+        identifiers={"url": "https://archiveofourown.org/works/9"},
+        comments="<p>They were roommates.</p>",
+    )
+    assert record is not None
+    assert record["summary"] == "They were roommates."
+
+
 def test_layout_column_specs_match_fanfic_library():
     cols = load_columns()
     by_role = {spec["role"]: spec for spec in cols.LAYOUT_COLUMN_SPECS}

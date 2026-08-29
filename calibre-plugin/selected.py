@@ -104,6 +104,7 @@ def record_from_calibre_book(
     authors: list[str] = []
     identifiers: dict[str, Any] = {}
     tags: list[str] = []
+    comments = ''
     mi = None
     try:
         mi = db.get_metadata(book_id, index_is_id=True)
@@ -111,6 +112,7 @@ def record_from_calibre_book(
         authors = list(mi.authors or [])
         identifiers = mi.get_identifiers() or {}
         tags = list(mi.tags or [])
+        comments = str(getattr(mi, 'comments', None) or '')
     except Exception:
         mi = None
 
@@ -152,6 +154,7 @@ def record_from_calibre_book(
         relationships=relationships,
         characters=characters,
         wordcount=wordcount if isinstance(wordcount, int) else None,
+        comments=comments or None,
         raw_record=raw,
         is_complete=is_complete,
         series_name=series_name,
@@ -892,11 +895,14 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
             record = record_from_calibre_book(db, book_id, require_work_id=False)
             title = (record or {}).get('title') or '?'
             identifiers = {}
+            comments = ''
             try:
                 mi = db.get_metadata(book_id, index_is_id=True)
                 title = mi.title or title
                 identifiers = dict(mi.get_identifiers() or {})
+                comments = str(getattr(mi, 'comments', None) or '')
             except Exception:
+                comments = ''
                 pass
             books.append(
                 LibraryBook(
@@ -924,6 +930,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
                     ),
                     has_epub=book_has_epub(db, book_id),
                     uuid=str((record or {}).get('calibre_uuid') or ''),
+                    comments=comments,
                 )
             )
         return books
@@ -942,6 +949,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
     formats_map = _all_field_for(api, 'formats', ids)
     uuid_map = _all_field_for(api, 'uuid', ids)
     words_map = _all_field_for(api, '#wordcount', ids)
+    comments_map = _all_field_for(api, 'comments', ids)
     books = []
     for book_id in ids:
         tags = field_values(tags_map.get(book_id))
@@ -970,6 +978,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
                 uuid=str(uuid_map.get(book_id) or ''),
                 wordcount=_optional_int(words_map.get(book_id)),
                 is_complete=is_complete,
+                comments=str(comments_map.get(book_id) or ''),
             )
         )
     return books
@@ -990,6 +999,7 @@ def record_from_library_book(
         relationships=list(book.relationships),
         characters=list(book.characters) or None,
         wordcount=book.wordcount,
+        comments=book.comments or None,
         is_complete=book.is_complete,
         series_name=book.series_name or None,
         series_index=book.series_index,

@@ -51,8 +51,10 @@ def build_metadata(
         has_collections_column=bool(present.get('collections')),
     )
 
-    # Leave Comments alone (AO3 summaries live there; scrape records have no summary).
-    if existing_comments:
+    summary = str(record.get('summary') or '').strip()
+    if summary and not existing_comments:
+        mi.comments = summary
+    elif existing_comments:
         mi.comments = existing_comments
     return mi
 
