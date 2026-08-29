@@ -23,6 +23,7 @@ def test_init_creates_config_and_default_rules(tmp_path: Path):
     assert cfg.settings.min_request_interval == 1.5
     assert cfg.settings.rate.pressure_tag_multiplier == 1.5
     assert cfg.settings.include_metatags is True
+    assert cfg.settings.drop_unmarked is True
     assert cfg.settings.cover.enabled is True
     assert cfg.settings.cover.fields == ["title", "author", "wordcount", "score"]
     rules = load_tag_rules(cfg.active_rules_path())

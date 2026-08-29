@@ -467,6 +467,7 @@ def enrich_records(
     resolver: TagResolver | None = None,
     include_fandoms: bool = True,
     include_relationships: bool = True,
+    drop_unmarked: bool | None = None,
     on_status: StatusCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Run tag/fandom/relationship simplification using user rules + AO3 resolver.
@@ -482,6 +483,10 @@ def enrich_records(
         rules.drop_unmarked = user_cfg.settings.drop_unmarked
         rules.drop_errors = user_cfg.settings.drop_errors
         rules.include_metatags = user_cfg.settings.include_metatags
+    elif drop_unmarked is None:
+        rules.drop_unmarked = user_cfg.settings.drop_unmarked
+    if drop_unmarked is not None:
+        rules.drop_unmarked = bool(drop_unmarked)
 
     if resolver is None:
         from ao3kit.tags.cache import default_tag_cache_path

@@ -27,6 +27,7 @@ _SERIES_ID_RE = re.compile(
 
 PREF_KEYS = (
     'library_simplify_tags',
+    'library_drop_unmarked',
     'library_fill_series',
     'library_import_series',
     'library_download_epubs',
@@ -42,6 +43,7 @@ class LibraryJobOptions:
     """What the Process library dialog should run."""
 
     simplify_tags: bool = True
+    drop_unmarked: bool = True
     fill_series: bool = False
     import_series: bool = False
     download_epubs: bool = False
@@ -66,6 +68,7 @@ class LibraryJobOptions:
     def to_dict(self) -> dict[str, Any]:
         return {
             'simplify_tags': bool(self.simplify_tags),
+            'drop_unmarked': bool(self.drop_unmarked),
             'fill_series': bool(self.fill_series),
             'import_series': bool(self.import_series),
             'download_epubs': bool(self.download_epubs),
@@ -80,6 +83,7 @@ class LibraryJobOptions:
         data = data or {}
         return cls(
             simplify_tags=bool(data.get('simplify_tags', True)),
+            drop_unmarked=bool(data.get('drop_unmarked', True)),
             fill_series=bool(data.get('fill_series', False)),
             import_series=bool(data.get('import_series', False)),
             download_epubs=bool(data.get('download_epubs', False)),
@@ -98,6 +102,7 @@ def options_from_prefs(prefs: dict[str, Any] | None) -> LibraryJobOptions:
         return LibraryJobOptions()
     return LibraryJobOptions(
         simplify_tags=bool(prefs.get('library_simplify_tags', True)),
+        drop_unmarked=bool(prefs.get('library_drop_unmarked', True)),
         fill_series=bool(prefs.get('library_fill_series', False)),
         import_series=bool(prefs.get('library_import_series', False)),
         download_epubs=bool(prefs.get('library_download_epubs', False)),
@@ -113,6 +118,7 @@ def options_from_prefs(prefs: dict[str, Any] | None) -> LibraryJobOptions:
 def prefs_from_options(options: LibraryJobOptions) -> dict[str, Any]:
     return {
         'library_simplify_tags': bool(options.simplify_tags),
+        'library_drop_unmarked': bool(options.drop_unmarked),
         'library_fill_series': bool(options.fill_series),
         'library_import_series': bool(options.import_series),
         'library_download_epubs': bool(options.download_epubs),

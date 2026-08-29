@@ -314,7 +314,7 @@ class TagRulesConfig:
 
     version: int = 1
     resolve_canonical: bool = True
-    drop_unmarked: bool = False
+    drop_unmarked: bool = True
     drop_errors: bool = False
     include_metatags: bool = True
     rules: list[TagRule] = field(default_factory=list)

@@ -52,6 +52,7 @@ def test_custom_code_rule_and_keep_separate():
 
     config = TagRulesConfig(
         resolve_canonical=True,
+        drop_unmarked=False,
         rules=[ShipNickname()],
     )
     resolver = _resolver_with(
@@ -339,3 +340,19 @@ def test_engine_skips_metatags_for_non_fandom_tags():
     )
     assert result.simplified == ["Amy Pond (Doctor Who)"]
     assert result.inserted_metatags == []
+
+
+def test_engine_drop_unmarked_after_mapping():
+    config = TagRulesConfig(resolve_canonical=True, drop_unmarked=True)
+    resolver = _resolver_with(
+        ResolvedTag(
+            original="custom freeform",
+            resolved="custom freeform",
+            status="unmarked",
+            changed=False,
+        ),
+        ResolvedTag(original="Fluff", resolved="Fluff", status="canonical"),
+    )
+    result = TagRulesEngine(config, resolver).apply(["custom freeform", "Fluff"])
+    assert result.simplified == ["Fluff"]
+    assert "custom freeform" in result.dropped

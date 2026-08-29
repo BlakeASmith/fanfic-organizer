@@ -169,6 +169,8 @@ def merge_plugin_settings(
         merged['password'] = str(settings.get('ao3_password') or '')
     if merged.get('include_series') is None:
         merged['include_series'] = bool(settings.get('include_series'))
+    if merged.get('drop_unmarked') is None:
+        merged['drop_unmarked'] = bool(settings.get('drop_unmarked', True))
     return merged
 
 
@@ -441,6 +443,10 @@ def build_enrich_argv(
         jsonl_out,
         '--verbose',
     ]
+    if options.get('drop_unmarked', True):
+        argv.append('--drop-unmarked')
+    else:
+        argv.append('--no-drop-unmarked')
     _append_credentials(argv, options)
     return argv
 
