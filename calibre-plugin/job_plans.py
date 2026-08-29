@@ -570,19 +570,21 @@ def plan_fill_from_ao3(
     write_json(items_path, {'ready': ready, 'skipped': skipped})
     n = len(ready)
     noun = 'book' if n == 1 else 'books'
+    plugin = _import_plugin(
+        jsonl=out,
+        bundle_root=dest if options.get('download_epubs') else None,
+        update_existing=True,
+        results_jsonl=jsonl,
+        skipped=skipped,
+    )
+    plugin['items_json'] = str(items_path)
     return _write_spec(
         job_dir,
         {
             'title': f'Fill from AO3 ({n} {noun})',
             'kind': 'fill',
             'steps': steps,
-            'plugin': _import_plugin(
-                jsonl=out,
-                bundle_root=dest if options.get('download_epubs') else None,
-                update_existing=True,
-                results_jsonl=jsonl,
-                skipped=skipped,
-            ),
+            'plugin': plugin,
             'result': _jsonl_result(out),
         },
     )

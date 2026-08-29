@@ -524,6 +524,7 @@ def test_plan_fill_from_ao3_uses_works_from(tmp_path: Path):
     assert spec["steps"][1][:2] == ["tags", "enrich"]
     assert spec["plugin"]["action"] == "import_records"
     assert spec["plugin"]["update_existing"] is True
+    assert spec["plugin"]["items_json"].endswith("items.json")
 
 
 def test_plan_fill_from_ao3_include_series(tmp_path: Path):

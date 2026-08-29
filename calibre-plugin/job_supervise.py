@@ -34,6 +34,7 @@ from calibre_plugins.fanfic_organizer.job_plans import (
     plan_fill_from_ao3,
     split_identify_records,
 )
+from ao3kit.scrape import scrape_record_failed
 from calibre_plugins.fanfic_organizer.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.fanfic_organizer.jobs import (
     first_line,
@@ -588,6 +589,7 @@ class JobSupervisor:
             records = load_jsonl_records(jsonl)
         except (OSError, ValueError):
             return
+        records = [record for record in records if not scrape_record_failed(record)]
         imported = self._import_seen.setdefault(job_id, {})
         new_records, epub_records = pending_incremental_imports(
             records, imported, work_id_of=canonical_work_id
@@ -719,7 +721,16 @@ class JobSupervisor:
             import shutil
 
             shutil.rmtree(cleanup, ignore_errors=True)
-        self._notify(job_id, summary, ok=True, detail=detail)
+        ok = True
+        exit_code = status.get('exit_code')
+        if exit_code not in (None, 0) and not any(
+            token in summary.lower()
+            for token in ('imported', 'updated', 'added', 'simplified', 'recomputed')
+        ):
+            ok = False
+        elif exit_code not in (None, 0):
+            summary = f'Finished with errors. {summary}'
+        self._notify(job_id, summary, ok=ok, detail=detail)
 
     def _ingest_action(
         self, job_id: str, plugin: dict[str, Any], action: str
@@ -740,19 +751,45 @@ class JobSupervisor:
             return self._ingest_identify(plugin)
         return f'Unknown ingest action {action!r}.', ''
 
-    def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
+    def _import_records_for_plugin(
+        self, plugin: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         jsonl = plugin.get('jsonl')
         if not jsonl or not Path(jsonl).is_file():
-            return 'No works matched that search and those filters.', ''
+            return [], []
         try:
             records = load_jsonl_records(jsonl)
-        except (OSError, ValueError) as exc:
-            return f'Could not read results: {exc}', ''
+        except (OSError, ValueError):
+            return [], []
+        failed = [record for record in records if scrape_record_failed(record)]
+        records = [record for record in records if not scrape_record_failed(record)]
+        items_path = plugin.get('items_json')
+        if items_path and Path(items_path).is_file():
+            payload = read_json(Path(items_path)) or {}
+            ready = payload.get('ready') or []
+            if ready:
+                items = merge_ready_with_jsonl(
+                    ready, records, work_id_of=canonical_work_id
+                )
+                records = [
+                    item['record']
+                    for item in items
+                    if item.get('record') and not scrape_record_failed(item['record'])
+                ]
+        return records, failed
+
+    def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        records, failed = self._import_records_for_plugin(plugin)
+        if not records and not failed:
+            return 'No works matched that search and those filters.', ''
         if not records:
+            lines = [
+                f"{item.get('title') or item.get('work_id')}: {item.get('scrape_error')}"
+                for item in failed[:20]
+            ]
             return (
-                'No works matched that search and those filters. '
-                'Try lowering min score / kudos / words, or raising max results.',
-                '',
+                f'Could not fetch metadata for {len(failed)} book(s) from AO3.',
+                '\n'.join(lines),
             )
         project = self._project()
         if project is not None:
@@ -774,6 +811,28 @@ class JobSupervisor:
             skip_existing_epub=bool(plugin.get('skip_existing_epub', True)),
         )
         refresh_library_ui(self.gui, book_ids)
+        if failed:
+            lines = [
+                f"{item.get('title') or item.get('work_id')}: {item.get('scrape_error')}"
+                for item in failed[:20]
+            ]
+            extra = f'; {len(failed)} book(s) could not be fetched from AO3'
+            summary = summary.rstrip('.') + extra + '.'
+            if remap_text:
+                remap_text = remap_text + '\n\n' + '\n'.join(lines)
+            else:
+                remap_text = '\n'.join(lines)
+        skipped = plugin.get('skipped') or []
+        if skipped:
+            skip_lines = [
+                f"{item.get('title') or item.get('book_id')}: {item.get('reason')}"
+                for item in skipped[:20]
+            ]
+            summary = summary.rstrip('.') + f'; skipped {len(skipped)} earlier.'
+            if remap_text:
+                remap_text = remap_text + '\n\n' + '\n'.join(skip_lines)
+            else:
+                remap_text = '\n'.join(skip_lines)
         return summary, remap_text
 
     def _ingest_epubs(self, job_id: str, plugin: dict[str, Any]) -> tuple[str, str]:
