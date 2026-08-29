@@ -28,6 +28,7 @@ from ao3kit.covers import (
     resolve_font,
     wrap_title,
     _format_footer,
+    _normalize_cover_text,
     _scratch_draw,
 )
 
@@ -276,6 +277,69 @@ def test_user_settings_cover_defaults_when_absent():
     assert settings.cover.fields == ["title", "author", "wordcount", "score"]
 
 
+def test_cover_info_from_record_includes_summary():
+    record = {
+        "title": "A Work",
+        "summary": "  They were roommates.  Oh&nbsp;my god. ",
+        "author": "Writer",
+    }
+    info = cover_info_from_record(record)
+    assert info.summary == "They were roommates. Oh my god."
+
+
+def test_summary_on_cover_when_enabled():
+    info = CoverInfo(
+        title="Short Title",
+        summary=(
+            "A slow-burn coffee shop AU where everyone talks too much and "
+            "saves the galaxy anyway, with several extra clauses so the "
+            "summary has to wrap and shrink like the title does."
+        ),
+        author="Jane AUs-ten",
+        fandom="Star Wars",
+    )
+    settings = CoverSettings(fields=["title", "summary", "author"])
+    title, summary, author, _footer, _headers = plan_cover_layout(info, settings)
+    assert title is not None
+    assert summary is not None
+    assert author is not None
+    assert summary.y > title.bottom
+    assert summary.bottom <= author.y - 8
+    assert summary.size <= settings.summary_size
+    assert "…" not in " ".join(summary.lines)
+
+
+def test_summary_hidden_when_field_disabled():
+    info = CoverInfo(title="A", summary="Blurb text", author="B")
+    title, summary, _author, _footer, _headers = plan_cover_layout(
+        info, CoverSettings(fields=["title", "author"])
+    )
+    assert title is not None
+    assert summary is None
+
+
+def test_title_and_summary_use_separate_font_sizes():
+    info = CoverInfo(title="Title", summary="Summary line", author="Author")
+    settings = CoverSettings(
+        fields=["title", "summary", "author"],
+        title_size=80,
+        summary_size=30,
+        auto_fit_title=False,
+        auto_fit_summary=False,
+        title_max_lines=2,
+        summary_max_lines=2,
+    )
+    title, summary, _author, _footer, _headers = plan_cover_layout(info, settings)
+    assert title is not None and summary is not None
+    assert title.size == 80
+    assert summary.size == 30
+
+
+def test_normalize_cover_text_collapses_whitespace_and_entities():
+    assert _normalize_cover_text("  hello   world  ") == "hello world"
+    assert _normalize_cover_text("oh&nbsp;my god") == "oh my god"
+
+
 def test_cover_footer_includes_wordcount():
     info = CoverInfo(title="A", author="B", wordcount=344429, score=62)
     assert _format_footer(info, CoverSettings()) == ["344,429 words", "Score 62"]
@@ -296,7 +360,7 @@ def test_long_title_auto_fits_without_ellipsis():
         wordcount=125000,
         score=72,
     )
-    title, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    title, _summary, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
     assert title is not None
     assert author is not None
     joined = " ".join(title.lines)
@@ -309,7 +373,7 @@ def test_long_title_auto_fits_without_ellipsis():
 
 def test_short_title_keeps_large_type():
     info = CoverInfo(title="Cameo", author="A", fandom="Star Wars")
-    title, _author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    title, _summary, _author, _footer, _headers = plan_cover_layout(info, CoverSettings())
     assert title is not None
     assert title.size == 88
     assert len(title.lines) == 1
@@ -334,7 +398,7 @@ def test_extreme_title_uses_the_cover_instead_of_ellipsis():
         wordcount=344429,
         score=62,
     )
-    title, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    title, _summary, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
     assert title is not None
     assert author is not None
     joined = " ".join(title.lines)
@@ -348,7 +412,7 @@ def test_extreme_title_uses_the_cover_instead_of_ellipsis():
 
 def test_title_max_lines_still_truncates_when_set():
     info = CoverInfo(title=EXTREME_TITLE, author="A")
-    title, _author, _footer, _headers = plan_cover_layout(
+    title, _summary, _author, _footer, _headers = plan_cover_layout(
         info, CoverSettings(title_max_lines=5, auto_fit_title=True)
     )
     assert title is not None

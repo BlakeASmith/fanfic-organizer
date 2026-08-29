@@ -96,6 +96,7 @@ COVER_COLOR_MODES = ("hash", "palette", "solid")
 COVER_IMAGE_FORMATS = ("png", "jpeg")
 COVER_FIELDS = (
     "title",
+    "summary",
     "author",
     "fandom",
     "relationship",
@@ -182,20 +183,26 @@ class CoverSettings:
     font: str = "Georgia"
     font_path: str = ""
     title_size: int = 88
+    summary_size: int = 36
     author_size: int = 62
     header_size: int = 28
     footer_size: int = 24
     min_title_size: int = 22
+    min_summary_size: int = 14
     min_author_size: int = 24
     title_max_lines: int = 0
+    summary_max_lines: int = 0
     author_max_lines: int = 3
     header_max_lines: int = 2
     title_leading: float = 1.08
+    summary_leading: float = 1.08
     author_leading: float = 1.08
     header_leading: float = 1.15
     footer_leading: float = 1.15
     auto_fit_title: bool = True
+    auto_fit_summary: bool = True
     title_color: str = "#ffffff"
+    summary_color: str = "#ffffff"
     author_color: str = "#ffffff"
     header_color: str = "#f5f5f5"
     footer_color: str = "#f5f5f5"
@@ -260,15 +267,21 @@ class CoverSettings:
         elif fmt != "png":
             settings.image_format = "png"
         settings.title_size = max(int(settings.title_size), 8)
+        settings.summary_size = max(int(settings.summary_size), 8)
         settings.author_size = max(int(settings.author_size), 8)
         settings.header_size = max(int(settings.header_size), 8)
         settings.footer_size = max(int(settings.footer_size), 8)
         settings.min_title_size = max(8, min(int(settings.min_title_size), settings.title_size))
+        settings.min_summary_size = max(
+            8, min(int(settings.min_summary_size), settings.summary_size)
+        )
         settings.min_author_size = max(8, min(int(settings.min_author_size), settings.author_size))
         settings.title_max_lines = max(int(settings.title_max_lines), 0)
+        settings.summary_max_lines = max(int(settings.summary_max_lines), 0)
         settings.author_max_lines = max(int(settings.author_max_lines), 1)
         settings.header_max_lines = max(int(settings.header_max_lines), 1)
         settings.title_leading = min(max(float(settings.title_leading), 0.8), 2.0)
+        settings.summary_leading = min(max(float(settings.summary_leading), 0.8), 2.0)
         settings.author_leading = min(max(float(settings.author_leading), 0.8), 2.0)
         settings.header_leading = min(max(float(settings.header_leading), 0.8), 2.0)
         settings.footer_leading = min(max(float(settings.footer_leading), 0.8), 2.0)
@@ -284,6 +297,7 @@ class CoverSettings:
         settings.lightness_top = min(max(float(settings.lightness_top), 0.04), 0.7)
         settings.lightness_bottom = min(max(float(settings.lightness_bottom), 0.02), 0.7)
         settings.auto_fit_title = bool(settings.auto_fit_title)
+        settings.auto_fit_summary = bool(settings.auto_fit_summary)
         settings.auto_contrast = bool(settings.auto_contrast)
         settings.text_shadow = bool(settings.text_shadow)
         return settings

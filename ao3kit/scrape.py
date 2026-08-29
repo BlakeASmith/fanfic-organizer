@@ -421,6 +421,7 @@ class WorkRecord:
     url: str
     title: str
     author: str | None = None
+    summary: str | None = None
     fandoms: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     relationships: list[str] = field(default_factory=list)
@@ -439,6 +440,8 @@ class WorkRecord:
             "date": self.date,
             "metadata": self.metadata.to_dict(score_config=score_config),
         }
+        if self.summary:
+            data["summary"] = self.summary
         if self.relationships:
             data["relationships"] = list(self.relationships)
         if self.series:
@@ -488,6 +491,7 @@ class WorkRecord:
             url=url,
             title=str(data.get("title") or f"AO3 work {work_id}"),
             author=str(data["author"]) if data.get("author") else None,
+            summary=str(data["summary"]).strip() if data.get("summary") else None,
             fandoms=fandom_list,
             tags=tag_list,
             relationships=relationship_list,
@@ -754,12 +758,15 @@ def parse_work_blurb(blurb: BeautifulSoup) -> WorkRecord | None:
         return None
 
     author_link = blurb.select_one("h4.heading a[rel='author']")
+    summary_el = blurb.select_one("blockquote.summary")
+    summary = summary_el.get_text(" ", strip=True) if summary_el else None
 
     return WorkRecord(
         work_id=work_id,
         url=f"{AO3_BASE}/works/{work_id}",
         title=title_link.get_text(strip=True),
         author=author_link.get_text(strip=True) if author_link else None,
+        summary=summary or None,
         fandoms=[
             link.get_text(strip=True)
             for link in blurb.select("h5.fandoms a.tag")
@@ -853,11 +860,17 @@ def parse_work_page(html: str, *, url: str = "") -> WorkRecord | None:
     relationships = _meta_tag_names(meta, "relationship")
     tags = _meta_tag_names(meta, "warning", "character", "freeform", "relationship")
     published = meta.select_one("dd.published")
+    summary_el = (
+        soup.select_one("div.preface blockquote.userstuff")
+        or soup.select_one("blockquote.summary")
+    )
+    summary = summary_el.get_text(" ", strip=True) if summary_el else None
     return WorkRecord(
         work_id=work_id,
         url=url.split("?")[0].rstrip("/") if url else f"{AO3_BASE}/works/{work_id}",
         title=title or f"AO3 work {work_id}",
         author=author_link.get_text(strip=True) if author_link else None,
+        summary=summary or None,
         fandoms=fandoms,
         tags=tags,
         relationships=relationships,
