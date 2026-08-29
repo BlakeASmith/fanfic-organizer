@@ -26,6 +26,10 @@ class KoreaderMount:
     kind: Literal["kobo", "android"]
     storage_prefix: str
     koreader_root: Path
+    transport: Literal["filesystem", "mtp"] = "filesystem"
+    mtp_device: Any | None = None
+    mtp_storage: Any | None = None
+    mtp_koreader_parts: tuple[str, ...] = ()
 
 
 def device_plugboard_name(device: Any) -> str:
@@ -69,6 +73,56 @@ def _kobo_storage_root(prefix: Path) -> bool:
     return (prefix / ".kobo").is_dir()
 
 
+def _mtp_koreader_mount_for_storage(device: Any, storage: Any) -> KoreaderMount | None:
+    parts = (ANDROID_KOREADER_DIR,)
+    list_folder = getattr(device, "list_folder_by_name", None)
+    if not callable(list_folder):
+        return None
+    try:
+        entries = list_folder(storage, *parts)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+    child_dirs = {entry.name for entry in entries if getattr(entry, "is_folder", False)}
+    if not child_dirs.intersection(KOREADER_MARKERS):
+        return None
+    prefix = getattr(storage, "storage_prefix", None)
+    if not prefix:
+        prefix = str(getattr(storage, "object_id", "") or "")
+    return KoreaderMount(
+        kind="android",
+        storage_prefix=str(prefix),
+        koreader_root=Path(ANDROID_KOREADER_DIR),
+        transport="mtp",
+        mtp_device=device,
+        mtp_storage=storage,
+        mtp_koreader_parts=parts,
+    )
+
+
+def detect_mtp_koreader_mounts(device: Any) -> list[KoreaderMount]:
+    """Return KOReader roots on an MTP-connected Android device."""
+    cache = getattr(device, "filesystem_cache", None)
+    if cache is None:
+        return []
+    entries = getattr(cache, "entries", None)
+    if not entries:
+        return []
+    mounts: list[KoreaderMount] = []
+    seen: set[str] = set()
+    for storage in entries:
+        mount = _mtp_koreader_mount_for_storage(device, storage)
+        if mount is None:
+            continue
+        key = str(mount.storage_prefix) + "::" + "/".join(mount.mtp_koreader_parts)
+        if key in seen:
+            continue
+        seen.add(key)
+        mounts.append(mount)
+    return mounts
+
+
 def _koreader_root_for_prefix(
     prefix: Path,
     *,
@@ -95,13 +149,15 @@ def detect_koreader_mounts(
     prefixes = storage_prefixes(device)
     if not prefixes:
         if is_mtp_device(device):
+            mtp_mounts = detect_mtp_koreader_mounts(device)
+            if mtp_mounts:
+                return mtp_mounts
             raise KoreaderDetectionError(
-                "This device is connected over MTP (common for Android phones). "
-                "Fanfic Organizer cannot write KOReader files over MTP.",
+                "This Android device does not appear to have KOReader set up yet.",
                 hint=(
-                    "Use a Kobo with KOReader over USB, or connect the device "
-                    "storage with Calibre's Connect to folder if your computer "
-                    "mounts it as a drive."
+                    "Install KOReader on the phone, open it once so a "
+                    f"{ANDROID_KOREADER_DIR}/ folder exists on device storage "
+                    "(with settings, plugins, or cache inside), then try again."
                 ),
             )
         raise KoreaderDetectionError(

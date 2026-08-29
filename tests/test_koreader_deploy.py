@@ -166,12 +166,119 @@ def test_detect_rejects_non_koreader_device(tmp_path: Path):
         detect_koreader_mounts(device)
 
 
-def test_detect_rejects_mtp_without_storage():
+def test_detect_rejects_mtp_without_koreader():
+    class _Entry:
+        def __init__(self, name: str, *, is_folder: bool):
+            self.name = name
+            self.is_folder = is_folder
+
+    class _Storage:
+        storage_prefix = "mtp:::1:::"
+        object_id = 1
+
     class _Mtp:
         DEVICE_PLUGBOARD_NAME = "MTP_DEVICE"
 
-    with pytest.raises(KoreaderDetectionError, match="MTP"):
+        def __init__(self):
+            self.filesystem_cache = type("Cache", (), {"entries": [_Storage()]})()
+
+        def list_folder_by_name(self, storage, *names):
+            raise FileNotFoundError(names)
+
+    with pytest.raises(KoreaderDetectionError, match="does not appear to have KOReader"):
         detect_koreader_mounts(_Mtp())
+
+
+def test_detect_mtp_android_koreader_mount():
+    class _Entry:
+        def __init__(self, name: str, *, is_folder: bool):
+            self.name = name
+            self.is_folder = is_folder
+
+    class _Storage:
+        storage_prefix = "mtp:::1:::"
+        object_id = 1
+
+    class _Mtp:
+        DEVICE_PLUGBOARD_NAME = "MTP_DEVICE"
+        _main_id = 1
+
+        def __init__(self):
+            self.filesystem_cache = type("Cache", (), {"entries": [_Storage()]})()
+            self.uploaded: dict[tuple[str, ...], bytes] = {}
+
+        def list_folder_by_name(self, storage, *names):
+            if names == ("koreader",):
+                return (
+                    _Entry("cache", is_folder=True),
+                    _Entry("settings", is_folder=True),
+                )
+            raise FileNotFoundError(names)
+
+        def ensure_parent(self, storage, path):
+            return storage
+
+        def put_file(self, parent, name, stream, size, replace=True):
+            self.uploaded[name] = stream.read()
+
+    device = _Mtp()
+    mounts = detect_koreader_mounts(device)
+    assert len(mounts) == 1
+    assert mounts[0].kind == "android"
+    assert mounts[0].transport == "mtp"
+    assert koreader_deployable(device)
+
+
+def test_deploy_to_mtp_device(tmp_path: Path):
+    class _Entry:
+        def __init__(self, name: str, *, is_folder: bool):
+            self.name = name
+            self.is_folder = is_folder
+
+    class _Storage:
+        storage_prefix = "mtp:::1:::"
+        object_id = 1
+
+    class _Mtp:
+        DEVICE_PLUGBOARD_NAME = "MTP_DEVICE"
+        _main_id = 1
+
+        def __init__(self, books: list[_Book]):
+            self._books = books
+            self.filesystem_cache = type("Cache", (), {"entries": [_Storage()]})()
+            self.uploaded: dict[tuple[str, ...], bytes] = {}
+
+        def books(self, main_memory=True):
+            return list(self._books)
+
+        def list_folder_by_name(self, storage, *names):
+            if names == ("koreader",):
+                return (_Entry("cache", is_folder=True),)
+            raise FileNotFoundError(names)
+
+        def ensure_parent(self, storage, path):
+            return storage
+
+        def put_file(self, parent, name, stream, size, replace=True):
+            self.uploaded[name] = stream.read()
+
+    plugin_source = tmp_path / KOPLUGIN_DIRNAME
+    plugin_source.mkdir()
+    (plugin_source / "main.lua").write_text("-- plugin\n", encoding="utf-8")
+
+    db = _Db({1: _Meta("Title", ["Author"], ["DW"])})
+    device = _Mtp([_Book(1, "Author/Title.epub")])
+
+    result = deploy_to_device(
+        db,
+        device,
+        plugin_source=plugin_source,
+        install_koplugin=True,
+    )
+    assert result["books"] == 1
+    assert result["koreader_kind"] == "android"
+    assert COLLECTIONS_JSON_NAME in device.uploaded
+    assert "main.lua" in device.uploaded
 
 
 def test_koreader_roots_and_deploy_to_device(tmp_path: Path):
