@@ -149,6 +149,8 @@ class LibraryBook:
     uuid: str = ''
     wordcount: int | None = None
     is_complete: bool | None = None
+    comments: str = ''
+    summary: str = ''
 
     @property
     def work_id(self) -> str:

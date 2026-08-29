@@ -137,6 +137,7 @@ On first import into an empty library (or via the settings checkbox) it creates 
 | `#relationships` | Relationships | cleaned AO3 Relationship tags |
 | `#collections` | Collections | computed from collection rules |
 | `#originaltags` | Original Tags | pre-clean AO3 tags |
+| `#summary` | Summary | AO3 work summary (Comments also used when this column is absent) |
 | `#wordcount` | word count | AO3 word count |
 | Series | Series | first AO3 series name (built-in Calibre field) |
 | series index | | AO3 part number |

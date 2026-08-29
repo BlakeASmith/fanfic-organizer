@@ -30,6 +30,8 @@ from ao3kit.covers import (
     _format_footer,
     _normalize_cover_text,
     _scratch_draw,
+    resolve_record_summary,
+    summary_text_from_comments,
 )
 
 pytest.importorskip("PIL")
@@ -287,6 +289,39 @@ def test_cover_info_from_record_includes_summary():
     assert info.summary == "They were roommates. Oh my god."
 
 
+def test_cover_info_from_record_uses_comments_when_summary_missing():
+    record = {
+        "title": "A Work",
+        "comments": "<p>They were <b>roommates</b>.</p>",
+        "author": "Writer",
+    }
+    info = cover_info_from_record(record)
+    assert info.summary == "They were roommates."
+
+
+def test_summary_text_from_comments_skips_json_metadata():
+    blob = '{"work_id": "9", "tags": ["Fluff"]}'
+    assert summary_text_from_comments(blob) == ""
+    assert summary_text_from_comments("Plain synopsis text.") == "Plain synopsis text."
+
+
+def test_resolve_record_summary_prefers_column_over_comments():
+    record = {"title": "A"}
+    assert (
+        resolve_record_summary(
+            record,
+            summary_column="Column blurb.",
+            comments="Comments blurb.",
+        )
+        == "Column blurb."
+    )
+    assert resolve_record_summary(record, comments="Comments blurb.") == "Comments blurb."
+    assert (
+        resolve_record_summary({"summary": "Record blurb."}, comments="Comments blurb.")
+        == "Record blurb."
+    )
+
+
 def test_summary_on_cover_when_enabled():
     info = CoverInfo(
         title="Short Title",
@@ -307,6 +342,24 @@ def test_summary_on_cover_when_enabled():
     assert summary.bottom <= author.y - 8
     assert summary.size <= settings.summary_size
     assert "…" not in " ".join(summary.lines)
+
+
+def test_apply_cover_to_epub_uses_record_summary(tmp_path: Path):
+    epub = tmp_path / "work.epub"
+    epub.write_bytes(ao3_epub_bytes())
+    outcome = apply_cover_to_epub(
+        epub,
+        record={
+            "title": "Operation Cameo",
+            "comments": "A spy romp in wartime London.",
+        },
+        settings=CoverSettings(fields=["title", "summary", "author"]),
+    )
+    assert outcome.status == "updated"
+    assert outcome.info is not None
+    assert outcome.info.summary == "A spy romp in wartime London."
+    image = extract_cover_bytes(epub)
+    assert image is not None
 
 
 def test_summary_hidden_when_field_disabled():

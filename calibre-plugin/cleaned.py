@@ -9,6 +9,7 @@ with FanFicFare:
 * ``#relationships`` ← cleaned AO3 Relationship tags
 * ``#collections`` ← rule collection names
 * ``#originaltags`` ← pre-clean AO3 tags (warnings, ships, characters, freeforms)
+* ``#summary`` ← AO3 work summary (when the column exists; Comments is also read)
 * ``#wordcount`` ← AO3 word count (when present)
 * Tags ← remaining cleaned tags + ``Completed``
 * Series / series index ← first AO3 series membership (Calibre's built-in Series)
@@ -511,6 +512,10 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
     words = (record.get('metadata') or {}).get('words')
     wordcount = words if isinstance(words, int) else None
 
+    from ao3kit.covers import resolve_record_summary
+
+    summary = resolve_record_summary(record)
+
     work_id = canonical_work_id(record)
     url = canonical_work_url(record)
     identifiers: dict[str, str] = {}
@@ -541,6 +546,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         'tags': tags,
         'original_tags': original_tag_names(record),
         'wordcount': wordcount,
+        'summary': summary or None,
         'work_id': work_id,
         'url': url,
         'identifiers': identifiers,
@@ -618,6 +624,8 @@ def record_from_library_fields(
     relationships: list[str] | None = None,
     characters: list[str] | None = None,
     wordcount: int | None = None,
+    comments: str | None = None,
+    summary: str | None = None,
     raw_record: dict[str, Any] | None = None,
     is_complete: bool | None = None,
     series_name: str | None = None,
@@ -629,6 +637,18 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
+    from ao3kit.covers import resolve_record_summary
+
+    def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
+        text = resolve_record_summary(
+            record,
+            summary_column=summary,
+            comments=comments,
+        )
+        if text:
+            record['summary'] = text
+        return record
+
     ids = dict(identifiers or {})
     author_list = _unique_names(authors)
     restored_series = _series_from_calibre(
@@ -661,7 +681,7 @@ def record_from_library_fields(
             record['characters'] = _unique_names(characters)
         if restored_series and not series_memberships_from_record(record):
             record['series'] = restored_series
-        return record
+        return _attach_summary(record)
 
     work_id = str(ids.get('ao3') or '').strip() or (work_id_from_url(ids.get('url')) or '')
     url = str(ids.get('url') or '').strip() or (work_url(work_id) or '')
@@ -714,7 +734,7 @@ def record_from_library_fields(
         record['relationships'] = _unique_names(relationships)
     if restored_series:
         record['series'] = restored_series
-    return record
+    return _attach_summary(record)
 
 
 def _series_from_calibre(

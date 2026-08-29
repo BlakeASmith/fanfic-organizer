@@ -57,7 +57,7 @@ class ConfigWidget(QWidget):
             'including the host-wide AO3 rate limiter). A git checkout is '
             'optional.\n\n'
             'Fanfic columns (same labels as FanFicFare): #fandom, '
-            '#relationships, #collections, #wordcount, plus #originaltags '
+            '#relationships, #collections, #summary, #wordcount, plus #originaltags '
             'for the pre-clean AO3 tags. Cleaned tags go in Calibre\'s Tags '
             'field. AO3 series membership fills Calibre\'s built-in Series '
             'column. Columns are created on import, or when you check the box '

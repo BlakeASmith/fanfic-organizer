@@ -51,8 +51,10 @@ def build_metadata(
         has_collections_column=bool(present.get('collections')),
     )
 
-    # Leave Comments alone (AO3 summaries live there; scrape records have no summary).
-    if existing_comments:
+    summary = str(record.get('summary') or '').strip()
+    if summary and not existing_comments:
+        mi.comments = summary
+    elif existing_comments:
         mi.comments = existing_comments
     return mi
 
@@ -287,6 +289,8 @@ def write_layout_fields(db, book_id: int, record: dict[str, Any]) -> None:
         _set_custom(
             db, book_id, 'originaltags', fields['original_tags'], commit=False
         )
+    if present.get('summary') and fields.get('summary'):
+        _set_custom(db, book_id, 'summary', fields['summary'], commit=False)
 
     commit = getattr(db, 'commit', None)
     if callable(commit):

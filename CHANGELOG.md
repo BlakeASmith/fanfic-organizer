@@ -24,7 +24,8 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
-- Fix plugin load failure (**ao3kit module missing**) after the Fill from AO3 partial-failure change: job supervision no longer imports ``ao3kit`` inside Calibre's Python.
+- Fix cover **Summary** not appearing on existing library books: store AO3 summaries in Calibre Comments on import, optionally in a **#summary** column when that layout column exists, and read either source back when generating covers (including Process library).
+- Add optional **#summary** custom column (created with the other fanfic layout columns) for AO3 work summaries; Comments remains supported for FanFicFare libraries.
 - Fix **Fill from AO3** so a failed fetch on one selected book no longer abandons the rest: work pages are written to the job JSONL as each one finishes, per-book network/parse errors are skipped, and Calibre still ingests the books that succeeded.
 - Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
 - Fix background jobs that finish before `start_job` returns showing as still running in **Running jobs…**.

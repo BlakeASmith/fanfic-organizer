@@ -206,6 +206,49 @@ def _normalize_cover_text(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def summary_text_from_comments(comments: Any) -> str:
+    """Return AO3-style summary text from Calibre Comments (plain or HTML).
+
+    Skips legacy JSON metadata blobs some libraries store in Comments.
+    """
+    text = str(comments or "").strip()
+    if not text:
+        return ""
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and (
+            parsed.get("work_id")
+            or parsed.get("tags")
+            or parsed.get("fandoms")
+            or parsed.get("cleaned")
+        ):
+            return ""
+    plain = re.sub(r"<[^>]+>", " ", text)
+    plain = re.sub(r"\s+([,.!?;:])", r"\1", plain)
+    return _normalize_cover_text(plain)
+
+
+def resolve_record_summary(
+    record: dict[str, Any] | None,
+    *,
+    summary_column: Any = None,
+    comments: Any = None,
+) -> str:
+    """Pick summary text from a work record, optional column, or Comments."""
+    record = record or {}
+    direct = _normalize_cover_text(str(record.get("summary") or ""))
+    if direct:
+        return direct
+    for candidate in (summary_column, comments, record.get("comments")):
+        text = summary_text_from_comments(candidate)
+        if text:
+            return text
+    return ""
+
+
 def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     record = record or {}
     fandoms = record.get("fandoms") or []
@@ -258,9 +301,10 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
         author = ", ".join(str(item).strip() for item in authors if str(item).strip())
     else:
         author = str(authors or "").strip()
+    summary = resolve_record_summary(record)
     return CoverInfo(
         title=_normalize_cover_text(str(record.get("title") or "")),
-        summary=_normalize_cover_text(str(record.get("summary") or "")),
+        summary=summary,
         author=author,
         fandom=", ".join(str(item).strip() for item in fandoms if str(item).strip()),
         relationship=", ".join(
