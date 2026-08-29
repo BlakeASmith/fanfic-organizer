@@ -4,7 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-from ao3kit.scrape import SORT_OPTIONS, SearchCriteria
+from ao3kit.scrape import SORT_OPTIONS, SearchCriteria, scrape_record_failed as lib_scrape_record_failed
 
 
 PLUGIN_SCRAPE_RUN = Path(__file__).resolve().parents[1] / "calibre-plugin" / "scrape_run.py"
@@ -21,6 +21,14 @@ def load_scrape_run():
 def test_sort_options_match_library():
     mod = load_scrape_run()
     assert list(mod.SORT_OPTIONS) == list(SORT_OPTIONS)
+
+
+def test_scrape_record_failed_matches_library():
+    mod = load_scrape_run()
+    ok = {"work_id": "1", "title": "T"}
+    bad = {"work_id": "2", "scrape_error": "timeout"}
+    assert mod.scrape_record_failed(ok) == lib_scrape_record_failed(ok)
+    assert mod.scrape_record_failed(bad) == lib_scrape_record_failed(bad)
 
 
 def test_criteria_from_options_round_trips_to_search_criteria():

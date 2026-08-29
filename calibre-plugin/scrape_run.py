@@ -25,6 +25,14 @@ SORT_OPTIONS = [
 ]
 
 
+def scrape_record_failed(record: dict[str, Any]) -> bool:
+    """True when a ``--works-from`` row did not fetch usable AO3 metadata.
+
+    Keep in sync with ``ao3kit.scrape.scrape_record_failed``.
+    """
+    return bool(str(record.get('scrape_error') or '').strip())
+
+
 def parse_id_list(value: str | None) -> list[int]:
     if not value or not str(value).strip():
         return []
