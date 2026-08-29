@@ -64,13 +64,22 @@ class _Device:
         card_prefix: str = "",
         *,
         plugboard: str = "KOBOTOUCH",
+        card_books: list[_Book] | None = None,
     ):
         self._books = books
+        self._card_books = list(card_books or [])
         self._main_prefix = main_prefix
         self._card_a_prefix = card_prefix
         self.DEVICE_PLUGBOARD_NAME = plugboard
+        self.books_calls: list[tuple[object, bool]] = []
 
-    def books(self, main_memory=True):
+    def books(self, oncard=None, end_session=True):
+        # Mirror stock Calibre: reject the old mistaken main_memory kwarg.
+        self.books_calls.append((oncard, end_session))
+        if oncard == "carda":
+            return list(self._card_books) if self._card_a_prefix else []
+        if oncard == "cardb":
+            return []
         return list(self._books)
 
 
@@ -105,6 +114,58 @@ def test_build_collections_index_from_device_books(tmp_path: Path):
     assert entries[0]["lpath"] == "Author A/Alpha.epub"
     assert entries[0]["collections"] == ["Harry Potter", "Fluff"]
     assert entries[1]["collections"] == []
+    assert [call[0] for call in device.books_calls] == [None, "carda", "cardb"]
+
+
+def test_build_collections_index_includes_card_books(tmp_path: Path):
+    mount = tmp_path / "kobo"
+    sd = tmp_path / "sd"
+    _seed_kobo_koreader(mount)
+    _seed_kobo_koreader(sd)
+    db = _Db(
+        {
+            1: _Meta("Main", ["A"], ["On Device"]),
+            2: _Meta("Card", ["B"], ["On SD"]),
+        }
+    )
+    device = _Device(
+        [_Book(1, "A/Main.epub")],
+        str(mount),
+        str(sd),
+        card_books=[_Book(2, "B/Card.epub")],
+    )
+    entries = build_collections_index(db, device)
+    assert [row["lpath"] for row in entries] == ["A/Main.epub", "B/Card.epub"]
+    assert entries[1]["collections"] == ["On SD"]
+
+
+def test_build_collections_index_rejects_main_memory_kwarg(tmp_path: Path):
+    """Real KOBOTOUCH.books() raises TypeError on main_memory=…."""
+
+    class _StrictKobo:
+        DEVICE_PLUGBOARD_NAME = "KOBOTOUCH"
+
+        def __init__(self, books: list[_Book], prefix: str):
+            self._books = books
+            self._main_prefix = prefix
+            self._card_a_prefix = ""
+
+        def books(self, oncard=None, end_session=True):
+            if oncard in ("carda", "cardb"):
+                return []
+            return list(self._books)
+
+    mount = tmp_path / "kobo"
+    _seed_kobo_koreader(mount)
+    db = _Db({1: _Meta("Alpha", ["A"], ["X"])})
+    device = _StrictKobo([_Book(1, "A/Alpha.epub")], str(mount))
+
+    with pytest.raises(TypeError, match="main_memory"):
+        device.books(main_memory=True)
+
+    entries = build_collections_index(db, device)
+    assert len(entries) == 1
+    assert entries[0]["collections"] == ["X"]
 
 
 def test_atomic_write_json(tmp_path: Path):
@@ -248,7 +309,9 @@ def test_deploy_to_mtp_device(tmp_path: Path):
             self.filesystem_cache = type("Cache", (), {"entries": [_Storage()]})()
             self.uploaded: dict[tuple[str, ...], bytes] = {}
 
-        def books(self, main_memory=True):
+        def books(self, oncard=None, end_session=True):
+            if oncard in ("carda", "cardb"):
+                return []
             return list(self._books)
 
         def list_folder_by_name(self, storage, *names):
