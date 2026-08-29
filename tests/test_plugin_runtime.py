@@ -113,3 +113,62 @@ def test_is_bundled_project(tmp_path: Path):
     assert not runtime.is_bundled_project(project)
     (project / "run_ao3kit.py").write_text("", encoding="utf-8")
     assert runtime.is_bundled_project(project)
+
+
+def test_ensure_ao3kit_importable_with_project(tmp_path: Path, monkeypatch):
+    import builtins
+    import sys
+
+    runtime = load_runtime()
+    project = tmp_path / "checkout"
+    (project / "ao3kit").mkdir(parents=True)
+    (project / "ao3kit" / "__init__.py").write_text('__version__ = "0.0.0"\n', encoding="utf-8")
+    vendor = project / "vendor"
+    vendor.mkdir()
+
+    for key in list(sys.modules):
+        if key == "ao3kit" or key.startswith("ao3kit."):
+            monkeypatch.delitem(sys.modules, key, raising=False)
+
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "ao3kit" or name.startswith("ao3kit."):
+            if str(project) not in sys.path:
+                raise ImportError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(
+        sys,
+        "path",
+        [p for p in sys.path if Path(p).resolve() not in {project.resolve(), vendor.resolve()}],
+    )
+
+    assert runtime.ensure_ao3kit_importable(project=project)
+    assert str(project) in sys.path
+    assert str(vendor) in sys.path
+    import ao3kit
+
+    assert Path(ao3kit.__file__).resolve().parent == (project / "ao3kit").resolve()
+
+
+def test_ensure_ao3kit_importable_false_without_roots(monkeypatch):
+    import builtins
+    import sys
+
+    runtime = load_runtime()
+    for key in list(sys.modules):
+        if key == "ao3kit" or key.startswith("ao3kit."):
+            monkeypatch.delitem(sys.modules, key, raising=False)
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "ao3kit" or name.startswith("ao3kit."):
+            raise ImportError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+    monkeypatch.setattr(runtime, "ensure_bundled_runtime", lambda **_k: None)
+    assert runtime.ensure_ao3kit_importable(project=None) is False
