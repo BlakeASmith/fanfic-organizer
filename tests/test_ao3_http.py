@@ -51,10 +51,10 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(self, responses: list[FakeResponse | BaseException]) -> None:
         self._responses = list(responses)
         self.calls: list[tuple[str, str]] = []
-        self.timeouts: list[float | None] = []
+        self.timeouts: list[float | tuple[float, float] | None] = []
         self.headers: dict = {}
 
     def request(self, method, url, data=None, timeout=None, stream=False):
@@ -62,7 +62,10 @@ class FakeSession:
         self.timeouts.append(timeout)
         if not self._responses:
             raise AssertionError(f"unexpected {method} {url}")
-        return self._responses.pop(0)
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
 
 def test_default_headers_use_shared_user_agent():
@@ -224,6 +227,74 @@ def test_request_adds_view_adult(monkeypatch: pytest.MonkeyPatch):
     assert session.calls == [
         ("GET", "https://archiveofourown.org/works/9?view_adult=true")
     ]
+
+
+def test_request_uses_default_page_timeout(monkeypatch: pytest.MonkeyPatch):
+    from ao3kit.http import DEFAULT_REQUEST_TIMEOUT
+
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession([FakeResponse(text="ok")])
+    request(session, "GET", "https://archiveofourown.org/works/1")
+    assert session.timeouts == [DEFAULT_REQUEST_TIMEOUT]
+
+
+def test_request_gives_up_after_max_timeouts(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession(
+        [
+            requests.Timeout("hang"),
+            requests.Timeout("hang"),
+            FakeResponse(text="should not reach"),
+        ]
+    )
+    with pytest.raises(Ao3HttpError, match="Timed out after 2"):
+        request(
+            session,
+            "GET",
+            "https://archiveofourown.org/works/1",
+            max_timeouts=2,
+            max_retries=5,
+        )
+    assert len(session.calls) == 2
+
+
+def test_request_treats_cloudflare_origin_timeout_like_socket_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    messages: list[str] = []
+    session = FakeSession(
+        [
+            FakeResponse(status_code=522, text="error code: 522"),
+            FakeResponse(status_code=524, text="error code: 524"),
+            FakeResponse(text="should not reach"),
+        ]
+    )
+    with pytest.raises(Ao3HttpError, match="Timed out after 2.*HTTP 524"):
+        request(
+            session,
+            "GET",
+            "https://archiveofourown.org/works/1",
+            max_timeouts=2,
+            on_status=messages.append,
+        )
+    assert len(session.calls) == 2
+    assert any("origin timed out" in message for message in messages)
+
+
+def test_request_retries_once_on_origin_timeout_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession(
+        [
+            FakeResponse(status_code=522, text="error code: 522"),
+            FakeResponse(text="ok"),
+        ]
+    )
+    response = request(session, "GET", "https://archiveofourown.org/works/1")
+    assert response.text == "ok"
+    assert len(session.calls) == 2
 
 
 def test_create_session_requires_both_credentials():
