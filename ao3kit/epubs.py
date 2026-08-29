@@ -16,7 +16,14 @@ from urllib.parse import urljoin
 import requests
 from ao3kit.htmlsoup import parse_html
 
-from ao3kit.http import AO3_BASE, Ao3HttpError, create_session, get, is_login_wall
+from ao3kit.http import (
+    AO3_BASE,
+    Ao3HttpError,
+    EPUB_DOWNLOAD_TIMEOUT,
+    create_session,
+    get,
+    is_login_wall,
+)
 from ao3kit.rate import ensure_rate_limits
 
 EPUB_DIRNAME = "epubs"
@@ -248,7 +255,7 @@ def classify_work_page(html: str) -> str | None:
 
 
 def fetch_work_html(session: requests.Session, url: str) -> str:
-    response = get(session, url, view_adult=True, timeout=60)
+    response = get(session, url, view_adult=True)
     return response.text
 
 
@@ -283,7 +290,7 @@ def download_epub_to_path(
     url = absolute_url(href, page_url)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    response = get(session, url, stream=True, timeout=180)
+    response = get(session, url, stream=True, timeout=EPUB_DOWNLOAD_TIMEOUT)
     magic = b""
     try:
         with tmp.open("wb") as handle:

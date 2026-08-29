@@ -25,6 +25,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Give up sooner on hung or unreachable AO3 pages: HTML requests time out at 20s (was 60s), at most two timeout attempts, and Cloudflare origin timeouts (522/524) stop after the same short budget instead of a long 5xx retry loop.
 - Fix plugin load / import failure (**ao3kit module missing**) after the cover Summary change: summary resolution no longer imports ``ao3kit`` inside Calibre's Python.
 - Fix cover **Summary** not appearing on existing library books: store AO3 summaries in Calibre Comments on import, optionally in a **#summary** column when that layout column exists, and read either source back when generating covers (including Process library).
 - Add optional **#summary** custom column (created with the other fanfic layout columns) for AO3 work summaries; Comments remains supported for FanFicFare libraries.
