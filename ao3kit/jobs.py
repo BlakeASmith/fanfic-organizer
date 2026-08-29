@@ -791,8 +791,11 @@ def _plugin_ingest_state(spec: JobSpec, exit_code: int | None) -> str:
     if exit_code == 130:
         return "cancelled"
     if exit_code not in (0, None):
-        # Attach whatever EPUBs landed before the download step failed.
+        plugin = spec.plugin or {}
+        # Attach whatever EPUBs or metadata landed before the step failed.
         if action == "attach_epubs":
+            return "pending"
+        if action == "import_records" and plugin.get("incremental_import"):
             return "pending"
         return "skipped"
     return "pending"

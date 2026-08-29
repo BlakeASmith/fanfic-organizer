@@ -891,6 +891,26 @@ _WORKS_FROM_PRESERVE = (
 )
 
 
+def scrape_record_failed(record: dict[str, Any]) -> bool:
+    """True when a ``--works-from`` row did not fetch usable AO3 metadata."""
+    return bool(str(record.get("scrape_error") or "").strip())
+
+
+def works_from_exit_code(records: list[dict[str, Any]]) -> int:
+    """Exit 0 when at least one work page was fetched; 1 when every row failed."""
+    attempted = [
+        record
+        for record in records
+        if str(record.get("work_id") or "").strip()
+        or str(record.get("url") or "").strip()
+    ]
+    if not attempted:
+        return 1
+    if any(not scrape_record_failed(record) for record in attempted):
+        return 0
+    return 1
+
+
 def scrape_known_works(
     records: list[dict[str, Any]],
     *,
@@ -898,6 +918,7 @@ def scrape_known_works(
     score_config: QualityScoreConfig | None = None,
     on_status: Callable[[str], None] | None = None,
     on_work: Callable[[WorkRecord], None] | None = None,
+    on_record: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch each known work page and merge metadata onto the seed records."""
     session = session or create_session()
@@ -923,20 +944,35 @@ def scrape_known_works(
         title = str(record.get("title") or (work.title if work else "") or url)
         if on_status:
             on_status(f"[{index}/{total}] Fetching {title}…")
-        html = fetch_page(url, session=session)
-        parsed = parse_work_page(html, url=url)
         merged = dict(record)
+        try:
+            html = fetch_page(url, session=session)
+        except Exception as exc:
+            merged["scrape_error"] = str(exc)
+            out.append(merged)
+            if on_status:
+                on_status(f"Failed to fetch {title}: {exc}")
+            if on_record:
+                on_record(merged)
+            continue
+        parsed = parse_work_page(html, url=url)
         if parsed is None:
+            merged["scrape_error"] = "Could not parse work page"
+            out.append(merged)
             if on_status:
                 on_status(f"Could not parse work page for {title}.")
-            out.append(merged)
+            if on_record:
+                on_record(merged)
             continue
         data = parsed.to_dict(score_config=score_config)
         merged.update(data)
         for key in _WORKS_FROM_PRESERVE:
             if key in record:
                 merged[key] = record[key]
+        merged.pop("scrape_error", None)
         out.append(merged)
+        if on_record:
+            on_record(merged)
         if on_work:
             on_work(parsed)
     return out
@@ -1429,6 +1465,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_list_target = None
 
     works: list[WorkRecord] = []
+    works_from_exit: int | None = None
 
     if args.works_from:
         try:
@@ -1443,15 +1480,26 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         writer.replace_all(seed_records)
+
+        def on_record(record: dict[str, Any]) -> None:
+            writer.upsert(record)
+
         records = scrape_known_works(
             seed_records,
             session=session,
             score_config=score_config,
             on_status=on_status,
-            on_work=on_work,
+            on_record=on_record,
         )
         writer.replace_all(records)
-        works = [work for work in (WorkRecord.from_dict(row) for row in records) if work]
+        works = []
+        for row in records:
+            if scrape_record_failed(row):
+                continue
+            work = WorkRecord.from_dict(row)
+            if work:
+                works.append(work)
+        works_from_exit = works_from_exit_code(records)
         if args.include_series and works:
             from ao3kit.series import expand_with_series
 
@@ -1694,10 +1742,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote {len(works)} matching {noun}.", file=sys.stderr)
 
     if not args.download:
+        if works_from_exit is not None:
+            return works_from_exit
         return 0
     if not works:
         if args.verbose:
             print("No matching works; skipping EPUB download.", file=sys.stderr)
+        if works_from_exit is not None:
+            return works_from_exit
         return 0
 
     dest = Path(args.epub_dir) if args.epub_dir else Path(args.output).parent
@@ -1713,7 +1765,12 @@ def main(argv: list[str] | None = None) -> int:
         verbose=args.verbose,
         cover=args.cover,
     )
-    return 1 if report.failed and not report.downloaded and not report.skipped else 0
+    download_exit = (
+        1 if report.failed and not report.downloaded and not report.skipped else 0
+    )
+    if works_from_exit is not None and works_from_exit == 0:
+        return 0
+    return download_exit
 
 
 if __name__ == "__main__":

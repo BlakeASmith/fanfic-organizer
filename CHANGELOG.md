@@ -21,6 +21,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Fix **Fill from AO3** so a failed fetch on one selected book no longer abandons the rest: work pages are written to the job JSONL as each one finishes, per-book network/parse errors are skipped, and Calibre still ingests the books that succeeded.
 - Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
 
 ### Documentation

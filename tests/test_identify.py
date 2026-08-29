@@ -287,3 +287,84 @@ def test_scrape_works_from(tmp_path: Path, monkeypatch):
     assert record["book_id"] == 4
     assert record["fandoms"] == ["Doctor Who (2005)"]
     assert record["metadata"]["words"] == 12345
+
+
+def test_scrape_known_works_continues_after_fetch_error(monkeypatch):
+    from ao3kit.scrape import scrape_known_works
+
+    html = (FIXTURES / "work_page_full.html").read_text(encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_fetch(url, session=None):
+        calls.append(url)
+        if "90876776" in url:
+            return html
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("ao3kit.scrape.fetch_page", fake_fetch)
+    records = scrape_known_works(
+        [
+            {
+                "work_id": "90876776",
+                "url": "https://archiveofourown.org/works/90876776",
+                "book_id": 4,
+                "title": "ok",
+            },
+            {
+                "work_id": "99999999",
+                "url": "https://archiveofourown.org/works/99999999",
+                "book_id": 5,
+                "title": "bad",
+            },
+        ],
+        session=object(),
+    )
+    assert len(calls) == 2
+    assert len(records) == 2
+    ok = next(row for row in records if row["work_id"] == "90876776")
+    bad = next(row for row in records if row["work_id"] == "99999999")
+    assert ok["title"] == "Time Storm"
+    assert ok["book_id"] == 4
+    assert bad["scrape_error"] == "network down"
+
+
+def test_scrape_works_from_partial_success_exit_code(tmp_path: Path, monkeypatch):
+    html = (FIXTURES / "work_page_full.html").read_text(encoding="utf-8")
+    monkeypatch.setattr("ao3kit.scrape.create_session", lambda *a, **k: object())
+
+    def fake_fetch(url, session=None):
+        if "90876776" in url:
+            return html
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("ao3kit.scrape.fetch_page", fake_fetch)
+    seed = tmp_path / "seed.jsonl"
+    out = tmp_path / "out.jsonl"
+    seed.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "work_id": "90876776",
+                        "url": "https://archiveofourown.org/works/90876776",
+                        "book_id": 4,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "work_id": "99999999",
+                        "url": "https://archiveofourown.org/works/99999999",
+                        "book_id": 5,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rc = scrape_main(["-o", str(out), "--works-from", str(seed), "--verbose"])
+    assert rc == 0
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    assert any(row.get("title") == "Time Storm" for row in rows)
+    assert any(row.get("scrape_error") for row in rows)

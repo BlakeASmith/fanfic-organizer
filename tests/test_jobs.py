@@ -443,6 +443,23 @@ def test_failed_attach_epubs_still_pending_ingest(tmp_path: Path):
     assert status.exit_code != 0
 
 
+def test_failed_incremental_import_still_pending_ingest(tmp_path: Path):
+    job_dir = tmp_path / "jobs" / "fill"
+    spec = JobSpec(
+        id="fill",
+        title="Fill",
+        kind="fill",
+        steps=[["definitely-not-a-command"]],
+        plugin={"action": "import_records", "incremental_import": True},
+        cwd=str(tmp_path),
+    )
+    save_spec(job_dir / "spec.json", spec)
+    assert run_job_dir(job_dir) != 0
+    status = live_job_status(job_dir)
+    assert status.ingest == "pending"
+    assert status.exit_code != 0
+
+
 def test_stop_does_not_cancel_finished_pending_ingest(tmp_path: Path, capsys):
     jobs_dir = tmp_path / "jobs"
     job_dir = jobs_dir / "done"
