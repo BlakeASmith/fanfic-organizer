@@ -30,13 +30,33 @@ class KoreaderSupport:
             return None
         return device_manager.connected_device
 
+    def _import_koreader(self):
+        """Load ao3kit.koreader helpers in Calibre's Python (path bootstrap)."""
+        from calibre_plugins.fanfic_organizer.runtime import ensure_ao3kit_importable
+
+        if not ensure_ao3kit_importable():
+            raise ImportError(
+                "ao3kit is not available in Calibre's Python. "
+                "Re-install Fanfic Organizer from GitHub Releases, or set "
+                "Project path in Plugin settings."
+            )
+        from ao3kit.koreader import deploy as koreader_deploy
+        from ao3kit.koreader import detect as koreader_detect
+
+        return koreader_detect, koreader_deploy
+
     def deploy_ready(self) -> bool:
         device = self.connected_device()
         if device is None:
             return False
-        from ao3kit.koreader.detect import koreader_deployable
-
-        return koreader_deployable(device, koreader_subdir=self.koreader_subdir())
+        try:
+            koreader_detect, _deploy = self._import_koreader()
+            return koreader_detect.koreader_deployable(
+                device, koreader_subdir=self.koreader_subdir()
+            )
+        except Exception:
+            # Menu must stay usable even if ao3kit cannot load or detection fails.
+            return False
 
     def deploy(self, *, silent: bool = False) -> None:
         """Deploy when the user asks; wait out an in-progress device sync first."""
@@ -55,7 +75,18 @@ class KoreaderSupport:
         self._run_deploy(silent=silent)
 
     def _run_deploy(self, *, silent: bool) -> dict[str, Any] | None:
-        from ao3kit.koreader.detect import KoreaderDetectionError
+        try:
+            koreader_detect, _deploy = self._import_koreader()
+        except ImportError as exc:
+            if not silent:
+                error_dialog(
+                    self.plugin.gui,
+                    "Fanfic Organizer",
+                    "Could not load KOReader deploy helpers.",
+                    det_msg=str(exc),
+                    show=True,
+                )
+            return None
 
         device = self.connected_device()
         gui = self.plugin.gui
@@ -70,7 +101,7 @@ class KoreaderSupport:
             return None
         try:
             result = self._deploy_to_device(gui.current_db, device)
-        except KoreaderDetectionError as exc:
+        except koreader_detect.KoreaderDetectionError as exc:
             if not silent:
                 detail = exc.message
                 if exc.hint:
@@ -105,18 +136,18 @@ class KoreaderSupport:
         return result
 
     def _deploy_to_device(self, db, device) -> dict[str, Any]:
-        from ao3kit.koreader.deploy import deploy_to_device, resolve_bundled_plugin_source
+        _detect, koreader_deploy = self._import_koreader()
 
         from calibre_plugins.fanfic_organizer.enrich import read_dev_project_stamp
         from calibre_plugins.fanfic_organizer.runtime import installed_plugin_zip
 
         checkout = Path(read_dev_project_stamp() or "")
         plugin_zip = installed_plugin_zip()
-        plugin_source = resolve_bundled_plugin_source(
+        plugin_source = koreader_deploy.resolve_bundled_plugin_source(
             plugin_zip=plugin_zip,
             checkout_root=checkout if checkout.is_dir() else None,
         )
-        return deploy_to_device(
+        return koreader_deploy.deploy_to_device(
             db,
             device,
             plugin_source=plugin_source,

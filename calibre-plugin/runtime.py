@@ -236,6 +236,66 @@ def ensure_bundled_runtime(
     )
 
 
+def _prepend_sys_path(path: Path) -> None:
+    text = str(path)
+    if text and text not in sys.path:
+        sys.path.insert(0, text)
+
+
+def ensure_ao3kit_importable(*, project: Path | None = None) -> bool:
+    """Make ``import ao3kit`` work in Calibre's Python when possible.
+
+    Jobs normally run via ``calibre-debug -e run_ao3kit.py``. A few GUI
+    actions (KOReader deploy) must call library helpers in-process against
+    the live device object, so the checkout or extracted bundle is added to
+    ``sys.path`` first.
+    """
+    try:
+        import ao3kit  # noqa: F401
+
+        return True
+    except ImportError:
+        pass
+
+    roots: list[Path] = []
+    if project is not None:
+        roots.append(Path(project))
+    else:
+        try:
+            from calibre_plugins.fanfic_organizer.enrich import find_ao3kit_project
+
+            found = find_ao3kit_project()
+            if found is not None:
+                roots.append(found)
+        except Exception:
+            pass
+        try:
+            bundled = ensure_bundled_runtime()
+            if bundled is not None:
+                roots.append(bundled)
+        except Exception:
+            pass
+
+    seen: set[str] = set()
+    for root in roots:
+        resolved = str(Path(root).resolve()) if Path(root).exists() else str(root)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        root_path = Path(root)
+        vendor = root_path / 'vendor'
+        if vendor.is_dir():
+            _prepend_sys_path(vendor)
+        _prepend_sys_path(root_path)
+        try:
+            import ao3kit  # noqa: F401
+
+            return True
+        except ImportError:
+            continue
+    return False
+
+
 def load_user_dirs():
     """Load ``user_dirs`` from the Calibre plugin package or a checkout file.
 

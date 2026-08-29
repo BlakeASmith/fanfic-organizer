@@ -25,6 +25,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Fix **ModuleNotFoundError: No module named 'ao3kit'** when a USB device is connected and the Fanfic Organizer menu opens **Deploy to KOReader…**: load bundled/checkout ``ao3kit`` onto Calibre's path for in-process deploy, and keep the menu usable if that import still fails.
 - Fix plugin load / import failure (**ao3kit module missing**) after the cover Summary change: summary resolution no longer imports ``ao3kit`` inside Calibre's Python.
 - Fix cover **Summary** not appearing on existing library books: store AO3 summaries in Calibre Comments on import, optionally in a **#summary** column when that layout column exists, and read either source back when generating covers (including Process library).
 - Add optional **#summary** custom column (created with the other fanfic layout columns) for AO3 work summaries; Comments remains supported for FanFicFare libraries.
