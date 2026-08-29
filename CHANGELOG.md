@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Add preview GitHub pre-releases to **Check for updates…** so testers can install automated main-branch builds (`X.Y.Z-preview.<run>+<sha>`) from the plugin menu.
 - Add optional **Deploy to KOReader…** for Kobo/Android with KOReader: run it from the Fanfic Organizer menu after USB sync to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. Deploy is blocked unless the device looks like a Kobo with KOReader (`.adds/koreader`) or Android storage with a `koreader/` folder; nothing is written to Kindles or other readers.
 - Add optional **Summary** on generated EPUB covers (Plugin settings → Cover style → Show on cover), with the same wrap/shrink normalization as the title and separate title/summary font sizes.
 - Add **Process library…** to the plugin menu: run simplify, series, EPUB download, covers, and/or collection recompute on the whole open library without selecting every book, with a local estimate of unmatched tags and other pending work before the job starts.
@@ -25,7 +26,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 ### Bug Fixes
 
 - Fix **Deploy to KOReader…** staying disabled on Android phones connected over MTP: detect the on-device `koreader/` folder through Calibre's MTP driver and write collections metadata and the bundled plugin over MTP.
-
+- Fix plugin load / import failure (**ao3kit module missing**) after the cover Summary change: summary resolution no longer imports ``ao3kit`` inside Calibre's Python.
 - Fix cover **Summary** not appearing on existing library books: store AO3 summaries in Calibre Comments on import, optionally in a **#summary** column when that layout column exists, and read either source back when generating covers (including Process library).
 - Add optional **#summary** custom column (created with the other fanfic layout columns) for AO3 work summaries; Comments remains supported for FanFicFare libraries.
 - Fix **Fill from AO3** so a failed fetch on one selected book no longer abandons the rest: work pages are written to the job JSONL as each one finishes, per-book network/parse errors are skipped, and Calibre still ingests the books that succeeded.

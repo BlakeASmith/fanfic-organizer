@@ -512,7 +512,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
     words = (record.get('metadata') or {}).get('words')
     wordcount = words if isinstance(words, int) else None
 
-    from ao3kit.covers import resolve_record_summary
+    from calibre_plugins.fanfic_organizer.cover_summary import resolve_record_summary
 
     summary = resolve_record_summary(record)
 
@@ -637,7 +637,7 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
-    from ao3kit.covers import resolve_record_summary
+    from calibre_plugins.fanfic_organizer.cover_summary import resolve_record_summary
 
     def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
         text = resolve_record_summary(

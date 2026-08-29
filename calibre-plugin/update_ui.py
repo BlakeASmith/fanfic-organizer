@@ -27,9 +27,9 @@ from calibre_plugins.fanfic_organizer.updates import (
     download_and_install,
     fetch_releases,
     format_published_at,
-    installed_version,
     installed_version_text,
     latest_release,
+    latest_stable_release,
     spawn_calibre_restart,
     summarize_release_notes,
 )
@@ -78,9 +78,10 @@ class UpdateCheckDialog(QDialog):
         self.setLayout(layout)
 
         intro = QLabel(
-            "Compare the installed plugin with GitHub Releases. "
-            "Choose a release to install a newer build or roll back to an "
-            "older tag. Calibre must restart to load the new zip."
+            "Compare the installed plugin with GitHub Releases, including "
+            "automated preview builds from main. Choose a release to install "
+            "a newer build or roll back to an older tag. Calibre must restart "
+            "to load the new zip."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -161,6 +162,8 @@ class UpdateCheckDialog(QDialog):
         self.version_combo.clear()
         for release in self._releases:
             label = release.version_text
+            if release.is_preview:
+                label += " (preview)"
             if compare_to_installed(release) > 0:
                 label += " (newer)"
             elif compare_to_installed(release) < 0:
@@ -174,21 +177,29 @@ class UpdateCheckDialog(QDialog):
         self.version_combo.blockSignals(False)
         self.version_combo.setEnabled(bool(self._releases))
         latest = latest_release(self._releases)
+        latest_stable = latest_stable_release(self._releases)
         if latest is None:
             self.latest_label.setText("No releases found")
             self.status.setText(
                 "No published GitHub releases with a plugin zip were found."
             )
             return
-        self.latest_label.setText(latest.version_text)
-        current = installed_version()
-        if latest.version > current:
+        if latest_stable is not None:
+            latest_text = latest_stable.version_text
+            if latest.is_preview and latest.version_text != latest_text:
+                latest_text += f" (preview: {latest.version_text})"
+            self.latest_label.setText(latest_text)
+        else:
+            self.latest_label.setText(f"{latest.version_text} (preview only)")
+        current = installed_version_text()
+        if compare_to_installed(latest) > 0:
+            kind = "preview build" if latest.is_preview else "release"
             self.status.setText(
-                f"Version {latest.version_text} is available "
-                f"(you have {installed_version_text()})."
+                f"{kind.capitalize()} {latest.version_text} is available "
+                f"(you have {current})."
             )
-        elif latest.version == current:
-            self.status.setText("You are on the latest release.")
+        elif compare_to_installed(latest) == 0:
+            self.status.setText("You are on the latest listed build.")
         else:
             self.status.setText(
                 "Your installed build is newer than the latest GitHub release."
