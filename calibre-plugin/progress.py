@@ -793,18 +793,20 @@ class SimplifySelectedWorker(QThread):
     finished_ok = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, book_ids: list[int], *, collections_only: bool = False, parent=None):
+    def __init__(
+        self,
+        ready: list[dict[str, Any]],
+        skipped: list[dict[str, Any]],
+        *,
+        collections_only: bool = False,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.book_ids = list(book_ids)
+        self.ready = list(ready)
+        self.skipped = list(skipped)
         self.collections_only = bool(collections_only)
         self._cancel = False
         self._enrich_handle = None
-        self._db = None
-
-    def set_db(self, db) -> None:
-        # Calibre DB handle must be used carefully; we only read in the worker
-        # and write back on the GUI thread.
-        self._db = db
 
     def request_cancel(self) -> None:
         self._cancel = True
@@ -823,17 +825,10 @@ class SimplifySelectedWorker(QThread):
 
     def run(self) -> None:
         try:
-            if self._db is None:
-                raise ValueError('Library database was not provided.')
+            ready = list(self.ready)
+            skipped = list(self.skipped)
             self.progress.emit(0, 0)
             if self.collections_only:
-                self.status.emit(
-                    f'Loading {len(self.book_ids)} selected book(s) for '
-                    'collection recompute…'
-                )
-                ready, skipped = load_selected_for_collections(
-                    self._db, self.book_ids
-                )
                 empty_error = 'None of the selected books could be loaded.'
                 working = (
                     f'Recomputing collections for {len(ready)} book(s)…'
@@ -843,10 +838,6 @@ class SimplifySelectedWorker(QThread):
                 done = 'Collection recompute finished'
                 cancel_during = 'Cancelled while recomputing collections.'
             else:
-                self.status.emit(
-                    f'Loading AO3 metadata for {len(self.book_ids)} selected book(s)…'
-                )
-                ready, skipped = load_selected_records(self._db, self.book_ids)
                 empty_error = (
                     'None of the selected books have an AO3 URL or work id.'
                 )
@@ -961,10 +952,16 @@ class SimplifySelectedDialog(QDialog):
         self.buttons.rejected.connect(self._on_cancel)
         layout.addWidget(self.buttons)
 
+        if self.collections_only:
+            ready, skipped = load_selected_for_collections(gui.current_db, book_ids)
+        else:
+            ready, skipped = load_selected_records(gui.current_db, book_ids)
         self._worker = SimplifySelectedWorker(
-            book_ids, collections_only=self.collections_only, parent=self
+            ready,
+            skipped,
+            collections_only=self.collections_only,
+            parent=self,
         )
-        self._worker.set_db(gui.current_db)
         self._worker.status.connect(self._on_status)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_worker_finished)
@@ -1123,20 +1120,23 @@ class DownloadSelectedWorker(QThread):
     finished_ok = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, book_ids: list[int], *, tmp: str, parent=None):
+    def __init__(
+        self,
+        ready: list[dict[str, Any]],
+        skipped: list[dict[str, Any]],
+        *,
+        tmp: str,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.book_ids = list(book_ids)
+        self._ready = list(ready)
+        self._skipped = list(skipped)
         self._tmp = tmp
         self._cancel = False
         self._handle = None
-        self._db = None
-        self._ready: list[dict[str, Any]] = []
         self._jsonl: Path | None = None
         self._dest: Path | None = None
         self._seen_book_ids: set[Any] = set()
-
-    def set_db(self, db) -> None:
-        self._db = db
 
     def request_cancel(self) -> None:
         self._cancel = True
@@ -1201,13 +1201,10 @@ class DownloadSelectedWorker(QThread):
             prepare_download_command,
         )
 
-        skipped: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = list(self._skipped)
         try:
-            if self._db is None:
-                raise ValueError('Library database was not provided.')
             self.progress.emit(0, 0)
-            ready, skipped = load_selected_for_epub_download(self._db, self.book_ids)
-            self._ready = ready
+            ready = list(self._ready)
             for item in skipped:
                 self.status.emit(
                     f"Skipping {item.get('title') or item.get('book_id')}: "
@@ -1300,10 +1297,10 @@ class DownloadSelectedDialog(QDialog):
         self.buttons.rejected.connect(self._on_cancel)
         layout.addWidget(self.buttons)
 
+        ready, skipped = load_selected_for_epub_download(gui.current_db, book_ids)
         self._worker = DownloadSelectedWorker(
-            book_ids, tmp=self._cleanup_dir, parent=self
+            ready, skipped, tmp=self._cleanup_dir, parent=self
         )
-        self._worker.set_db(gui.current_db)
         self._worker.status.connect(self._on_status)
         self._worker.progress.connect(self._on_progress)
         self._worker.epub_ready.connect(self._on_epub_ready)
@@ -1532,15 +1529,18 @@ class ImportSeriesWorker(QThread):
     finished_ok = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, book_ids: list[int], *, parent=None):
+    def __init__(
+        self,
+        ready: list[dict[str, Any]],
+        skipped: list[dict[str, Any]],
+        *,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.book_ids = list(book_ids)
+        self.ready = list(ready)
+        self.skipped = list(skipped)
         self._cancel = False
         self._handle = None
-        self._db = None
-
-    def set_db(self, db) -> None:
-        self._db = db
 
     def request_cancel(self) -> None:
         self._cancel = True
@@ -1568,13 +1568,9 @@ class ImportSeriesWorker(QThread):
         tmp = tempfile.mkdtemp(prefix='ao3-series-')
         cleanup_dir = tmp
         try:
-            if self._db is None:
-                raise ValueError('Library database was not provided.')
+            ready = list(self.ready)
+            skipped = list(self.skipped)
             self.progress.emit(0, 0)
-            self.status.emit(
-                f'Loading AO3 metadata for {len(self.book_ids)} selected book(s)…'
-            )
-            ready, skipped = load_selected_records(self._db, self.book_ids)
             for item in skipped:
                 self.status.emit(
                     f"Skipping {item.get('title') or item.get('book_id')}: "
@@ -1709,8 +1705,8 @@ class ImportSeriesDialog(QDialog):
         self.buttons.rejected.connect(self._on_cancel)
         layout.addWidget(self.buttons)
 
-        self._worker = ImportSeriesWorker(book_ids, parent=self)
-        self._worker.set_db(gui.current_db)
+        ready, skipped = load_selected_records(gui.current_db, book_ids)
+        self._worker = ImportSeriesWorker(ready, skipped, parent=self)
         self._worker.status.connect(self._on_status)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_worker_finished)
@@ -1844,15 +1840,18 @@ class FillSeriesWorker(QThread):
     finished_ok = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, book_ids: list[int], *, parent=None):
+    def __init__(
+        self,
+        ready: list[dict[str, Any]],
+        skipped: list[dict[str, Any]],
+        *,
+        parent=None,
+    ):
         super().__init__(parent)
-        self.book_ids = list(book_ids)
+        self.ready = list(ready)
+        self.skipped = list(skipped)
         self._cancel = False
         self._handle = None
-        self._db = None
-
-    def set_db(self, db) -> None:
-        self._db = db
 
     def request_cancel(self) -> None:
         self._cancel = True
@@ -1879,13 +1878,9 @@ class FillSeriesWorker(QThread):
 
         tmp = tempfile.mkdtemp(prefix='ao3-fill-series-')
         try:
-            if self._db is None:
-                raise ValueError('Library database was not provided.')
+            ready = list(self.ready)
+            skipped = list(self.skipped)
             self.progress.emit(0, 0)
-            self.status.emit(
-                f'Loading AO3 metadata for {len(self.book_ids)} selected book(s)…'
-            )
-            ready, skipped = load_selected_records(self._db, self.book_ids)
             for item in skipped:
                 self.status.emit(
                     f"Skipping {item.get('title') or item.get('book_id')}: "
@@ -1992,8 +1987,8 @@ class FillSeriesDialog(QDialog):
         self.buttons.rejected.connect(self._on_cancel)
         layout.addWidget(self.buttons)
 
-        self._worker = FillSeriesWorker(book_ids, parent=self)
-        self._worker.set_db(gui.current_db)
+        ready, skipped = load_selected_records(gui.current_db, book_ids)
+        self._worker = FillSeriesWorker(ready, skipped, parent=self)
         self._worker.status.connect(self._on_status)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_worker_finished)

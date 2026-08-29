@@ -278,3 +278,21 @@ def test_scrape_download_rejected_with_parse_only():
                 SAMPLE_URL,
             ]
         )
+
+
+def test_work_record_from_dict_coerces_string_numbers():
+    work = WorkRecord.from_dict(
+        {
+            "work_id": "1",
+            "url": "https://archiveofourown.org/works/1",
+            "title": "Test",
+            "metadata": {
+                "words": "45000",
+                "kudos": "12",
+                "hits": "999",
+            },
+        }
+    )
+    assert work.metadata.words == 45000
+    assert work.metadata.kudos == 12
+    assert work.metadata.hits == 999

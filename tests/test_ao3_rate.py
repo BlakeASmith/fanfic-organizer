@@ -326,6 +326,29 @@ def test_wait_for_request_honors_retry_after_cooldown(
     assert sleeps == pytest.approx([178.0])
 
 
+def test_wait_for_request_honors_long_retry_after_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Live Retry-After > stale-lock threshold must not be shortened."""
+    ao3_rate._STATE.skip_wait = False
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
+    clock = [1000.0]
+    sleeps: list[float] = []
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
+    reset_rate_limit_state(memory=True)
+    ao3_rate.note_retry_after(420.0)
+    waited = wait_for_request("https://archiveofourown.org/works/1")
+    assert waited == pytest.approx(420.0)
+    assert sleeps == pytest.approx([420.0])
+
+
 def test_shared_store_coordinates_two_connections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db = tmp_path / "rate.sqlite"
     store_a = SharedRateStore(db)

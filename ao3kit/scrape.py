@@ -498,16 +498,12 @@ class WorkRecord:
             date=str(data["date"]) if data.get("date") else None,
             metadata=WorkMetadata(
                 language=meta.get("language"),
-                words=meta.get("words") if isinstance(meta.get("words"), int) else None,
+                words=_coerce_int(meta.get("words")),
                 chapters=chapters,
-                comments=meta.get("comments")
-                if isinstance(meta.get("comments"), int)
-                else None,
-                kudos=meta.get("kudos") if isinstance(meta.get("kudos"), int) else None,
-                bookmarks=meta.get("bookmarks")
-                if isinstance(meta.get("bookmarks"), int)
-                else None,
-                hits=meta.get("hits") if isinstance(meta.get("hits"), int) else None,
+                comments=_coerce_int(meta.get("comments")),
+                kudos=_coerce_int(meta.get("kudos")),
+                bookmarks=_coerce_int(meta.get("bookmarks")),
+                hits=_coerce_int(meta.get("hits")),
             ),
             series=series,
         )
@@ -708,6 +704,20 @@ def parse_int(value: str | None) -> int | None:
         return None
     cleaned = value.strip().replace(",", "")
     return int(cleaned) if cleaned else None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        return parse_int(value)
+    return None
 
 
 def parse_result_count(soup: BeautifulSoup) -> tuple[int | None, int | None, int | None]:

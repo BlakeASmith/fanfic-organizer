@@ -123,6 +123,7 @@ class RateSnapshot:
     tag_interval: float
     success_streak: int
     crawl_delay: float | None
+    retry_after_until: float | None = None
 
 
 @dataclass
@@ -218,6 +219,12 @@ def _ensure_event_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE rate_events ADD COLUMN {name} {typ}")
 
 
+def _ensure_state_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(rate_state)")}
+    if "retry_after_until" not in existing:
+        conn.execute("ALTER TABLE rate_state ADD COLUMN retry_after_until REAL")
+
+
 def _retry_if_locked(fn, *, attempts: int = 20, delay: float = 0.05):
     last: BaseException | None = None
     for attempt in range(attempts):
@@ -273,6 +280,7 @@ class SharedRateStore:
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
         _ensure_event_columns(conn)
+        _ensure_state_columns(conn)
         row = conn.execute("SELECT 1 FROM rate_state WHERE id = 1").fetchone()
         if row is None:
             now = time.time()
@@ -292,12 +300,16 @@ class SharedRateStore:
         row = conn.execute("SELECT * FROM rate_state WHERE id = 1").fetchone()
         assert row is not None
         crawl = row["crawl_delay"]
+        retry_until = row["retry_after_until"] if "retry_after_until" in row.keys() else None
         return RateSnapshot(
             next_allowed_at=float(row["next_allowed_at"]),
             base_interval=float(row["base_interval"]),
             tag_interval=float(row["tag_interval"]),
             success_streak=int(row["success_streak"]),
             crawl_delay=float(crawl) if crawl is not None else None,
+            retry_after_until=(
+                None if retry_until is None else float(retry_until)
+            ),
         )
 
     def _write(self, conn: sqlite3.Connection, snap: RateSnapshot) -> None:
@@ -309,6 +321,7 @@ class SharedRateStore:
               tag_interval = ?,
               success_streak = ?,
               crawl_delay = ?,
+              retry_after_until = ?,
               updated_at = ?
             WHERE id = 1
             """,
@@ -318,6 +331,7 @@ class SharedRateStore:
                 snap.tag_interval,
                 snap.success_streak,
                 snap.crawl_delay,
+                snap.retry_after_until,
                 time.time(),
             ),
         )
@@ -369,9 +383,20 @@ class SharedRateStore:
             now = time.time()
             leftover = max(0.0, snap.next_allowed_at - now)
             wait = leftover
-            if stale_after is not None and leftover > float(stale_after):
+            retry_until = snap.retry_after_until
+            if retry_until is not None and now >= retry_until:
+                retry_until = None
+            active_retry_after = (
+                retry_until is not None and now < retry_until
+            )
+            if (
+                stale_after is not None
+                and leftover > float(stale_after)
+                and not active_retry_after
+            ):
                 cap = leftover if stale_wait is None else max(float(stale_wait), 0.0)
                 wait = min(wait, cap)
+                retry_until = None
             if max_wait is not None:
                 wait = min(wait, max(float(max_wait), 0.0))
             wait_holder[0] = wait
@@ -382,6 +407,7 @@ class SharedRateStore:
                 tag_interval=snap.tag_interval,
                 success_streak=snap.success_streak,
                 crawl_delay=snap.crawl_delay,
+                retry_after_until=retry_until,
             )
 
         snap = self.update(mutator)

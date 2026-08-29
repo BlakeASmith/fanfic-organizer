@@ -426,6 +426,56 @@ def test_start_job_uses_fake_spawn(tmp_path: Path, monkeypatch):
     assert seen[0][-2:] == ["--dir", str(tmp_path / "jobs" / "spawned")]
 
 
+def test_start_job_keeps_terminal_status_when_worker_finishes_fast(
+    tmp_path: Path, monkeypatch
+):
+    from ao3kit.jobs import JobStatus, job_paths, write_status
+    from ao3kit.proc import spawn_daemon as real_spawn
+
+    class FinishedProc:
+        returncode = 0
+
+        def poll(self):
+            return 0
+
+        @property
+        def pid(self):
+            return 5151
+
+    def fake_popen(argv, **kwargs):
+        job_dir = Path(argv[argv.index("--dir") + 1])
+        paths = job_paths(job_dir)
+        write_status(
+            paths["status"],
+            JobStatus(
+                id=job_dir.name,
+                running=False,
+                exit_code=0,
+                finished_at="2026-01-01T00:00:00Z",
+                result="done",
+            ),
+        )
+        return FinishedProc()
+
+    def wrapped(argv, **kwargs):
+        kwargs.pop("popen", None)
+        return real_spawn(argv, popen=fake_popen, wait_seconds=1, **kwargs)
+
+    monkeypatch.setattr("ao3kit.jobs.spawn_daemon", wrapped)
+    spec = JobSpec(
+        id="fast",
+        title="Fast",
+        kind="scrape",
+        steps=[["scrape", "-o", "out.jsonl"]],
+    )
+    status, error = start_job(spec, jobs_dir=tmp_path / "jobs")
+    assert error is None
+    assert status.running is False
+    assert status.exit_code == 0
+    assert status.finished_at == "2026-01-01T00:00:00Z"
+    assert status.result == "done"
+
+
 def test_failed_attach_epubs_still_pending_ingest(tmp_path: Path):
     job_dir = tmp_path / "jobs" / "dl"
     spec = JobSpec(

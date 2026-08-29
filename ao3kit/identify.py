@@ -647,6 +647,7 @@ def apply_identify_choices(
             out.append(dict(record))
             continue
         if status != STATUS_AMBIGUOUS:
+            out.append(dict(record))
             continue
         book_id = record.get("book_id")
         if book_id is None:

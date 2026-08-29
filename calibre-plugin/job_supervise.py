@@ -40,6 +40,7 @@ from calibre_plugins.fanfic_organizer.jobs import (
     first_line,
     job_is_retryable,
     job_paths,
+    job_pid_alive,
     job_was_notified,
     jobs_root,
     new_job_id,
@@ -115,18 +116,7 @@ class JobSupervisor:
         return str(root) if root is not None else None
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        code, stdout, _stderr = run_ao3kit(
-            build_job_list_argv(jobs_dir=self._jobs_dir_arg())
-        )
-        if code != 0:
-            return self._list_jobs_from_disk()
-        parsed = parse_job_list_json(stdout)
-        jobs = list(parsed) if parsed else self._list_jobs_from_disk()
-        if not any(str(item.get('id') or '') == 'warm' for item in jobs):
-            warm = self._warm_status()
-            if warm is not None:
-                jobs.append(warm)
-        return jobs
+        return self._list_jobs_from_disk()
 
     def _list_jobs_from_disk(self) -> list[dict[str, Any]]:
         root = self.jobs_dir()
@@ -141,6 +131,7 @@ class JobSupervisor:
                 row.setdefault('id', child.name)
                 row.setdefault('title', spec.get('title') or child.name)
                 row.setdefault('kind', spec.get('kind') or '')
+                row['running'] = job_pid_alive(child)
                 jobs.append(row)
         warm = self._warm_status()
         if warm is not None:
@@ -191,11 +182,17 @@ class JobSupervisor:
         (job_dir / 'work').mkdir(parents=True, exist_ok=True)
         return job_dir
 
+    def _qt_poll(self):
+        from qt.core import QApplication
+
+        QApplication.processEvents()
+
     def start_prepared(
         self, job_dir: Path, *, attach: bool = True, quiet: bool = False
     ) -> str | None:
         code, stdout, stderr = run_ao3kit(
-            build_job_start_argv(str(job_dir), jobs_dir=self._jobs_dir_arg())
+            build_job_start_argv(str(job_dir), jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
         )
         status = parse_job_status_json(stdout) or {}
         job_id = str(status.get('id') or job_dir.name)
@@ -215,7 +212,7 @@ class JobSupervisor:
 
     def ensure_graph_server(self) -> str | None:
         """Start the live tag-graph job if needed. Returns the viewer URL."""
-        import time
+        from qt.core import QEventLoop, QTimer
 
         from calibre_plugins.fanfic_organizer.graph_live import (
             GRAPH_JOB_ID,
@@ -236,12 +233,28 @@ class JobSupervisor:
         (job_dir / 'work').mkdir(parents=True, exist_ok=True)
         plan_graph_serve(job_dir)
         self.start_prepared(job_dir, attach=False, quiet=True)
-        for _ in range(24):
-            url = read_serve_url(project)
-            if url:
-                return url
-            time.sleep(0.25)
-        return read_serve_url(project)
+        result: list[str | None] = [None]
+        attempts = [0]
+        loop = QEventLoop()
+
+        def check() -> None:
+            found = read_serve_url(project)
+            if found:
+                result[0] = found
+                loop.quit()
+                return
+            attempts[0] += 1
+            if attempts[0] >= 24:
+                result[0] = read_serve_url(project)
+                loop.quit()
+
+        timer = QTimer()
+        timer.timeout.connect(check)
+        timer.start(250)
+        check()
+        loop.exec()
+        timer.stop()
+        return result[0]
 
     def _drain_graph_commands(self) -> None:
         project = self._project()
@@ -323,7 +336,18 @@ class JobSupervisor:
                 pass
 
     def cancel(self, job_id: str) -> None:
-        run_ao3kit(build_job_stop_argv(job_id, jobs_dir=self._jobs_dir_arg()))
+        code, stdout, stderr = run_ao3kit(
+            build_job_stop_argv(job_id, jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
+        )
+        if code != 0:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Could not stop job.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
 
     def retry(self, job_id: str, *, attach: bool = True) -> str | None:
         if job_id == 'warm':
@@ -339,7 +363,8 @@ class JobSupervisor:
         self._import_seen.pop(job_id, None)
         self._ingesting.discard(job_id)
         code, stdout, stderr = run_ao3kit(
-            build_job_retry_argv(job_id, jobs_dir=self._jobs_dir_arg())
+            build_job_retry_argv(job_id, jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
         )
         status = parse_job_status_json(stdout) or {}
         if code != 0 and not status.get('running'):
@@ -620,7 +645,12 @@ class JobSupervisor:
                 action = outcome.get('action')
                 imported[work_id] = {
                     'book_id': book_id,
-                    'has_epub': bool(outcome.get('epub')) or action == 'skipped',
+                    'has_epub': bool(outcome.get('epub'))
+                    or (
+                        action == 'skipped'
+                        and book_id is not None
+                        and book_has_epub(db, book_id)
+                    ),
                 }
                 if book_id is not None:
                     book_ids.append(book_id)
@@ -675,6 +705,13 @@ class JobSupervisor:
 
                     upsert_graph_jsonl(graph_jsonl_path(project), new_records)
         except Exception:
+            detail = traceback.format_exc()
+            dialog = self._dialogs.get(job_id)
+            if dialog is not None:
+                try:
+                    dialog._append('Incremental import error:\n' + detail)
+                except RuntimeError:
+                    pass
             return
 
     def _run_ingest(
@@ -848,7 +885,7 @@ class JobSupervisor:
             except (OSError, ValueError):
                 downloaded = []
         items = merge_download_manifest(ready, downloaded) if ready else []
-        seen = self._epub_seen.get(job_id) or set()
+        seen = self._epub_seen.setdefault(job_id, set())
         db = self.gui.current_db
         outcomes: list[dict[str, Any]] = []
         for item in items:

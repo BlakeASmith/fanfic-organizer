@@ -970,7 +970,8 @@ def start_job(
     if error:
         return live_job_status(job_dir), error
     status = live_job_status(job_dir)
-    if not status.running:
+    finished = status.exit_code is not None or status.finished_at is not None
+    if not status.running and not finished:
         status.running = True
         status.pid = pid
         status.started_at = status.started_at or utc_now()

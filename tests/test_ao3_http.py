@@ -38,9 +38,10 @@ class FakeResponse:
         self.text = text
         self.status_code = status_code
         self.headers = headers or {"Content-Type": "text/html"}
+        self.closed = False
 
     def close(self) -> None:
-        return
+        self.closed = True
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -470,3 +471,16 @@ def test_login_main_fails(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
     monkeypatch.setattr("ao3kit.http.verify_login", boom)
     assert login_main(["--username", "emily", "--password", "bad"]) == 1
     assert "invalid" in capsys.readouterr().err
+
+
+def test_get_raises_when_relogin_fails(monkeypatch: pytest.MonkeyPatch):
+    logged_out = FakeResponse(
+        text='<html><body class="logged-out"><a href="/users/login">Log In</a></body></html>'
+    )
+    session = FakeSession([logged_out])
+    session._ao3_logged_in = True
+    monkeypatch.setattr("ao3kit.http.ensure_logged_in", lambda *a, **k: False)
+    monkeypatch.setattr("ao3kit.http.is_session_logged_in", lambda _s: True)
+    with pytest.raises(LoginError, match="re-login failed"):
+        get(session, "https://archiveofourown.org/works/1")
+    assert logged_out.closed is True

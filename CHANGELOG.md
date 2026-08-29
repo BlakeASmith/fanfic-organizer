@@ -26,6 +26,18 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 - Fix plugin load failure (**ao3kit module missing**) after the Fill from AO3 partial-failure change: job supervision no longer imports ``ao3kit`` inside Calibre's Python.
 - Fix **Fill from AO3** so a failed fetch on one selected book no longer abandons the rest: work pages are written to the job JSONL as each one finishes, per-book network/parse errors are skipped, and Calibre still ingests the books that succeeded.
 - Apply the same host-wide AO3 request interval to every search listing page, including pages that match no works, and to remaining AO3 paths (tag `/works` listings, series, robots.txt). Concurrent jobs no longer rewind the shared slot when the SQLite lock is contended.
+- Fix background jobs that finish before `start_job` returns showing as still running in **Running jobs…**.
+- Honor live Retry-After cooldowns longer than six minutes across concurrent CLI/plugin processes instead of treating them as stale crash locks.
+- Close HTTP response bodies before retrying on 5xx and Cloudflare errors.
+- Raise a clear login error when a saved AO3 session expires and re-login fails instead of returning a closed response.
+- Expire stale tag-cache rows in bulk lookups (`get_rows`, graph viewer) the same way as single-tag `lookup`.
+- Coerce string-typed numeric metadata when re-importing JSONL (`words`, `kudos`, `hits`, …).
+- Preserve `not_found` / `skipped` identify rows in `apply_identify_choices` output.
+- Attach downloaded EPUBs to existing library books when **update existing** is off.
+- Log incremental import failures during live scrape/import jobs instead of swallowing them silently.
+- Load selected-book metadata on the GUI thread before background simplify/download/series workers run (thread-safe Calibre reads).
+- Read job status from disk for **Running jobs…** with live pid checks so the list stays responsive without blocking the UI.
+- Surface errors when **Cancel** fails to stop a background job.
 
 ### Documentation
 
