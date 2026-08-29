@@ -91,6 +91,7 @@ def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
 @dataclass
 class CoverInfo:
     title: str = ""
+    summary: str = ""
     author: str = ""
     fandom: str = ""
     relationship: str = ""
@@ -199,6 +200,12 @@ def _join_zip(folder: str, rel: str) -> str:
     return f"{folder.rstrip('/')}/{rel}"
 
 
+def _normalize_cover_text(text: str) -> str:
+    """Collapse HTML entities and whitespace for title/summary rendering."""
+    cleaned = html.unescape(str(text or ""))
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     record = record or {}
     fandoms = record.get("fandoms") or []
@@ -252,7 +259,8 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     else:
         author = str(authors or "").strip()
     return CoverInfo(
-        title=str(record.get("title") or "").strip(),
+        title=_normalize_cover_text(str(record.get("title") or "")),
+        summary=_normalize_cover_text(str(record.get("summary") or "")),
         author=author,
         fandom=", ".join(str(item).strip() for item in fandoms if str(item).strip()),
         relationship=", ".join(
@@ -265,6 +273,18 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
         complete=bool(complete) if complete is not None else None,
         work_id=str(record.get("work_id") or "").strip(),
     )
+
+
+def _summary_from_html(html: str) -> str:
+    match = re.search(
+        r"<blockquote[^>]*class=\"[^\"]*\bsummary\b[^\"]*\"[^>]*>(.*?)</blockquote>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+    raw = re.sub(r"<[^>]+>", " ", match.group(1))
+    return _normalize_cover_text(raw)
 
 
 def _first_html_href(opf_root: ET.Element) -> str | None:
@@ -436,6 +456,7 @@ def cover_info_from_epub_bytes(data: bytes) -> CoverInfo:
                     info.relationship = info.relationship or _dt_value(
                         html, ("Relationship", "Relationships")
                     )
+                    info.summary = info.summary or _summary_from_html(html)
                     info.rating = info.rating or _dt_value(html, ("Rating",))
                     series = _dt_value(html, ("Series",))
                     if series:
@@ -462,6 +483,7 @@ def merge_cover_info(*parts: CoverInfo | None) -> CoverInfo:
             continue
         for name in (
             "title",
+            "summary",
             "author",
             "fandom",
             "relationship",
@@ -1007,8 +1029,14 @@ def plan_cover_layout(
     settings: CoverSettings | None = None,
     *,
     draw=None,
-) -> tuple[CoverTextBlock | None, CoverTextBlock | None, CoverTextBlock | None, list[CoverTextBlock]]:
-    """Return (title, author, footer, headers) with fitted sizes and y positions."""
+) -> tuple[
+    CoverTextBlock | None,
+    CoverTextBlock | None,
+    CoverTextBlock | None,
+    CoverTextBlock | None,
+    list[CoverTextBlock],
+]:
+    """Return (title, summary, author, footer, headers) with fitted sizes and y positions."""
     settings = settings or CoverSettings()
     width = max(120, int(settings.width))
     height = max(180, int(settings.height))
@@ -1097,20 +1125,37 @@ def plan_cover_layout(
             max_lines=settings.author_max_lines,
         )
 
+    pad_top = height * float(settings.padding)
+    band_top = (headers[-1].bottom + gap) if headers else pad_top
+    band_bottom = (
+        author_block.y - gap
+        if author_block is not None
+        else (footer_top - gap if footer_block else height * 0.78)
+    )
+
+    summary_block: CoverTextBlock | None = None
+    summary_text = _normalize_cover_text(info.summary)
+    wants_summary = settings.shows("summary") and bool(summary_text)
+
     title_block: CoverTextBlock | None = None
     if settings.shows("title") and info.title:
-        title = info.title.upper() if settings.uppercase_title else info.title
-        pad_top = height * float(settings.padding)
-        band_top = (headers[-1].bottom + gap) if headers else pad_top
-        band_bottom = (
-            author_block.y - gap
-            if author_block is not None
-            else (footer_top - gap if footer_block else height * 0.78)
-        )
+        title = _normalize_cover_text(info.title)
+        if settings.uppercase_title:
+            title = title.upper()
         preferred_top = max(height * settings.title_y, band_top)
+        title_ceiling = band_bottom
+        if wants_summary:
+            reserve = max(
+                float(settings.min_summary_size) * 2.0,
+                (band_bottom - preferred_top) * 0.35,
+            )
+            title_ceiling = max(
+                preferred_top + float(settings.min_title_size),
+                band_bottom - reserve,
+            )
 
-        def _fit_title(top: float) -> tuple[object, int, list[str], str, float]:
-            max_h = max(float(settings.min_title_size), band_bottom - top)
+        def _fit_title(top: float, ceiling: float) -> tuple[object, int, list[str], str, float]:
+            max_h = max(float(settings.min_title_size), ceiling - top)
             return _fit_wrapped(
                 draw,
                 settings,
@@ -1125,7 +1170,7 @@ def plan_cover_layout(
                 auto_fit=bool(settings.auto_fit_title),
             )
 
-        size_font, size, lines, sep, line_height = _fit_title(preferred_top)
+        size_font, size, lines, sep, line_height = _fit_title(preferred_top, title_ceiling)
         title_top = preferred_top
         truncated = bool(lines) and (
             lines[-1].endswith("…")
@@ -1136,7 +1181,7 @@ def plan_cover_layout(
             and truncated
             and preferred_top > band_top + 1
         ):
-            size_font, size, lines, sep, line_height = _fit_title(band_top)
+            size_font, size, lines, sep, line_height = _fit_title(band_top, title_ceiling)
             title_top = band_top
         title_block = CoverTextBlock(
             kind="title",
@@ -1148,7 +1193,38 @@ def plan_cover_layout(
             fill=settings.title_color,
             max_lines=settings.title_max_lines,
         )
-    return title_block, author_block, footer_block, headers
+
+    if wants_summary:
+        summary_top = (
+            title_block.bottom + gap
+            if title_block is not None
+            else max(height * settings.title_y, band_top)
+        )
+        max_summary_height = max(float(settings.min_summary_size), band_bottom - summary_top)
+        _font, size, lines, sep, line_height = _fit_wrapped(
+            draw,
+            settings,
+            summary_text,
+            start_size=settings.summary_size,
+            min_size=settings.min_summary_size,
+            max_width=max_width,
+            max_height=max_summary_height,
+            max_lines=settings.summary_max_lines,
+            leading=settings.summary_leading,
+            wrap=wrap_title,
+            auto_fit=bool(settings.auto_fit_summary),
+        )
+        summary_block = CoverTextBlock(
+            kind="summary",
+            lines=lines,
+            separator=sep,
+            size=size,
+            line_height=line_height,
+            y=summary_top,
+            fill=settings.summary_color,
+            max_lines=settings.summary_max_lines,
+        )
+    return title_block, summary_block, author_block, footer_block, headers
 
 
 def _draw_text_line(
@@ -1285,7 +1361,7 @@ def render_cover_image(
             outline=parse_color(settings.border_color),
             width=inset,
         )
-    title_block, author_block, footer_block, headers = plan_cover_layout(
+    title_block, summary_block, author_block, footer_block, headers = plan_cover_layout(
         info, settings, draw=draw
     )
     stroke_color = parse_color(settings.text_stroke_color)
@@ -1313,6 +1389,7 @@ def render_cover_image(
     for header in headers:
         _paint(header)
     _paint(title_block)
+    _paint(summary_block)
     _paint(author_block)
     _paint(footer_block)
 
@@ -1849,6 +1926,7 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON object of CoverSettings overrides (plugin preview / scripting)",
     )
     parser.add_argument("--title", default="")
+    parser.add_argument("--summary", default="")
     parser.add_argument("--author", default="")
     parser.add_argument("--fandom", default="")
     parser.add_argument("--relationship", default="")
@@ -1928,6 +2006,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cli_info = CoverInfo(
         title=args.title,
+        summary=args.summary,
         author=args.author,
         fandom=args.fandom,
         relationship=args.relationship,

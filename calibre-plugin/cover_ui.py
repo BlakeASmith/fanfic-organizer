@@ -33,6 +33,7 @@ from calibre_plugins.fanfic_organizer.prefs import prefs
 
 COVER_FIELD_LABELS = (
     ('title', 'Title'),
+    ('summary', 'Summary'),
     ('author', 'Author'),
     ('fandom', 'Fandom'),
     ('relationship', 'Relationship'),
@@ -62,6 +63,7 @@ PREVIEW_SAMPLES = (
         'short',
         'Short title',
         'Operation Cameo',
+        '',
         'alexwlchan',
         'Star Wars',
         'Rey/Ben Solo',
@@ -72,6 +74,7 @@ PREVIEW_SAMPLES = (
         'long',
         'Long title',
         'The One Where They All Get Together in a Coffee Shop and Save the Galaxy (Again)',
+        'A slow-burn coffee shop AU where everyone talks too much and saves the galaxy anyway.',
         'Jane AUs-ten',
         'Star Wars',
         'Rey/Ben Solo',
@@ -82,6 +85,7 @@ PREVIEW_SAMPLES = (
         'very_long',
         'Very long title',
         'and they were roommates (oh my god they were roommates) or: a treatise on found family, time travel, and the inherent eroticism of sharing a tiny apartment',
+        '',
         'AVeryLongPenNameWithoutSpaces',
         'Marvel Cinematic Universe',
         '',
@@ -100,6 +104,7 @@ PREVIEW_SAMPLES = (
             'author should have stopped adding subtitles around chapter forty-seven '
             'but absolutely did not'
         ),
+        '',
         'Jane AUs-ten',
         'Star Wars - All Media Types',
         'Rey/Ben Solo',
@@ -125,21 +130,27 @@ def default_cover_dict() -> dict[str, Any]:
         'height': 900,
         'font': 'Georgia',
         'title_size': 88,
+        'summary_size': 36,
         'author_size': 62,
         'header_size': 28,
         'footer_size': 24,
         'min_title_size': 22,
+        'min_summary_size': 14,
         'min_author_size': 24,
         'title_max_lines': 0,
+        'summary_max_lines': 0,
         'author_max_lines': 3,
         'title_leading': 1.08,
+        'summary_leading': 1.08,
         'author_leading': 1.08,
         'auto_fit_title': True,
+        'auto_fit_summary': True,
         'uppercase_title': False,
         'text_shadow': True,
         'text_stroke_px': 3,
         'text_stroke_color': '#000000',
         'title_color': '#ffffff',
+        'summary_color': '#ffffff',
         'author_color': '#ffffff',
         'header_color': '#f5f5f5',
         'footer_color': '#f5f5f5',
@@ -353,6 +364,7 @@ class CoverStyleDialog(QDialog):
         self.width = _int_spin(self._cover.get('width'), 200, 2400, 600)
         self.height = _int_spin(self._cover.get('height'), 300, 3600, 900)
         self.title_size = _int_spin(self._cover.get('title_size'), 16, 200, 88)
+        self.summary_size = _int_spin(self._cover.get('summary_size'), 10, 160, 36)
         self.author_size = _int_spin(self._cover.get('author_size'), 12, 160, 62)
         self.header_size = _int_spin(self._cover.get('header_size'), 10, 80, 28)
         self.footer_size = _int_spin(self._cover.get('footer_size'), 10, 80, 24)
@@ -370,6 +382,7 @@ class CoverStyleDialog(QDialog):
         type_form.addRow('Font', self.font)
         type_form.addRow('Size (px)', size_row)
         type_form.addRow('Title size', self.title_size)
+        type_form.addRow('Summary size', self.summary_size)
         type_form.addRow('Author size', self.author_size)
         type_form.addRow('Header size', self.header_size)
         type_form.addRow('Footer size', self.footer_size)
@@ -381,6 +394,8 @@ class CoverStyleDialog(QDialog):
         layout_form = QFormLayout(layout_box)
         self.auto_fit_title = QCheckBox('Shrink long titles to fit (recommended)')
         self.auto_fit_title.setChecked(bool(self._cover.get('auto_fit_title', True)))
+        self.auto_fit_summary = QCheckBox('Shrink long summaries to fit (recommended)')
+        self.auto_fit_summary.setChecked(bool(self._cover.get('auto_fit_summary', True)))
         self.padding = _pct_spin(self._cover.get('padding'), 0.125, lo=4.0, hi=30.0)
         self.title_y = _pct_spin(self._cover.get('title_y'), 0.18)
         self.author_y = _pct_spin(self._cover.get('author_y'), 0.82)
@@ -396,6 +411,7 @@ class CoverStyleDialog(QDialog):
         self.title_max_lines.setSpecialValueText('auto')
         self.author_max_lines = _int_spin(self._cover.get('author_max_lines'), 1, 8, 3)
         layout_form.addRow(self.auto_fit_title)
+        layout_form.addRow(self.auto_fit_summary)
         layout_form.addRow('Side padding', self.padding)
         layout_form.addRow('Title position', self.title_y)
         layout_form.addRow('Author position', self.author_y)
@@ -410,6 +426,7 @@ class CoverStyleDialog(QDialog):
         text_box = QGroupBox('Text contrast')
         text_form = QFormLayout(text_box)
         self.title_color = _hex_edit(self._cover.get('title_color'), '#ffffff')
+        self.summary_color = _hex_edit(self._cover.get('summary_color'), '#ffffff')
         self.author_color = _hex_edit(self._cover.get('author_color'), '#ffffff')
         self.header_color = _hex_edit(self._cover.get('header_color'), '#f5f5f5')
         self.footer_color = _hex_edit(self._cover.get('footer_color'), '#f5f5f5')
@@ -419,6 +436,7 @@ class CoverStyleDialog(QDialog):
         self.text_stroke_color = _hex_edit(self._cover.get('text_stroke_color'), '#000000')
         self.scrim = _pct_spin(self._cover.get('scrim'), 0.22, lo=0.0, hi=80.0)
         text_form.addRow('Title colour', self.title_color)
+        text_form.addRow('Summary colour', self.summary_color)
         text_form.addRow('Author colour', self.author_color)
         text_form.addRow('Header colour', self.header_color)
         text_form.addRow('Footer colour', self.footer_color)
@@ -473,12 +491,14 @@ class CoverStyleDialog(QDialog):
             'width': int(self.width.value()),
             'height': int(self.height.value()),
             'title_size': int(self.title_size.value()),
+            'summary_size': int(self.summary_size.value()),
             'author_size': int(self.author_size.value()),
             'header_size': int(self.header_size.value()),
             'footer_size': int(self.footer_size.value()),
             'min_title_size': int(self.min_title_size.value()),
             'uppercase_title': self.uppercase_title.isChecked(),
             'auto_fit_title': self.auto_fit_title.isChecked(),
+            'auto_fit_summary': self.auto_fit_summary.isChecked(),
             'padding': self.padding.value() / 100.0,
             'title_y': self.title_y.value() / 100.0,
             'author_y': self.author_y.value() / 100.0,
@@ -489,6 +509,7 @@ class CoverStyleDialog(QDialog):
             'title_max_lines': int(self.title_max_lines.value()),
             'author_max_lines': int(self.author_max_lines.value()),
             'title_color': self.title_color.text().strip() or '#ffffff',
+            'summary_color': self.summary_color.text().strip() or '#ffffff',
             'author_color': self.author_color.text().strip() or '#ffffff',
             'header_color': self.header_color.text().strip() or '#f5f5f5',
             'footer_color': self.footer_color.text().strip() or '#f5f5f5',
@@ -511,13 +532,15 @@ class CoverStyleDialog(QDialog):
             if row[0] == sample:
                 chosen = row
                 break
-        _key, _label, title, author, fandom, relationship, words, score = chosen
+        _key, _label, title, summary, author, fandom, relationship, words, score = chosen
         tmp = Path(tempfile.mkdtemp(prefix='ao3-cover-')) / 'preview.png'
         argv = [
             'cover',
             '--preview',
             '--title',
             title,
+            '--summary',
+            summary,
             '--author',
             author,
             '--fandom',

@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Add optional **Summary** on generated EPUB covers (Plugin settings → Cover style → Show on cover), with the same wrap/shrink normalization as the title and separate title/summary font sizes.
 - Add **Process library…** to the plugin menu: run simplify, series, EPUB download, covers, and/or collection recompute on the whole open library without selecting every book, with a local estimate of unmatched tags and other pending work before the job starts.
 
 ### Bug Fixes
