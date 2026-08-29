@@ -44,7 +44,17 @@ def _sample_release(
     include_asset: bool = True,
 ) -> dict:
     assets = []
+    version = tag[1:] if tag.startswith("v") else tag
     if include_asset:
+        assets.append(
+            {
+                "name": f"FanFicOrganizer-{version}.zip",
+                "browser_download_url": (
+                    f"https://example.com/{tag}/FanFicOrganizer-{version}.zip"
+                ),
+                "size": 12345,
+            }
+        )
         assets.append(
             {
                 "name": "fanfic-organizer.zip",
@@ -100,12 +110,28 @@ def test_release_from_api_prefers_versioned_zip_asset():
 def test_release_from_api_skips_drafts_prereleases_and_missing_asset():
     updates = load_updates()
     assert updates.release_from_api(_sample_release(draft=True)) is None
-    assert updates.release_from_api(_sample_release(prerelease=True)) is None
+    assert updates.release_from_api(
+        _sample_release(tag="v0.27.0-pr.3+abc1234", prerelease=True)
+    ) is None
     assert updates.release_from_api(_sample_release(include_asset=False)) is None
     parsed = updates.release_from_api(_sample_release())
     assert parsed is not None
     assert parsed.version == (0, 27, 0)
-    assert parsed.download_url.endswith("fanfic-organizer.zip")
+    assert parsed.version_text == "0.27.0"
+    assert parsed.download_url.endswith("FanFicOrganizer-0.27.0.zip")
+
+
+def test_release_from_api_accepts_preview_prereleases():
+    updates = load_updates()
+    record = _sample_release(
+        tag="v0.31.0-preview.452+7a4f9b2",
+        prerelease=True,
+    )
+    parsed = updates.release_from_api(record)
+    assert parsed is not None
+    assert parsed.is_preview
+    assert parsed.version_text == "0.31.0-preview.452+7a4f9b2"
+    assert parsed.download_url.endswith("FanFicOrganizer-0.31.0-preview.452+7a4f9b2.zip")
 
 
 def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
@@ -114,16 +140,26 @@ def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
         _sample_release(tag="v0.25.0"),
         _sample_release(tag="v0.27.0"),
         _sample_release(tag="v0.26.0"),
+        _sample_release(tag="v0.27.0-preview.5+abc1234", prerelease=True),
     ]
 
     monkeypatch.setattr(updates, "_github_request", lambda url: payload)
     releases = updates.fetch_releases()
-    assert [item.version_text for item in releases] == ["0.27.0", "0.26.0", "0.25.0"]
+    assert [item.version_text for item in releases] == [
+        "0.27.0",
+        "0.27.0-preview.5+abc1234",
+        "0.26.0",
+        "0.25.0",
+    ]
 
 
 def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
     updates = load_updates()
-    monkeypatch.setattr(updates, "installed_version", lambda: (0, 26, 1))
+    monkeypatch.setattr(
+        updates,
+        "installed_version_parsed",
+        lambda: updates.ParsedVersion(0, 26, 1),
+    )
     release = updates.release_from_api(_sample_release(tag="v0.27.0"))
     assert release is not None
     assert updates.compare_to_installed(release) == 1
@@ -133,6 +169,26 @@ def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
     same = updates.release_from_api(_sample_release(tag="v0.26.1"))
     assert same is not None
     assert updates.compare_to_installed(same) == 0
+    preview_newer = updates.release_from_api(
+        _sample_release(tag="v0.27.0-preview.3+abc1234", prerelease=True)
+    )
+    assert preview_newer is not None
+    assert updates.compare_to_installed(preview_newer) == 1
+    preview_older = updates.release_from_api(
+        _sample_release(tag="v0.26.0-preview.99+abc1234", prerelease=True)
+    )
+    assert preview_older is not None
+    assert updates.compare_to_installed(preview_older) == -1
+
+
+def test_stable_release_beats_preview_at_same_base():
+    updates = load_updates()
+    stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
+    preview = updates.release_from_api(
+        _sample_release(tag="v0.31.0-preview.999+abc1234", prerelease=True)
+    )
+    assert stable is not None and preview is not None
+    assert updates.compare_parsed_versions(stable.parsed, preview.parsed) == 1
 
 
 def test_download_release_validates_zip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

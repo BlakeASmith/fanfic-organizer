@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Add preview GitHub pre-releases to **Check for updates…** so testers can install automated main-branch builds (`X.Y.Z-preview.<run>+<sha>`) from the plugin menu.
 - Add optional **Deploy to KOReader…** for Kobo/Android with KOReader: run it from the Fanfic Organizer menu after USB sync to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. Deploy is blocked unless the device looks like a Kobo with KOReader (`.adds/koreader`) or Android storage with a `koreader/` folder; nothing is written to Kindles or other readers.
 - Add optional **Summary** on generated EPUB covers (Plugin settings → Cover style → Show on cover), with the same wrap/shrink normalization as the title and separate title/summary font sizes.
 - Add **Process library…** to the plugin menu: run simplify, series, EPUB download, covers, and/or collection recompute on the whole open library without selecting every book, with a local estimate of unmatched tags and other pending work before the job starts.
