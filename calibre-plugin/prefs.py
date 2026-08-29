@@ -34,6 +34,7 @@ prefs.defaults = {
     'generate_covers': True,
     'set_calibre_cover': True,
     'koreader_path': '.adds/koreader',
+    'include_prereleases': False,
 }
 
 

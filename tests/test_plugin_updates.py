@@ -153,6 +153,24 @@ def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
+def test_filter_releases_omits_previews_by_default():
+    updates = load_updates()
+    stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
+    preview = updates.release_from_api(
+        _sample_release(tag="v0.32.0-preview.1+abc1234", prerelease=True)
+    )
+    assert stable is not None and preview is not None
+    filtered = updates.filter_releases([preview, stable])
+    assert [item.version_text for item in filtered] == ["0.31.0"]
+    with_pre = updates.filter_releases(
+        [preview, stable], include_prereleases=True
+    )
+    assert [item.version_text for item in with_pre] == [
+        "0.32.0-preview.1+abc1234",
+        "0.31.0",
+    ]
+
+
 def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
     updates = load_updates()
     monkeypatch.setattr(
