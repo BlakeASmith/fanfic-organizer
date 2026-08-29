@@ -355,6 +355,28 @@ class ConfigWidget(QWidget):
         )
         layout.addWidget(covers)
 
+        koreader = QGroupBox('KOReader (Kobo)')
+        koreader_layout = QVBoxLayout(koreader)
+        koreader_form = QFormLayout()
+        self.koreader_path = QLineEdit()
+        self.koreader_path.setText(str(prefs.get('koreader_path') or '.adds/koreader'))
+        self.koreader_path.setPlaceholderText('.adds/koreader')
+        self.koreader_path.setToolTip(
+            'Folder on the device where KOReader stores settings and plugins.'
+        )
+        koreader_form.addRow('KOReader folder', self.koreader_path)
+        koreader_layout.addLayout(koreader_form)
+        koreader_layout.addWidget(
+            _hint(
+                'Optional. After Calibre finishes sending books to your Kobo, '
+                'use Fanfic Organizer → Deploy to KOReader… (only enabled when '
+                'the connected device is a Kobo or Android storage with KOReader '
+                'already set up). Writes fanfic.collections.json from the '
+                '#collections column. In KOReader: Search → Fanfic collections.'
+            )
+        )
+        layout.addWidget(koreader)
+
         runtime = QGroupBox('Advanced (optional)')
         runtime_form = QFormLayout(runtime)
         self.ao3kit_project = QLineEdit()
@@ -469,6 +491,7 @@ class ConfigWidget(QWidget):
         self._save_drop_unmarked(self.drop_unmarked.isChecked())
         self._save_pacing_settings()
         self._save_cover_settings()
+        prefs['koreader_path'] = self.koreader_path.text().strip() or '.adds/koreader'
         self.create_layout.setChecked(False)
         self.refresh_status()
 

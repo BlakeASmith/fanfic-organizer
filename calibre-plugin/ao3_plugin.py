@@ -58,6 +58,14 @@ class FanficOrganizerPlugin(InterfaceAction):
         self.qaction.setMenu(self.menu)
         self.menu.aboutToShow.connect(self.build_menu)
         self._jobs = None
+        self._koreader = None
+
+    def koreader(self):
+        if self._koreader is None:
+            from calibre_plugins.fanfic_organizer.koreader_support import KoreaderSupport
+
+            self._koreader = KoreaderSupport(self)
+        return self._koreader
 
     def jobs(self):
         if self._jobs is None:
@@ -188,6 +196,14 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         self.menu.addSeparator()
         self.menu.addAction('Check for updates...', self.check_for_updates)
+        deploy_koreader = self.menu.addAction(
+            'Deploy to KOReader…', self.deploy_to_koreader
+        )
+        deploy_koreader.setEnabled(self.koreader().deploy_ready())
+        deploy_koreader.setStatusTip(
+            'Install or refresh the Fanfic collections KOReader plugin and '
+            'fanfic.collections.json on a Kobo or Android device with KOReader'
+        )
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
     def show_running_jobs(self):
@@ -195,6 +211,9 @@ class FanficOrganizerPlugin(InterfaceAction):
 
     def apply_settings(self):
         return
+
+    def deploy_to_koreader(self):
+        self.koreader().deploy(silent=False)
 
     def show_configuration(self):
         self.interface_action_base_plugin.do_user_config(parent=self.gui)

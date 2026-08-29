@@ -59,6 +59,10 @@ def main(argv: list[str] | None = None) -> int:
         "library",
         help="Whole-library helpers (estimate unmatched tags / missing EPUBs from JSONL)",
     )
+    sub.add_parser(
+        "koreader",
+        help="KOReader collections index helpers",
+    )
 
     if not argv:
         parser.print_help()
@@ -120,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.library import main as library_main
 
         return library_main(rest)
+
+    if command == "koreader":
+        from ao3kit.koreader.cli import main as koreader_main
+
+        return koreader_main(rest)
 
     parser.error(f"Unknown command: {command}")
     return 2
