@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
+KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
 OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
@@ -177,6 +178,12 @@ def iter_zip_entries(
                 continue
             rel = path.relative_to(vendor_dir).as_posix()
             entries.append((path, f"vendor/{rel}"))
+    if KOREADER_ADDON_DIR.is_dir():
+        for path in sorted(KOREADER_ADDON_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(KOREADER_ADDON_DIR).as_posix()
+            entries.append((path, f"resources/koreader/{rel}"))
     return entries
 
 

@@ -23,6 +23,7 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
     assert "ao3kit/cli.py" in names
     assert "ao3kit/htmlsoup.py" in names
     assert "plugin_version.py" in names
+    assert f"resources/koreader/fanficcollections.koplugin/main.lua" in names
     assert not any(name.startswith("vendor/") for name in names)
     assert "dev_project.json" not in names
 

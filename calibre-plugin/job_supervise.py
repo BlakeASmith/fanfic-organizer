@@ -941,6 +941,8 @@ class JobSupervisor:
             self.gui,
             [item['book_id'] for item in outcomes if item.get('book_id') is not None],
         )
+        if collections:
+            self.plugin.koreader().schedule_deploy_if_connected()
         return summary, remap
 
     def _ingest_series(self, plugin: dict[str, Any]) -> tuple[str, str]:
