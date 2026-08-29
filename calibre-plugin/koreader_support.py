@@ -64,7 +64,7 @@ class KoreaderSupport:
                 error_dialog(
                     gui,
                     "Fanfic Organizer",
-                    "Connect your Kobo (or other device) via USB first.",
+                    "Connect your Kobo or Android phone via USB first.",
                     show=True,
                 )
             return None

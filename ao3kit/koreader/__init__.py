@@ -13,6 +13,7 @@ from ao3kit.koreader.deploy import (
 from ao3kit.koreader.detect import (
     KoreaderDetectionError,
     detect_koreader_mounts,
+    detect_mtp_koreader_mounts,
     koreader_deployable,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "deploy_metadata",
     "deploy_to_device",
     "detect_koreader_mounts",
+    "detect_mtp_koreader_mounts",
     "install_plugin",
     "koreader_deployable",
     "koreader_roots",

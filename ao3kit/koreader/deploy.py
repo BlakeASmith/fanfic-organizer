@@ -6,11 +6,13 @@ import json
 import os
 import shutil
 import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterable
 
 from ao3kit.koreader.detect import (
     DEFAULT_KOREADER_SUBDIR,
+    KoreaderMount,
     detect_koreader_mounts,
     koreader_deployable,
 )
@@ -97,7 +99,68 @@ def build_collections_index_from_rows(rows: Iterable[dict[str, Any]]) -> list[di
 
 def koreader_roots(device: Any, *, subdir: str = DEFAULT_KOREADER_SUBDIR) -> list[Path]:
     """Return absolute KOReader data roots on a compatible device."""
-    return [mount.koreader_root for mount in detect_koreader_mounts(device, koreader_subdir=subdir)]
+    roots: list[Path] = []
+    for mount in detect_koreader_mounts(device, koreader_subdir=subdir):
+        if mount.transport == "mtp":
+            roots.append(Path(mount.storage_prefix) / Path(*mount.mtp_koreader_parts))
+        else:
+            roots.append(mount.koreader_root)
+    return roots
+
+
+def _mtp_put_file(
+    device: Any,
+    storage: Any,
+    path_parts: tuple[str, ...],
+    data: bytes,
+    *,
+    replace: bool = True,
+) -> str:
+    if not path_parts:
+        raise ValueError("path_parts required")
+    parent = device.ensure_parent(storage, path_parts)
+    stream = BytesIO(data)
+    device.put_file(parent, path_parts[-1], stream, len(data), replace=replace)
+    return "/".join(path_parts)
+
+
+def deploy_metadata_mtp(
+    mount: KoreaderMount,
+    entries: list[dict[str, Any]],
+    *,
+    filename: str = COLLECTIONS_JSON_NAME,
+) -> str:
+    """Write ``fanfic.collections.json`` on an MTP-mounted KOReader folder."""
+    if mount.mtp_device is None or mount.mtp_storage is None:
+        raise ValueError("MTP mount is missing device or storage")
+    path_parts = mount.mtp_koreader_parts + ("cache", filename)
+    payload = json.dumps(entries, ensure_ascii=False, indent=2) + "\n"
+    return _mtp_put_file(
+        mount.mtp_device,
+        mount.mtp_storage,
+        path_parts,
+        payload.encode("utf-8"),
+    )
+
+
+def install_plugin_mtp(mount: KoreaderMount, source: Path) -> str:
+    """Copy the bundled KOReader plugin onto an MTP-mounted device."""
+    if mount.mtp_device is None or mount.mtp_storage is None:
+        raise ValueError("MTP mount is missing device or storage")
+    if not source.is_dir():
+        raise FileNotFoundError(f"KOReader plugin source not found: {source}")
+    base = mount.mtp_koreader_parts + ("plugins", KOPLUGIN_DIRNAME)
+    for path in sorted(source.rglob("*")):
+        if path.is_dir():
+            continue
+        rel = path.relative_to(source).parts
+        _mtp_put_file(
+            mount.mtp_device,
+            mount.mtp_storage,
+            base + rel,
+            path.read_bytes(),
+        )
+    return "/".join(base)
 
 
 def deploy_metadata(
@@ -227,6 +290,13 @@ def deploy_to_device(
     written: list[str] = []
     installed: list[str] = []
     for mount in mounts:
+        if mount.transport == "mtp":
+            path = deploy_metadata_mtp(mount, entries)
+            written.append(path)
+            if install_koplugin and plugin_source is not None:
+                dest = install_plugin_mtp(mount, plugin_source)
+                installed.append(dest)
+            continue
         path = deploy_metadata(mount.koreader_root, entries)
         written.append(str(path))
         if install_koplugin and plugin_source is not None:
