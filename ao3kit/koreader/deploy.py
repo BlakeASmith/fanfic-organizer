@@ -47,13 +47,45 @@ def _strip_collections(raw: Any) -> list[str]:
     return out
 
 
+def _iter_device_books(device: Any) -> Iterable[Any]:
+    """Yield books from main memory and cards via Calibre's ``books(oncard=…)``.
+
+    Stock Calibre device drivers (including KOBOTOUCH) take ``oncard`` /
+    ``end_session`` — never ``main_memory``. Match ``gui2.device``: scan
+    main, carda, and cardb.
+    """
+    books_method = getattr(device, "books", None)
+    if not callable(books_method):
+        return
+    seen: set[str] = set()
+    locations = ((None, False), ("carda", False), ("cardb", True))
+    for oncard, end_session in locations:
+        try:
+            booklist = books_method(oncard=oncard, end_session=end_session)
+        except TypeError:
+            # Non-Calibre stubs may expose a zero-arg books(); only try once.
+            if oncard is not None:
+                continue
+            try:
+                booklist = books_method()
+            except TypeError:
+                return
+        if not booklist:
+            continue
+        for book in booklist:
+            lpath = getattr(book, "lpath", None)
+            key = str(lpath).replace("\\", "/") if lpath else ""
+            if key:
+                if key in seen:
+                    continue
+                seen.add(key)
+            yield book
+
+
 def build_collections_index(db: Any, device: Any) -> list[dict[str, Any]]:
     """Build the collections-only JSON from books on the connected device."""
     entries: list[dict[str, Any]] = []
-    books_method = getattr(device, "books", None)
-    if not callable(books_method):
-        return entries
-    for book in books_method(main_memory=True):
+    for book in _iter_device_books(device):
         db_id = getattr(book, "db_id", None)
         lpath = getattr(book, "lpath", None)
         if not db_id or not lpath:

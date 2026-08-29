@@ -26,6 +26,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Fix **Deploy to KOReader…** crashing on Calibre 9.13 (`KOBOTOUCH.books() got an unexpected keyword argument 'main_memory'`): list device books with Calibre's `books(oncard=…)` API (main memory plus cards).
 - Fix **Deploy to KOReader…** staying disabled on Android phones connected over MTP: detect the on-device `koreader/` folder through Calibre's MTP driver and write collections metadata and the bundled plugin over MTP.
 - Fix **ModuleNotFoundError: No module named 'ao3kit'** when a USB device is connected and the Fanfic Organizer menu opens **Deploy to KOReader…**: load bundled/checkout ``ao3kit`` onto Calibre's path for in-process deploy, and keep the menu usable if that import still fails.
 - Give up sooner on hung or unreachable AO3 pages: HTML requests time out at 20s (was 60s), at most two timeout attempts, and Cloudflare origin timeouts (522/524) stop after the same short budget instead of a long 5xx retry loop.
