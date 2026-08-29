@@ -43,15 +43,23 @@ load_dotenv(_PROJECT_ROOT / ".env")
 AO3_BASE = "https://archiveofourown.org"
 AO3_DOMAIN = "archiveofourown.org"
 AO3_LOGIN_URL = f"{AO3_BASE}/users/login"
-# Login page GET sometimes hangs until the default 60s timeout; retry sooner.
-LOGIN_REQUEST_TIMEOUT = 20.0
+# Hung / unreachable AO3 pages used to sit on the old 60s socket timeout for
+# several attempts (~3 min per URL). Match login: fail the socket sooner.
+DEFAULT_REQUEST_TIMEOUT = 20.0
+LOGIN_REQUEST_TIMEOUT = DEFAULT_REQUEST_TIMEOUT
+# Large EPUB streams need a longer read window than HTML pages.
+EPUB_DOWNLOAD_TIMEOUT = 120.0
 
 DEFAULT_HEADERS = {
     "User-Agent": USER_AGENT,
 }
 
-# Transient upstream / edge failures worth retrying (includes Cloudflare 52x).
-RETRY_STATUSES = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530})
+# Cloudflare origin timeouts — the edge answered, but AO3 did not. Treat like
+# a socket timeout and stop after ``max_timeouts`` instead of a long 5xx loop.
+ORIGIN_TIMEOUT_STATUSES = frozenset({522, 524})
+
+# Transient upstream / edge failures worth retrying (other Cloudflare 52x).
+RETRY_STATUSES = frozenset({500, 502, 503, 504, 520, 521, 523, 525, 526, 530})
 
 CLOUDFLARE_MARKERS = (
     " just a moment... ",
@@ -185,13 +193,17 @@ def request(
     *,
     data: Mapping[str, Any] | None = None,
     stream: bool = False,
-    timeout: float = 60,
+    timeout: float | tuple[float, float] = DEFAULT_REQUEST_TIMEOUT,
     view_adult: bool = False,
-    max_retries: int = 8,
-    max_timeouts: int = 3,
+    max_retries: int = 5,
+    max_timeouts: int = 2,
     on_status: StatusCallback | None = None,
 ) -> requests.Response:
-    """Perform an AO3 request with process-wide rate limiting and retries."""
+    """Perform an AO3 request with process-wide rate limiting and retries.
+
+    Socket hangs and Cloudflare origin timeouts (522/524) share ``max_timeouts``
+    so a dead or missing page fails in tens of seconds instead of minutes.
+    """
     url = normalize_ao3_url(url)
     if view_adult and AO3_DOMAIN in url.lower():
         url = with_view_adult(url)
@@ -253,9 +265,9 @@ def request(
             continue
 
         elapsed = time.monotonic() - started
-        timeouts = 0
 
         if response.status_code == 429:
+            timeouts = 0
             pause, from_header = parse_retry_after(
                 response.headers.get("Retry-After")
             )
@@ -295,6 +307,36 @@ def request(
             time.sleep(pause)
             attempt += 1
             continue
+
+        if response.status_code in ORIGIN_TIMEOUT_STATUSES:
+            timeouts += 1
+            _log_attempt(
+                url=url,
+                method=method,
+                outcome="timeout",
+                wait_s=waited,
+                interval_s=interval,
+                elapsed_s=elapsed,
+                attempt=attempt,
+                status=response.status_code,
+            )
+            if timeouts >= max_timeouts or attempt >= max_retries:
+                raise Ao3HttpError(
+                    f"Timed out after {timeouts} attempt(s) fetching {url} "
+                    f"(HTTP {response.status_code})"
+                )
+            note_request_pressure(status_code=response.status_code)
+            attempt += 1
+            _emit(
+                on_status,
+                f"AO3 origin timed out ({response.status_code}) — "
+                f"retrying in {retry_delay:.0f}s…",
+            )
+            response.close()
+            time.sleep(retry_delay)
+            continue
+
+        timeouts = 0
 
         if response.status_code in RETRY_STATUSES:
             _log_attempt(
