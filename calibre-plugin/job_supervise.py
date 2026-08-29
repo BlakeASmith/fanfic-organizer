@@ -34,7 +34,7 @@ from calibre_plugins.fanfic_organizer.job_plans import (
     plan_fill_from_ao3,
     split_identify_records,
 )
-from ao3kit.scrape import scrape_record_failed
+from calibre_plugins.fanfic_organizer.scrape_run import scrape_record_failed
 from calibre_plugins.fanfic_organizer.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.fanfic_organizer.jobs import (
     first_line,

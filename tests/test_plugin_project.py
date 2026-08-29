@@ -8,6 +8,10 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1] / "calibre-plugin"
 
+# Calibre plugin UI modules must not import ao3kit at load time (Calibre's Python
+# does not ship ao3kit; jobs run via calibre-debug -e run_ao3kit.py).
+_NO_TOP_LEVEL_AO3KIT = ("run_ao3kit.py")
+
 
 def load_enrich():
     spec = importlib.util.spec_from_file_location("ao3_plugin_enrich", PLUGIN / "enrich.py")
@@ -85,3 +89,17 @@ def test_is_ao3kit_project(tmp_path: Path):
     empty = tmp_path / "empty"
     empty.mkdir()
     assert enrich._is_ao3kit_project(empty) is None
+
+
+def test_plugin_modules_do_not_import_ao3kit_at_load_time():
+    for path in PLUGIN.glob("*.py"):
+        if path.name in _NO_TOP_LEVEL_AO3KIT:
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith((" ", "\t")):
+                continue
+            stripped = line.strip()
+            if stripped.startswith("from ao3kit") or stripped.startswith("import ao3kit"):
+                raise AssertionError(
+                    f"{path.name} imports ao3kit at module level: {stripped}"
+                )
