@@ -357,28 +357,6 @@ class ConfigWidget(QWidget):
 
         koreader = QGroupBox('KOReader (Kobo)')
         koreader_layout = QVBoxLayout(koreader)
-        self.koreader_enabled = QCheckBox(
-            'Enable KOReader collections sync on USB connect'
-        )
-        self.koreader_enabled.setChecked(bool(prefs.get('koreader_enabled', False)))
-        self.koreader_enabled.setToolTip(
-            'When your Kobo is connected, install the Fanfic collections '
-            'KOReader plugin (first sync) and write fanfic.collections.json '
-            'from the #collections column. In KOReader: Search → Fanfic collections.'
-        )
-        koreader_layout.addWidget(self.koreader_enabled)
-        self.koreader_sync_shelves = QCheckBox(
-            'Also mirror collections into KOReader shelves (experimental)'
-        )
-        self.koreader_sync_shelves.setChecked(
-            bool(prefs.get('koreader_sync_shelves', False))
-        )
-        self.koreader_sync_shelves.setEnabled(False)
-        self.koreader_sync_shelves.setToolTip(
-            'Reserved for a future release. Collections browsing uses the '
-            'Fanfic collections menu entry.'
-        )
-        koreader_layout.addWidget(self.koreader_sync_shelves)
         koreader_form = QFormLayout()
         self.koreader_path = QLineEdit()
         self.koreader_path.setText(str(prefs.get('koreader_path') or '.adds/koreader'))
@@ -390,10 +368,10 @@ class ConfigWidget(QWidget):
         koreader_layout.addLayout(koreader_form)
         koreader_layout.addWidget(
             _hint(
-                'One-time: enable this, connect the Kobo via USB, and let '
-                'Calibre finish syncing. Every later sync refreshes the '
-                'collection list. Recompute collections in Calibre when rules '
-                'change, then sync again.'
+                'Optional. After Calibre finishes sending books to your Kobo, '
+                'use Fanfic Organizer → Deploy to KOReader… to install the '
+                'small KOReader plugin and write fanfic.collections.json from '
+                'the #collections column. In KOReader: Search → Fanfic collections.'
             )
         )
         layout.addWidget(koreader)
@@ -512,8 +490,6 @@ class ConfigWidget(QWidget):
         self._save_drop_unmarked(self.drop_unmarked.isChecked())
         self._save_pacing_settings()
         self._save_cover_settings()
-        prefs['koreader_enabled'] = self.koreader_enabled.isChecked()
-        prefs['koreader_sync_shelves'] = self.koreader_sync_shelves.isChecked()
         prefs['koreader_path'] = self.koreader_path.text().strip() or '.adds/koreader'
         self.create_layout.setChecked(False)
         self.refresh_status()

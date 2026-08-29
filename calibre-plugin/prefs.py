@@ -33,8 +33,6 @@ prefs.defaults = {
     'ao3_password': '',
     'generate_covers': True,
     'set_calibre_cover': True,
-    'koreader_enabled': False,
-    'koreader_sync_shelves': False,
     'koreader_path': '.adds/koreader',
 }
 

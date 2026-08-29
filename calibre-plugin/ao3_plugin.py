@@ -65,7 +65,6 @@ class FanficOrganizerPlugin(InterfaceAction):
             from calibre_plugins.fanfic_organizer.koreader_support import KoreaderSupport
 
             self._koreader = KoreaderSupport(self)
-            self._koreader.connect()
         return self._koreader
 
     def jobs(self):
@@ -79,7 +78,6 @@ class FanficOrganizerPlugin(InterfaceAction):
         # Watch leftover jobs from the last session (pending Calibre ingest).
         # Do not create columns or write the open library on startup.
         self.jobs()
-        self.koreader()
         self._apply_popup_mode()
 
     def _selected_ids(self):
@@ -198,16 +196,20 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         self.menu.addSeparator()
         self.menu.addAction('Check for updates...', self.check_for_updates)
-        self.menu.addAction('Deploy to KOReader', self.deploy_to_koreader)
+        deploy_koreader = self.menu.addAction(
+            'Deploy to KOReader…', self.deploy_to_koreader
+        )
+        deploy_koreader.setEnabled(self.koreader().device_connected())
+        deploy_koreader.setStatusTip(
+            'After USB sync, install or refresh the Fanfic collections '
+            'KOReader plugin and fanfic.collections.json on the device'
+        )
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
     def show_running_jobs(self):
         self.jobs().show_list()
 
     def apply_settings(self):
-        koreader = getattr(self, '_koreader', None)
-        if koreader is not None:
-            koreader.schedule_deploy_if_connected()
         return
 
     def deploy_to_koreader(self):

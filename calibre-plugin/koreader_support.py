@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deploy fanfic-organizer collections to KOReader on USB sync."""
+"""Manual deploy of fanfic-organizer collections to KOReader on Kobo."""
 
 from __future__ import annotations
 
@@ -14,70 +14,42 @@ from calibre_plugins.fanfic_organizer.prefs import prefs
 
 
 class KoreaderSupport:
-    """USB hooks and manual deploy for the KOReader collections add-on."""
+    """Explicit Deploy to KOReader action (no automatic USB hooks)."""
 
     def __init__(self, plugin) -> None:
         self.plugin = plugin
         self._deploy_pending = False
-        self._connected = False
-
-    def connect(self) -> None:
-        try:
-            from calibre.gui2.device import device_signals
-        except ImportError:
-            return
-        device_signals.device_connection_changed.connect(self._on_device_connection_changed)
-        device_signals.device_metadata_available.connect(self._on_device_metadata_available)
-
-    def enabled(self) -> bool:
-        return bool(prefs.get("koreader_enabled", False))
 
     def koreader_subdir(self) -> str:
         raw = str(prefs.get("koreader_path") or "").strip()
         return raw or ".adds/koreader"
 
-    def _on_device_connection_changed(self, connected: bool) -> None:
-        self._connected = bool(connected)
+    def device_connected(self) -> bool:
+        gui = self.plugin.gui
+        device_manager = getattr(gui, "device_manager", None)
+        return bool(
+            device_manager is not None
+            and device_manager.is_device_connected
+            and device_manager.connected_device is not None
+        )
 
-    def _on_device_metadata_available(self) -> None:
-        if not self.enabled():
-            return
-        self.schedule_deploy()
-
-    def schedule_deploy(self) -> None:
+    def deploy(self, *, silent: bool = False) -> None:
+        """Deploy when the user asks; wait out an in-progress device sync first."""
         if self._deploy_pending:
             return
         self._deploy_pending = True
-        QTimer.singleShot(500, self._try_deploy)
+        QTimer.singleShot(0, lambda: self._deploy_when_ready(silent=silent))
 
-    def schedule_deploy_if_connected(self) -> None:
-        if not self.enabled():
-            return
-        gui = self.plugin.gui
-        device_manager = getattr(gui, "device_manager", None)
-        if device_manager is None or not device_manager.is_device_connected:
-            return
-        self.schedule_deploy()
-
-    def _try_deploy(self) -> None:
+    def _deploy_when_ready(self, *, silent: bool) -> None:
         gui = self.plugin.gui
         job_manager = getattr(gui, "job_manager", None)
         if job_manager is not None and job_manager.has_device_jobs():
-            QTimer.singleShot(1000, self._try_deploy)
+            QTimer.singleShot(1000, lambda: self._deploy_when_ready(silent=silent))
             return
         self._deploy_pending = False
-        self.deploy(silent=True)
+        self._run_deploy(silent=silent)
 
-    def deploy(self, *, silent: bool = False) -> dict[str, Any] | None:
-        if not self.enabled():
-            if not silent:
-                error_dialog(
-                    self.plugin.gui,
-                    "Fanfic Organizer",
-                    "Enable KOReader support in Plugin settings first.",
-                    show=True,
-                )
-            return None
+    def _run_deploy(self, *, silent: bool) -> dict[str, Any] | None:
         gui = self.plugin.gui
         device_manager = getattr(gui, "device_manager", None)
         if device_manager is None or not device_manager.is_device_connected:
