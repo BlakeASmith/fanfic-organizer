@@ -320,6 +320,18 @@ def test_build_enrich_argv_includes_login():
     assert argv[argv.index("--password") + 1] == "secret"
     assert "--delay" not in argv
     assert "--verbose" in argv
+    assert "--drop-unmarked" in argv
+
+
+def test_build_enrich_argv_can_keep_noncanonical():
+    mod = load_scrape_run()
+    argv = mod.build_enrich_argv(
+        "/tmp/in.jsonl",
+        "/tmp/out.jsonl",
+        {"drop_unmarked": False},
+    )
+    assert "--no-drop-unmarked" in argv
+    assert "--drop-unmarked" not in argv
 
 
 def test_build_collections_argv_skips_login():

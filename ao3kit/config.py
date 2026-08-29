@@ -69,7 +69,7 @@ class ExampleCollection(TagRule):
 
 RULES = TagRulesConfig(
     resolve_canonical=True,
-    drop_unmarked=False,
+    drop_unmarked=True,
     rules=[
         # KeepSeparateRule(
         #     id="keep-jegulus",
@@ -354,7 +354,7 @@ class UserSettings:
 
     version: int = 1
     resolve_canonical: bool = True
-    drop_unmarked: bool = False
+    drop_unmarked: bool = True
     drop_errors: bool = False
     # Relative to the config home, or absolute.
     active_rules: str = f"{RULES_DIRNAME}/{DEFAULT_RULES_FILENAME}"

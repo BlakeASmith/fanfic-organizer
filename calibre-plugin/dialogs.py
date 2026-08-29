@@ -105,6 +105,18 @@ class ImportJsonlDialog(QDialog):
         )
         layout.addWidget(self.simplify_tags)
 
+        self.drop_unmarked = QCheckBox(
+            'Drop non-canonical tags after mapping'
+        )
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
+        layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -126,6 +138,7 @@ class ImportJsonlDialog(QDialog):
             'path': self.path.text().strip(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
 
 
@@ -168,6 +181,14 @@ class ProcessLibraryDialog(QDialog):
             'fetched from AO3; names already in the tag cache stay local.'
         )
         tasks_layout.addWidget(self.simplify_tags)
+
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(options.drop_unmarked))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
+        tasks_layout.addWidget(self.drop_unmarked)
 
         self.fill_series = QCheckBox('Fill Series on books already in the library')
         self.fill_series.setChecked(bool(options.fill_series))
@@ -285,6 +306,7 @@ class ProcessLibraryDialog(QDialog):
         self.fill_series.setEnabled(not import_on)
         simplify_on = self.simplify_tags.isChecked()
         self.recompute_collections.setEnabled(not simplify_on)
+        self.drop_unmarked.setEnabled(simplify_on)
         if simplify_on:
             self.recompute_collections.setChecked(True)
         self.cover_on_download.setEnabled(self.download_epubs.isChecked())
@@ -294,6 +316,7 @@ class ProcessLibraryDialog(QDialog):
     def values(self):
         return self._options_cls(
             simplify_tags=self.simplify_tags.isChecked(),
+            drop_unmarked=self.drop_unmarked.isChecked(),
             fill_series=self.fill_series.isChecked()
             or self.import_series.isChecked(),
             import_series=self.import_series.isChecked(),
@@ -463,9 +486,18 @@ class ScrapeSearchDialog(QDialog):
             'and Relationships. Collection and tag rules: '
             'Tags and collections → Collections & tag rules.'
         )
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
         import_layout.addWidget(self.download_epubs)
         import_layout.addWidget(self.update_existing)
         import_layout.addWidget(self.simplify_tags)
+        import_layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
         layout.addWidget(import_box)
 
         for widget in (
@@ -651,6 +683,7 @@ class ScrapeSearchDialog(QDialog):
             'download_epubs': self.download_epubs.isChecked(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
 
 
@@ -1224,9 +1257,14 @@ class SimilarSearchDialog(QDialog):
             'Simplify tags, fandoms & relationships (AO3 canonical + user rules)'
         )
         self.simplify_tags.setChecked(bool(prefs.get('simplify_tags', False)))
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
         import_layout.addWidget(self.download_epubs)
         import_layout.addWidget(self.update_existing)
         import_layout.addWidget(self.simplify_tags)
+        import_layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
         layout.addWidget(import_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1293,6 +1331,7 @@ class SimilarSearchDialog(QDialog):
             'download_epubs': self.download_epubs.isChecked(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
 
 

@@ -273,6 +273,18 @@ class ConfigWidget(QWidget):
         )
         defaults_form.addRow(self.simplify_tags)
 
+        self.drop_unmarked = QCheckBox(
+            'Drop non-canonical tags after mapping (default for simplify)'
+        )
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
+        self.drop_unmarked.setToolTip(
+            'When simplifying tags, fandoms, or relationships, remove tags '
+            'that AO3 does not list as canonical or synonymous after your '
+            'mapping rules run. Stored in XDG config (drop_unmarked). Search, '
+            'import, and Process library dialogs can override this per run.'
+        )
+        defaults_form.addRow(self.drop_unmarked)
+
         self.update_existing = QCheckBox(
             'Update existing books matched by AO3 work id or URL'
         )
@@ -450,9 +462,11 @@ class ConfigWidget(QWidget):
         prefs['last_max_results'] = self.max_results.text().strip() or '25'
         prefs['download_epubs'] = self.download_epubs.isChecked()
         prefs['simplify_tags'] = self.simplify_tags.isChecked()
+        prefs['drop_unmarked'] = self.drop_unmarked.isChecked()
         prefs['update_existing'] = self.update_existing.isChecked()
         prefs['import_full_series'] = self.import_full_series.isChecked()
         self._save_ao3kit_remember_adds(self.remember_collection_adds.isChecked())
+        self._save_drop_unmarked(self.drop_unmarked.isChecked())
         self._save_pacing_settings()
         self._save_cover_settings()
         self.create_layout.setChecked(False)
@@ -497,6 +511,36 @@ class ConfigWidget(QWidget):
                 self,
                 'Fanfic Organizer',
                 'Could not save the collection recompute setting in ao3kit.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
+
+    def _save_drop_unmarked(self, drop: bool) -> None:
+        try:
+            from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
+
+            code, stdout, stderr = run_ao3kit(
+                [
+                    'config',
+                    'set',
+                    'drop_unmarked',
+                    'true' if drop else 'false',
+                ]
+            )
+        except Exception as exc:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                'Could not save the drop-non-canonical setting in ao3kit.',
+                det_msg=str(exc),
+                show=True,
+            )
+            return
+        if code != 0:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                'Could not save the drop-non-canonical setting in ao3kit.',
                 det_msg=(stderr or stdout or f'exit {code}').strip(),
                 show=True,
             )

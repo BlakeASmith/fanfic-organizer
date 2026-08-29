@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ao3kit.tags.clean import collect_unique_tag_names, enrich_record, enrich_records
-from ao3kit.tags.metadata import ResolvedTag, TagResolver
+from ao3kit.tags.metadata import ResolvedTag, TagProfile, TagResolver
 from ao3kit.tags.rules import CollectRule, KeepSeparateRule, TagRulesConfig, TagRulesEngine
 
 
@@ -220,6 +220,46 @@ def test_enrich_records_with_injected_resolver(tmp_path, monkeypatch):
         include_fandoms=False,
     )
     assert out[0]["cleaned"]["simplified"] == ["Kissing"]
+
+
+def test_enrich_records_drop_unmarked_override(tmp_path, monkeypatch):
+    from ao3kit import config as config_mod
+
+    monkeypatch.setattr(
+        config_mod,
+        "default_home",
+        lambda project_root=None: tmp_path / ".ao3kit",
+    )
+    cfg = config_mod.init_user_config(home=tmp_path / ".ao3kit")
+    cfg.update_settings(drop_unmarked=False)
+    cfg.write_rule(
+        "default",
+        "from ao3kit.tags.rules import TagRulesConfig\n"
+        "RULES = TagRulesConfig(resolve_canonical=True, rules=[])\n",
+    )
+
+    resolver = TagResolver(
+        session=object(), owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(
+        TagProfile(
+            name="custom freeform",
+            url="https://archiveofourown.org/tags/custom%20freeform",
+            category="Additional Tags",
+            canonical=False,
+            filterable=True,
+            description="",
+        )
+    )
+
+    out = enrich_records(
+        [{"work_id": "9", "tags": ["custom freeform"]}],
+        resolver=resolver,
+        include_fandoms=False,
+        drop_unmarked=True,
+    )
+    assert out[0]["cleaned"]["simplified"] == []
+    assert "custom freeform" in out[0]["cleaned"]["dropped"]
 
 
 def test_enrich_record_appends_fandom_metatags():

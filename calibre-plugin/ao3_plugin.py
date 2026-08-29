@@ -216,6 +216,7 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         prefs['last_jsonl_path'] = values['path']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_import
@@ -246,6 +247,7 @@ class FanficOrganizerPlugin(InterfaceAction):
             options={
                 **merge_plugin_settings({}, plugin_runtime_settings()),
                 'simplify_tags': values['simplify_tags'],
+                'drop_unmarked': values['drop_unmarked'],
                 'update_existing': values['update_existing'],
                 'include_series': bool(prefs.get('import_full_series', False)),
             },
@@ -394,6 +396,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         prefs['last_max_results'] = values['max_results'] or '25'
         prefs['download_epubs'] = values['download_epubs']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
@@ -450,6 +453,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         prefs['last_max_results'] = values['max_results'] or '25'
         prefs['download_epubs'] = values['download_epubs']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_scrape

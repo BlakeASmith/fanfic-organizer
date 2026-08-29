@@ -1213,6 +1213,24 @@ def _add_cache_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_drop_unmarked_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--drop-unmarked",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "After mapping, drop tags that are not AO3 canonical or synonyms "
+            "(default: user config)"
+        ),
+    )
+
+
+def _drop_unmarked_from_args(args: argparse.Namespace, user_cfg) -> bool:
+    if getattr(args, "drop_unmarked", None) is not None:
+        return bool(args.drop_unmarked)
+    return bool(user_cfg.settings.drop_unmarked)
+
+
 def _add_metatags_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-metatags",
@@ -1431,6 +1449,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not simplify relationships",
     )
+    _add_drop_unmarked_arg(enrich_p)
     _add_metatags_arg(enrich_p)
     _add_auth_args(enrich_p)
 
@@ -1725,8 +1744,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.rules is None:
             rules.resolve_canonical = user_cfg.settings.resolve_canonical
-            rules.drop_unmarked = user_cfg.settings.drop_unmarked
             rules.drop_errors = user_cfg.settings.drop_errors
+        rules.drop_unmarked = _drop_unmarked_from_args(args, user_cfg)
         rules.include_metatags = _include_metatags(args, user_cfg)
 
         follow_canonical = (
