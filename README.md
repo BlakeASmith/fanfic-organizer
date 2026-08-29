@@ -75,14 +75,6 @@ Checkout development (install from this repo, cut a release) is in **[CONTRIBUTI
 
 There is a scripting CLI over the same library: `python -m ao3kit --help`. The plugin is the product; the CLI is for enthusiasts who want to script.
 
-## Support
-
-Fanfic Organizer is maintained part-time. If it saves you time, tips help fund more work on it.
-
-[![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=I%20can%20do%20more%20of%20this%20with%20%24&emoji=&slug=BlakeSmith&button_colour=BD5FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00)](https://www.buymeacoffee.com/BlakeSmith)
-
-[![Buy Me a Coffee QR code](docs/buy-me-a-coffee-qr.png)](https://www.buymeacoffee.com/BlakeSmith)
-
 ## Attribution
 
 Fanfic Organizer is original code. These projects were **reference** for behaviour, layout, and ideas — not forks, and none of them endorse this plugin.
@@ -100,3 +92,11 @@ Runtime libraries (Beautiful Soup, lxml, requests, PyYAML, Pillow, and others) a
 - **[CHANGELOG.md](CHANGELOG.md)** — user-facing history; [Unreleased] plus the pre-1.0 disclaimer become the next GitHub release notes
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — clone, pytest, plugin install, changelog/release rules
 - **[AGENTS.md](AGENTS.md)** — layout and plugin behavior
+
+## Support
+
+Fanfic Organizer is maintained part-time. If it saves you time, tips help fund more work on it.
+
+[![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=I%20can%20do%20more%20of%20this%20with%20%24&emoji=&slug=BlakeSmith&button_colour=BD5FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00)](https://www.buymeacoffee.com/BlakeSmith)
+
+[![Buy Me a Coffee QR code](docs/buy-me-a-coffee-qr.png)](https://www.buymeacoffee.com/BlakeSmith)
