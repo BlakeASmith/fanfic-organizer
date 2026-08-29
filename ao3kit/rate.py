@@ -22,6 +22,7 @@ import random
 import threading
 import time
 import urllib.robotparser
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -96,13 +97,7 @@ class RateLimitState:
     @base_interval.setter
     def base_interval(self, value: float) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=float(value),
-                tag_interval=snap.tag_interval,
-                success_streak=snap.success_streak,
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, base_interval=float(value))
 
         self.store.update(mutator)
 
@@ -113,13 +108,7 @@ class RateLimitState:
     @tag_interval.setter
     def tag_interval(self, value: float) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=snap.base_interval,
-                tag_interval=float(value),
-                success_streak=snap.success_streak,
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, tag_interval=float(value))
 
         self.store.update(mutator)
 
@@ -130,13 +119,7 @@ class RateLimitState:
     @success_streak.setter
     def success_streak(self, value: int) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=snap.base_interval,
-                tag_interval=snap.tag_interval,
-                success_streak=int(value),
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, success_streak=int(value))
 
         self.store.update(mutator)
 
@@ -246,11 +229,10 @@ def load_robots_text(text: str, *, fetched_at: float | None = None) -> None:
         if crawl:
             base = max(base, crawl)
             tag = max(tag, crawl)
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
+        return replace(
+            snap,
             base_interval=base,
             tag_interval=tag,
-            success_streak=snap.success_streak,
             crawl_delay=crawl,
         )
 
@@ -277,12 +259,10 @@ def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
     base = max(floor, min_iv, float(snap.base_interval))
     tag = max(floor, soft, float(snap.tag_interval))
     tag = max(tag, min(base, soft))
-    return RateSnapshot(
-        next_allowed_at=snap.next_allowed_at,
+    return replace(
+        snap,
         base_interval=base,
         tag_interval=tag,
-        success_streak=snap.success_streak,
-        crawl_delay=snap.crawl_delay,
     )
 
 
@@ -315,12 +295,10 @@ def configure_min_interval(requested: float | None = None) -> float:
             base = max(snap.base_interval, floor, _configured_min_interval())
             tag = snap.tag_interval
         return _clamp_snapshot(
-            RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
+            replace(
+                snap,
                 base_interval=base,
                 tag_interval=tag,
-                success_streak=snap.success_streak,
-                crawl_delay=snap.crawl_delay,
             )
         )
 
@@ -347,9 +325,9 @@ def note_retry_after(seconds: float, *, url: str | None = None) -> None:
     cfg = _rcfg()
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
-        return RateSnapshot(
+        return replace(
+            snap,
             next_allowed_at=max(snap.next_allowed_at, now + pause),
-            base_interval=snap.base_interval,
             tag_interval=min(
                 max(
                     snap.tag_interval * cfg.retry_after_tag_multiplier,
@@ -358,7 +336,7 @@ def note_retry_after(seconds: float, *, url: str | None = None) -> None:
                 cfg.tag_max_interval,
             ),
             success_streak=0,
-            crawl_delay=snap.crawl_delay,
+            retry_after_until=now + pause,
         )
 
     _STATE.store.update(mutator)
@@ -370,8 +348,8 @@ def note_request_pressure(*, status_code: int | None = None) -> None:
     cfg = _rcfg()
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
+        return replace(
+            snap,
             base_interval=min(
                 max(snap.base_interval * cfg.pressure_base_multiplier, cfg.pressure_floor),
                 cfg.max_interval,
@@ -381,7 +359,6 @@ def note_request_pressure(*, status_code: int | None = None) -> None:
                 cfg.tag_max_interval,
             ),
             success_streak=0,
-            crawl_delay=snap.crawl_delay,
         )
 
     _STATE.store.update(mutator)
@@ -404,12 +381,11 @@ def note_request_success(url: str) -> None:
                 floor,
                 min(cfg.tag_soft_interval, snap.tag_interval * cfg.success_speed_factor),
             )
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
-            base_interval=snap.base_interval,
+        return replace(
+            snap,
             tag_interval=tag,
             success_streak=streak,
-            crawl_delay=snap.crawl_delay,
+            retry_after_until=None,
         )
 
     _STATE.store.update(mutator)

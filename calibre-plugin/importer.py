@@ -374,11 +374,28 @@ def import_record(
     existing_id = find_existing_book(db, record, catalog=catalog)
 
     if existing_id is not None and not update_existing:
+        attached = False
+        if bundle_root is not None:
+            already_has_epub = False
+            if skip_existing_epub:
+                try:
+                    already_has_epub = bool(
+                        db.has_format(existing_id, 'EPUB', index_is_id=True)
+                    )
+                except Exception:
+                    already_has_epub = False
+            if not already_has_epub:
+                epub_path = resolve_epub_path(record, bundle_root)
+                if epub_path is not None:
+                    try:
+                        attached = add_epub_format(db, existing_id, epub_path)
+                    except Exception:
+                        attached = False
         return {
             'book_id': existing_id,
             'action': 'skipped',
             'title': record.get('title'),
-            'epub': False,
+            'epub': attached,
         }
 
     existing_identifiers = None
@@ -431,7 +448,10 @@ def import_record(
         if not already_has_epub:
             epub_path = resolve_epub_path(record, bundle_root)
             if epub_path is not None:
-                attached = add_epub_format(db, book_id, epub_path)
+                try:
+                    attached = add_epub_format(db, book_id, epub_path)
+                except Exception:
+                    attached = False
 
     return {
         'book_id': book_id,

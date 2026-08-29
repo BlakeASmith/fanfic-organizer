@@ -245,6 +245,15 @@ def test_split_and_apply_identify_choices():
     assert skipped == []
 
 
+def test_apply_identify_choices_preserves_not_found_rows():
+    rows = [
+        {"book_id": 1, "status": "identified", "work_id": "9"},
+        {"book_id": 2, "status": "not_found", "title": "Nope"},
+    ]
+    merged = apply_identify_choices(rows, {})
+    assert [row["book_id"] for row in merged] == [1, 2]
+
+
 def test_parse_work_page_reads_meta():
     html = (FIXTURES / "work_page_full.html").read_text(encoding="utf-8")
     work = parse_work_page(html, url="https://archiveofourown.org/works/90876776")

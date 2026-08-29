@@ -238,6 +238,21 @@ def job_clear_bucket(status: dict[str, Any] | None) -> str | None:
     return 'finished'
 
 
+def job_pid_alive(job_dir: Path) -> bool:
+    pid_path = Path(job_dir) / 'job.pid'
+    try:
+        pid = int(pid_path.read_text(encoding='utf-8').strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        import os
+
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def job_paths(job_dir: Path) -> dict[str, Path]:
     job_dir = Path(job_dir)
     return {

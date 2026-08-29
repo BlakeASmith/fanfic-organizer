@@ -446,19 +446,27 @@ class TagCache:
             return {}
         conn = self._open()
         found: dict[str, CacheRow] = {}
+        expired = False
         for start in range(0, len(wanted), _LOOKUP_CHUNK):
             chunk = wanted[start : start + _LOOKUP_CHUNK]
             placeholders = ",".join("?" * len(chunk))
             for row in conn.execute(
                 f"""
-                SELECT name, canonical, status, category, metatags
+                SELECT name, canonical, status, category, metatags, fetched_at, root
                 FROM entries
                 WHERE name IN ({placeholders})
                 """,
                 chunk,
             ):
+                if self._row_expired(conn, row):
+                    conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                    self.expired_trees += 1
+                    expired = True
+                    continue
                 parsed = _row_to_cache_row(row)
                 found[parsed.name] = parsed
+        if expired:
+            conn.commit()
         return found
 
     def rows_for_canonical(self, canonical: str) -> list[CacheRow]:
@@ -467,31 +475,47 @@ class TagCache:
         if not text:
             return []
         conn = self._open()
-        return [
-            _row_to_cache_row(row)
-            for row in conn.execute(
-                """
-                SELECT name, canonical, status, category, metatags
-                FROM entries
-                WHERE canonical = ?
-                ORDER BY name
-                """,
-                (text,),
-            )
-        ]
+        rows: list[CacheRow] = []
+        expired = False
+        for row in conn.execute(
+            """
+            SELECT name, canonical, status, category, metatags, fetched_at, root
+            FROM entries
+            WHERE canonical = ?
+            ORDER BY name
+            """,
+            (text,),
+        ):
+            if self._row_expired(conn, row):
+                conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                self.expired_trees += 1
+                expired = True
+                continue
+            rows.append(_row_to_cache_row(row))
+        if expired:
+            conn.commit()
+        return rows
 
     def iter_root_rows(self) -> Iterator[CacheRow]:
         """Canonical and unmarked rows (one per synonym tree)."""
         conn = self._open()
+        expired = False
         for row in conn.execute(
             """
-            SELECT name, canonical, status, category, metatags
+            SELECT name, canonical, status, category, metatags, fetched_at, root
             FROM entries
             WHERE status != 'synonym'
             ORDER BY name
             """
         ):
+            if self._row_expired(conn, row):
+                conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                self.expired_trees += 1
+                expired = True
+                continue
             yield _row_to_cache_row(row)
+        if expired:
+            conn.commit()
 
     def _row_expired(self, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
         if self.ttl_days is None or self.ttl_days <= 0:

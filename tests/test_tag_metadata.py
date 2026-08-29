@@ -401,6 +401,40 @@ def test_tag_cache_expires_whole_tree(tmp_path: Path):
     expired.close()
 
 
+def test_tag_cache_get_rows_skips_expired(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+
+    from ao3kit.tags.cache import TagCache
+    from ao3kit.tags.metadata import TagResolver
+
+    path = tmp_path / "tags.sqlite"
+    resolver = TagResolver(
+        session=object(),
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        ttl_days=30,
+    )
+    resolver.warm(
+        _profile("Kissing", canonical=True, synonyms=["Kisses", "smooching"])
+    )
+    resolver.close()
+
+    cache = TagCache.load(path, ttl_days=30)
+    conn = cache._open()
+    old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    conn.execute(
+        "UPDATE entries SET fetched_at = ? WHERE root = ?",
+        (old, "Kissing"),
+    )
+    conn.commit()
+    cache.close()
+
+    reloaded = TagCache.load(path, ttl_days=30)
+    assert reloaded.get_rows(["Kisses", "Kissing"]) == {}
+    reloaded.close()
+
+
 def test_tag_cache_migrates_legacy_json(tmp_path: Path):
     import json
 

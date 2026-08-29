@@ -315,6 +315,7 @@ def request(
                 on_status,
                 f"AO3 returned {response.status_code} — retrying in {retry_delay:.0f}s…",
             )
+            response.close()
             time.sleep(retry_delay)
             continue
 
@@ -340,6 +341,7 @@ def request(
                 on_status,
                 f"Cloudflare challenge detected — waiting {retry_delay:.0f}s before retry…",
             )
+            response.close()
             time.sleep(retry_delay)
             continue
 
@@ -389,7 +391,7 @@ def get(
         )
         if ensure_logged_in(session, on_status=kwargs.get("on_status")):
             return request(session, "GET", url, **kwargs)
-        return response
+        raise LoginError("AO3 session expired and re-login failed")
     if is_session_logged_in(session) and _html_is_logged_in(response):
         persist_session(session)
     return response
