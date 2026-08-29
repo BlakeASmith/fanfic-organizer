@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Manual deploy of fanfic-organizer collections to KOReader on Kobo."""
 
 from __future__ import annotations
@@ -24,14 +23,20 @@ class KoreaderSupport:
         raw = str(prefs.get("koreader_path") or "").strip()
         return raw or ".adds/koreader"
 
-    def device_connected(self) -> bool:
+    def connected_device(self):
         gui = self.plugin.gui
         device_manager = getattr(gui, "device_manager", None)
-        return bool(
-            device_manager is not None
-            and device_manager.is_device_connected
-            and device_manager.connected_device is not None
-        )
+        if device_manager is None or not device_manager.is_device_connected:
+            return None
+        return device_manager.connected_device
+
+    def deploy_ready(self) -> bool:
+        device = self.connected_device()
+        if device is None:
+            return False
+        from ao3kit.koreader.detect import koreader_deployable
+
+        return koreader_deployable(device, koreader_subdir=self.koreader_subdir())
 
     def deploy(self, *, silent: bool = False) -> None:
         """Deploy when the user asks; wait out an in-progress device sync first."""
@@ -50,9 +55,11 @@ class KoreaderSupport:
         self._run_deploy(silent=silent)
 
     def _run_deploy(self, *, silent: bool) -> dict[str, Any] | None:
+        from ao3kit.koreader.detect import KoreaderDetectionError
+
+        device = self.connected_device()
         gui = self.plugin.gui
-        device_manager = getattr(gui, "device_manager", None)
-        if device_manager is None or not device_manager.is_device_connected:
+        if device is None:
             if not silent:
                 error_dialog(
                     gui,
@@ -61,18 +68,21 @@ class KoreaderSupport:
                     show=True,
                 )
             return None
-        device = device_manager.connected_device
-        if device is None:
+        try:
+            result = self._deploy_to_device(gui.current_db, device)
+        except KoreaderDetectionError as exc:
             if not silent:
+                detail = exc.message
+                if exc.hint:
+                    detail = f"{exc.message}\n\n{exc.hint}"
                 error_dialog(
                     gui,
                     "Fanfic Organizer",
-                    "No device is connected.",
+                    "This device is not ready for KOReader collections deploy.",
+                    det_msg=detail,
                     show=True,
                 )
             return None
-        try:
-            result = self._deploy_to_device(gui.current_db, device)
         except Exception as exc:
             if not silent:
                 error_dialog(

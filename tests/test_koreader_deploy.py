@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import makeplugin
+import pytest
 from ao3kit.koreader.deploy import (
     COLLECTIONS_JSON_NAME,
     KOPLUGIN_DIRNAME,
@@ -19,6 +20,11 @@ from ao3kit.koreader.deploy import (
     install_plugin,
     koreader_roots,
     resolve_bundled_plugin_source,
+)
+from ao3kit.koreader.detect import (
+    KoreaderDetectionError,
+    detect_koreader_mounts,
+    koreader_deployable,
 )
 
 
@@ -49,16 +55,41 @@ class _Db:
 
 
 class _Device:
-    def __init__(self, books: list[_Book], main_prefix: str, card_prefix: str = ""):
+    DEVICE_PLUGBOARD_NAME = "KOBOTOUCH"
+
+    def __init__(
+        self,
+        books: list[_Book],
+        main_prefix: str,
+        card_prefix: str = "",
+        *,
+        plugboard: str = "KOBOTOUCH",
+    ):
         self._books = books
         self._main_prefix = main_prefix
         self._card_a_prefix = card_prefix
+        self.DEVICE_PLUGBOARD_NAME = plugboard
 
     def books(self, main_memory=True):
         return list(self._books)
 
 
-def test_build_collections_index_from_device_books():
+def _seed_kobo_koreader(prefix: Path, *, subdir: str = ".adds/koreader") -> Path:
+    (prefix / ".kobo").mkdir(parents=True)
+    root = prefix / Path(subdir.lstrip("/"))
+    (root / "settings").mkdir(parents=True)
+    return root
+
+
+def _seed_android_koreader(prefix: Path) -> Path:
+    root = prefix / "koreader"
+    (root / "cache").mkdir(parents=True)
+    return root
+
+
+def test_build_collections_index_from_device_books(tmp_path: Path):
+    mount = tmp_path / "kobo"
+    _seed_kobo_koreader(mount)
     db = _Db(
         {
             1: _Meta("Alpha", ["Author A"], ["Harry Potter", "Fluff"]),
@@ -67,7 +98,7 @@ def test_build_collections_index_from_device_books():
     )
     device = _Device(
         [_Book(1, "Author A/Alpha.epub"), _Book(2, "Author B/Beta.epub")],
-        "/mnt/kobo",
+        str(mount),
     )
     entries = build_collections_index(db, device)
     assert len(entries) == 2
@@ -85,33 +116,81 @@ def test_atomic_write_json(tmp_path: Path):
 
 
 def test_deploy_metadata_and_install_plugin(tmp_path: Path):
-    device_root = tmp_path / "kobo" / ".adds" / "koreader"
+    koreader_root = tmp_path / ".adds" / "koreader"
+    (koreader_root / "settings").mkdir(parents=True)
     source = tmp_path / "plugin"
     source.mkdir()
     (source / "main.lua").write_text("-- test\n", encoding="utf-8")
     entries = [{"lpath": "Author/Title.epub", "collections": ["River Song"]}]
-    path = deploy_metadata(device_root, entries)
+    path = deploy_metadata(koreader_root, entries)
     assert path.name == COLLECTIONS_JSON_NAME
-    installed = install_plugin(device_root, source)
+    installed = install_plugin(koreader_root, source)
     assert installed.name == KOPLUGIN_DIRNAME
     assert (installed / "main.lua").is_file()
 
 
-def test_koreader_roots_main_and_card():
-    device = _Device([], "/mnt/internal", "/mnt/sd")
-    roots = koreader_roots(device)
-    assert len(roots) == 2
-    assert str(roots[0]).endswith(".adds/koreader")
-    assert str(roots[1]).endswith(".adds/koreader")
+def test_detect_kobo_koreader_mount(tmp_path: Path):
+    mount = tmp_path / "internal"
+    root = _seed_kobo_koreader(mount)
+    device = _Device([], str(mount))
+    mounts = detect_koreader_mounts(device)
+    assert len(mounts) == 1
+    assert mounts[0].kind == "kobo"
+    assert mounts[0].koreader_root == root
 
 
-def test_deploy_to_device_writes_both_roots(tmp_path: Path):
+def test_detect_android_koreader_mount(tmp_path: Path):
+    mount = tmp_path / "phone"
+    root = _seed_android_koreader(mount)
+    device = _Device([], str(mount), plugboard="FOLDER_DEVICE")
+    mounts = detect_koreader_mounts(device)
+    assert len(mounts) == 1
+    assert mounts[0].kind == "android"
+    assert mounts[0].koreader_root == root
+
+
+def test_detect_rejects_kobo_without_koreader(tmp_path: Path):
+    mount = tmp_path / "internal"
+    mount.mkdir()
+    (mount / ".kobo").mkdir()
+    device = _Device([], str(mount))
+    with pytest.raises(KoreaderDetectionError, match="does not appear to have KOReader"):
+        detect_koreader_mounts(device)
+
+
+def test_detect_rejects_non_koreader_device(tmp_path: Path):
+    mount = tmp_path / "kindle"
+    mount.mkdir()
+    device = _Device([], str(mount), plugboard="KINDLE2")
+    with pytest.raises(KoreaderDetectionError, match="not a compatible KOReader device"):
+        detect_koreader_mounts(device)
+
+
+def test_detect_rejects_mtp_without_storage():
+    class _Mtp:
+        DEVICE_PLUGBOARD_NAME = "MTP_DEVICE"
+
+    with pytest.raises(KoreaderDetectionError, match="MTP"):
+        detect_koreader_mounts(_Mtp())
+
+
+def test_koreader_roots_and_deploy_to_device(tmp_path: Path):
     plugin_source = tmp_path / KOPLUGIN_DIRNAME
     plugin_source.mkdir()
     (plugin_source / "main.lua").write_text("-- plugin\n", encoding="utf-8")
+
+    internal = tmp_path / "internal"
+    _seed_kobo_koreader(internal)
+    sd = tmp_path / "sd"
+    _seed_kobo_koreader(sd)
+
     db = _Db({1: _Meta("Title", ["Author"], ["DW"])})
-    device = _Device([_Book(1, "Author/Title.epub")], str(tmp_path / "internal"))
-    device._card_a_prefix = str(tmp_path / "sd")
+    device = _Device([_Book(1, "Author/Title.epub")], str(internal), str(sd))
+
+    roots = koreader_roots(device)
+    assert len(roots) == 2
+    assert koreader_deployable(device)
+
     result = deploy_to_device(
         db,
         device,

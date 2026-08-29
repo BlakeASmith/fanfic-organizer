@@ -9,9 +9,15 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from ao3kit.koreader.detect import (
+    DEFAULT_KOREADER_SUBDIR,
+    detect_koreader_mounts,
+    koreader_deployable,
+)
+
 COLLECTIONS_JSON_NAME = "fanfic.collections.json"
 KOPLUGIN_DIRNAME = "fanficcollections.koplugin"
-DEFAULT_KOREADER_SUBDIR = ".adds/koreader"
+DEFAULT_KOREADER_SUBDIR = DEFAULT_KOREADER_SUBDIR
 COLLECTIONS_COLUMN = "#collections"
 
 
@@ -90,20 +96,31 @@ def build_collections_index_from_rows(rows: Iterable[dict[str, Any]]) -> list[di
 
 
 def koreader_roots(device: Any, *, subdir: str = DEFAULT_KOREADER_SUBDIR) -> list[Path]:
-    """Return absolute KOReader roots on the device (main memory and SD when set)."""
-    roots: list[Path] = []
-    seen: set[str] = set()
-    for attr in ("_main_prefix", "_card_a_prefix"):
-        prefix = getattr(device, attr, None)
-        if not prefix:
-            continue
-        root = Path(str(prefix).rstrip("/\\")) / subdir.lstrip("/")
-        key = str(root)
-        if key in seen:
-            continue
-        seen.add(key)
-        roots.append(root)
-    return roots
+    """Return absolute KOReader data roots on a compatible device."""
+    return [mount.koreader_root for mount in detect_koreader_mounts(device, koreader_subdir=subdir)]
+
+
+def deploy_metadata(
+    koreader_root: Path,
+    entries: list[dict[str, Any]],
+    *,
+    filename: str = COLLECTIONS_JSON_NAME,
+) -> Path:
+    """Write ``fanfic.collections.json`` under ``koreader_root/cache/``."""
+    target = koreader_root / "cache" / filename
+    atomic_write_json(target, entries)
+    return target
+
+
+def install_plugin(koreader_root: Path, source: Path) -> Path:
+    """Copy the bundled KOReader plugin into ``koreader_root/plugins/``."""
+    if not source.is_dir():
+        raise FileNotFoundError(f"KOReader plugin source not found: {source}")
+    dest = koreader_root / "plugins" / KOPLUGIN_DIRNAME
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
+    return dest
 
 
 def atomic_write_json(path: Path, data: list[dict[str, Any]]) -> None:
@@ -115,29 +132,6 @@ def atomic_write_json(path: Path, data: list[dict[str, Any]]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
-
-
-def deploy_metadata(
-    device_root: Path,
-    entries: list[dict[str, Any]],
-    *,
-    filename: str = COLLECTIONS_JSON_NAME,
-) -> Path:
-    """Write ``fanfic.collections.json`` under ``device_root/cache/``."""
-    target = device_root / "cache" / filename
-    atomic_write_json(target, entries)
-    return target
-
-
-def install_plugin(device_root: Path, source: Path) -> Path:
-    """Copy the bundled KOReader plugin into ``device_root/plugins/``."""
-    if not source.is_dir():
-        raise FileNotFoundError(f"KOReader plugin source not found: {source}")
-    dest = device_root / "plugins" / KOPLUGIN_DIRNAME
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(source, dest)
-    return dest
 
 
 def _repo_root() -> Path | None:
@@ -229,19 +223,18 @@ def deploy_to_device(
 ) -> dict[str, Any]:
     """Install the KOReader plugin (optional) and write collections JSON on the device."""
     entries = build_collections_index(db, device)
-    roots = koreader_roots(device, subdir=koreader_subdir)
-    if not roots:
-        raise RuntimeError("Could not locate KOReader folder on the connected device.")
+    mounts = detect_koreader_mounts(device, koreader_subdir=koreader_subdir)
     written: list[str] = []
     installed: list[str] = []
-    for root in roots:
-        path = deploy_metadata(root, entries)
+    for mount in mounts:
+        path = deploy_metadata(mount.koreader_root, entries)
         written.append(str(path))
         if install_koplugin and plugin_source is not None:
-            dest = install_plugin(root, plugin_source)
+            dest = install_plugin(mount.koreader_root, plugin_source)
             installed.append(str(dest))
     return {
         "books": len(entries),
         "collections_json": written,
         "plugin_installed": installed,
+        "koreader_kind": mounts[0].kind if mounts else "",
     }

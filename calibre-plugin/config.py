@@ -369,9 +369,10 @@ class ConfigWidget(QWidget):
         koreader_layout.addWidget(
             _hint(
                 'Optional. After Calibre finishes sending books to your Kobo, '
-                'use Fanfic Organizer → Deploy to KOReader… to install the '
-                'small KOReader plugin and write fanfic.collections.json from '
-                'the #collections column. In KOReader: Search → Fanfic collections.'
+                'use Fanfic Organizer → Deploy to KOReader… (only enabled when '
+                'the connected device is a Kobo or Android storage with KOReader '
+                'already set up). Writes fanfic.collections.json from the '
+                '#collections column. In KOReader: Search → Fanfic collections.'
             )
         )
         layout.addWidget(koreader)

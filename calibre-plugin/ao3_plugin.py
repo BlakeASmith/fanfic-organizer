@@ -199,10 +199,10 @@ class FanficOrganizerPlugin(InterfaceAction):
         deploy_koreader = self.menu.addAction(
             'Deploy to KOReader…', self.deploy_to_koreader
         )
-        deploy_koreader.setEnabled(self.koreader().device_connected())
+        deploy_koreader.setEnabled(self.koreader().deploy_ready())
         deploy_koreader.setStatusTip(
-            'After USB sync, install or refresh the Fanfic collections '
-            'KOReader plugin and fanfic.collections.json on the device'
+            'Install or refresh the Fanfic collections KOReader plugin and '
+            'fanfic.collections.json on a Kobo or Android device with KOReader'
         )
         self.menu.addAction('Plugin settings...', self.show_configuration)
 

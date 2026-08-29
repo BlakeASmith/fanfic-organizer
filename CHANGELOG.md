@@ -17,7 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
-- Add optional **Deploy to KOReader…** for Kobo: after USB sync, run it from the Fanfic Organizer menu to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. In KOReader: Search → Fanfic collections. KOReader folder path is in Plugin settings; nothing is written to the device unless you choose this action.
+- Add optional **Deploy to KOReader…** for Kobo/Android with KOReader: run it from the Fanfic Organizer menu after USB sync to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. Deploy is blocked unless the device looks like a Kobo with KOReader (`.adds/koreader`) or Android storage with a `koreader/` folder; nothing is written to Kindles or other readers.
 - Add optional **Summary** on generated EPUB covers (Plugin settings → Cover style → Show on cover), with the same wrap/shrink normalization as the title and separate title/summary font sizes.
 - Add **Process library…** to the plugin menu: run simplify, series, EPUB download, covers, and/or collection recompute on the whole open library without selecting every book, with a local estimate of unmatched tags and other pending work before the job starts.
 - Add **Drop non-canonical tags after mapping** for tag simplify: after your mapping rules, remove tags that AO3 does not list as canonical or synonymous. Default on in plugin settings; Search, import, Process library, and similar dialogs can override per run (`drop_unmarked` / `--drop-unmarked`).
