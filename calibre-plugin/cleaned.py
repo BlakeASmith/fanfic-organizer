@@ -20,8 +20,11 @@ the standard Tags field instead of being dropped.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 AO3_WORK_ID_RE = re.compile(
@@ -33,6 +36,30 @@ FFF_INJECTED_TAGS = frozenset({'fanfiction', 'completed', 'complete'})
 RELATIONSHIP_CATEGORIES = frozenset({'relationship'})
 FANDOM_CATEGORIES = frozenset({'fandom'})
 COMPLETED_TAG = 'Completed'
+
+
+def _resolve_record_summary(*args: Any, **kwargs: Any) -> str:
+    """Resolve cover summary text without requiring Calibre's package path.
+
+    pytest loads ``cleaned.py`` via ``importlib`` (no ``calibre_plugins``), so
+    fall back to the sibling ``cover_summary`` module on disk.
+    """
+    try:
+        from calibre_plugins.fanfic_organizer.cover_summary import (
+            resolve_record_summary as resolve,
+        )
+    except ImportError:
+        name = '_fanfic_organizer_cover_summary'
+        cached = sys.modules.get(name)
+        if cached is None:
+            path = Path(__file__).resolve().parent / 'cover_summary.py'
+            spec = importlib.util.spec_from_file_location(name, path)
+            assert spec is not None and spec.loader is not None
+            cached = importlib.util.module_from_spec(spec)
+            sys.modules[name] = cached
+            spec.loader.exec_module(cached)
+        resolve = cached.resolve_record_summary
+    return resolve(*args, **kwargs)
 
 
 def work_id_from_url(url: Any) -> str | None:
@@ -512,9 +539,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
     words = (record.get('metadata') or {}).get('words')
     wordcount = words if isinstance(words, int) else None
 
-    from calibre_plugins.fanfic_organizer.cover_summary import resolve_record_summary
-
-    summary = resolve_record_summary(record)
+    summary = _resolve_record_summary(record)
 
     work_id = canonical_work_id(record)
     url = canonical_work_url(record)
@@ -637,10 +662,9 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
-    from calibre_plugins.fanfic_organizer.cover_summary import resolve_record_summary
 
     def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
-        text = resolve_record_summary(
+        text = _resolve_record_summary(
             record,
             summary_column=summary,
             comments=comments,
