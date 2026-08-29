@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from PyQt5.Qt import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -20,12 +21,14 @@ from PyQt5.Qt import (
 
 from calibre.gui2 import error_dialog, info_dialog, question_dialog
 
+from calibre_plugins.fanfic_organizer.prefs import prefs
 from calibre_plugins.fanfic_organizer.updates import (
     ReleaseInfo,
     UpdateError,
     compare_to_installed,
     download_and_install,
     fetch_releases,
+    filter_releases,
     format_published_at,
     installed_version_text,
     latest_release,
@@ -70,6 +73,7 @@ class UpdateCheckDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Check for updates")
         self.setMinimumWidth(560)
+        self._all_releases: list[ReleaseInfo] = []
         self._releases: list[ReleaseInfo] = []
         self._fetch_worker: _FetchReleasesWorker | None = None
         self._install_worker: _InstallReleaseWorker | None = None
@@ -78,10 +82,9 @@ class UpdateCheckDialog(QDialog):
         self.setLayout(layout)
 
         intro = QLabel(
-            "Compare the installed plugin with GitHub Releases, including "
-            "automated preview builds from main. Choose a release to install "
-            "a newer build or roll back to an older tag. Calibre must restart "
-            "to load the new zip."
+            "Compare the installed plugin with GitHub Releases. Choose a "
+            "release to install a newer build or roll back to an older tag. "
+            "Calibre must restart to load the new zip."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -92,6 +95,20 @@ class UpdateCheckDialog(QDialog):
         self.latest_label = QLabel("Checking GitHub…")
         form.addRow("Latest on GitHub", self.latest_label)
         layout.addLayout(form)
+
+        self.include_prereleases = QCheckBox(
+            "Include preview pre-releases (main-branch builds)"
+        )
+        self.include_prereleases.setChecked(
+            bool(prefs.get("include_prereleases", False))
+        )
+        self.include_prereleases.setToolTip(
+            "When checked, list automated GitHub pre-releases "
+            "(X.Y.Z-preview.<run>+<sha>) alongside standard releases. "
+            "Prefer standard releases for daily use."
+        )
+        self.include_prereleases.stateChanged.connect(self._on_prerelease_toggled)
+        layout.addWidget(self.include_prereleases)
 
         self.status = QLabel("Contacting GitHub…")
         self.status.setWordWrap(True)
@@ -156,8 +173,19 @@ class UpdateCheckDialog(QDialog):
                 show=True,
             )
             return
-        releases = worker.finished_with_result or []
-        self._releases = list(releases)
+        self._all_releases = list(worker.finished_with_result or [])
+        self._apply_release_list()
+
+    def _on_prerelease_toggled(self, _state=None):
+        prefs["include_prereleases"] = self.include_prereleases.isChecked()
+        if self._all_releases:
+            self._apply_release_list()
+
+    def _apply_release_list(self):
+        include = self.include_prereleases.isChecked()
+        self._releases = filter_releases(
+            self._all_releases, include_prereleases=include
+        )
         self.version_combo.blockSignals(True)
         self.version_combo.clear()
         for release in self._releases:
@@ -177,20 +205,29 @@ class UpdateCheckDialog(QDialog):
         self.version_combo.blockSignals(False)
         self.version_combo.setEnabled(bool(self._releases))
         latest = latest_release(self._releases)
-        latest_stable = latest_stable_release(self._releases)
+        latest_stable = latest_stable_release(self._all_releases)
         if latest is None:
             self.latest_label.setText("No releases found")
-            self.status.setText(
-                "No published GitHub releases with a plugin zip were found."
-            )
+            if self._all_releases and not include:
+                self.status.setText(
+                    "No standard releases found. Enable preview pre-releases "
+                    "to see automated main-branch builds."
+                )
+            else:
+                self.status.setText(
+                    "No published GitHub releases with a plugin zip were found."
+                )
+            self._refresh_selection()
             return
-        if latest_stable is not None:
+        if include and latest_stable is not None:
             latest_text = latest_stable.version_text
             if latest.is_preview and latest.version_text != latest_text:
                 latest_text += f" (preview: {latest.version_text})"
             self.latest_label.setText(latest_text)
-        else:
+        elif include and latest.is_preview:
             self.latest_label.setText(f"{latest.version_text} (preview only)")
+        else:
+            self.latest_label.setText(latest.version_text)
         current = installed_version_text()
         if compare_to_installed(latest) > 0:
             kind = "preview build" if latest.is_preview else "release"

@@ -286,6 +286,21 @@ def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
     return releases
 
 
+def filter_releases(
+    releases: Iterable[ReleaseInfo],
+    *,
+    include_prereleases: bool = False,
+) -> list[ReleaseInfo]:
+    """Return releases for the update picker.
+
+    When ``include_prereleases`` is false, preview GitHub pre-releases are omitted.
+    """
+    items = list(releases)
+    if include_prereleases:
+        return items
+    return [item for item in items if not item.is_preview]
+
+
 def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
     ordered = sorted(
         releases, key=lambda item: version_sort_key(item.parsed), reverse=True
