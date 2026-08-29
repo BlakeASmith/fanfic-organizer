@@ -41,6 +41,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Documentation
 
+- Add a **Support** section to the README with a Buy Me a Coffee link and QR code.
 - Add a Fill from AO3 screen recording and screenshots under [`demos/`](demos/README.md).
 - Add a computer-use skill for Calibre plugin GUI tests (menu map, columns, throwaway library; skip tag-browser/column exploration).
 - Add a Process library screen recording and screenshots under [`demos/`](demos/README.md).
