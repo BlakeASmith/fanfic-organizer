@@ -1021,7 +1021,7 @@ def parse_search_page(html: str) -> SearchPage:
 def fetch_page(url: str, session: requests.Session | None = None) -> str:
     """Fetch an AO3 page with shared retry / Cloudflare / adult-gate handling."""
     client = session or create_session()
-    return get_text(client, url, view_adult=True, timeout=60)
+    return get_text(client, url, view_adult=True)
 
 
 def work_matches_filters(
