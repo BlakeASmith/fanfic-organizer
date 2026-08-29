@@ -122,6 +122,7 @@ def record_from_calibre_book(
     characters = as_name_list(get_custom_value(db, book_id, 'characters'))
     original_tags = as_name_list(get_custom_value(db, book_id, 'originaltags'))
     wordcount = get_custom_value(db, book_id, 'wordcount')
+    summary_value = get_custom_value(db, book_id, 'summary')
     if isinstance(wordcount, str):
         try:
             wordcount = int(wordcount.replace(',', ''))
@@ -155,6 +156,7 @@ def record_from_calibre_book(
         characters=characters,
         wordcount=wordcount if isinstance(wordcount, int) else None,
         comments=comments or None,
+        summary=str(summary_value or '').strip() or None,
         raw_record=raw,
         is_complete=is_complete,
         series_name=series_name,
@@ -931,6 +933,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
                     has_epub=book_has_epub(db, book_id),
                     uuid=str((record or {}).get('calibre_uuid') or ''),
                     comments=comments,
+                    summary=str((record or {}).get('summary') or ''),
                 )
             )
         return books
@@ -950,6 +953,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
     uuid_map = _all_field_for(api, 'uuid', ids)
     words_map = _all_field_for(api, '#wordcount', ids)
     comments_map = _all_field_for(api, 'comments', ids)
+    summary_map = _all_field_for(api, '#summary', ids)
     books = []
     for book_id in ids:
         tags = field_values(tags_map.get(book_id))
@@ -979,6 +983,7 @@ def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
                 wordcount=_optional_int(words_map.get(book_id)),
                 is_complete=is_complete,
                 comments=str(comments_map.get(book_id) or ''),
+                summary=str(summary_map.get(book_id) or ''),
             )
         )
     return books
@@ -1000,6 +1005,7 @@ def record_from_library_book(
         characters=list(book.characters) or None,
         wordcount=book.wordcount,
         comments=book.comments or None,
+        summary=book.summary or None,
         is_complete=book.is_complete,
         series_name=book.series_name or None,
         series_index=book.series_index,

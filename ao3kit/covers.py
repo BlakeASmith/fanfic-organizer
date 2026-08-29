@@ -231,6 +231,24 @@ def summary_text_from_comments(comments: Any) -> str:
     return _normalize_cover_text(plain)
 
 
+def resolve_record_summary(
+    record: dict[str, Any] | None,
+    *,
+    summary_column: Any = None,
+    comments: Any = None,
+) -> str:
+    """Pick summary text from a work record, optional column, or Comments."""
+    record = record or {}
+    direct = _normalize_cover_text(str(record.get("summary") or ""))
+    if direct:
+        return direct
+    for candidate in (summary_column, comments, record.get("comments")):
+        text = summary_text_from_comments(candidate)
+        if text:
+            return text
+    return ""
+
+
 def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     record = record or {}
     fandoms = record.get("fandoms") or []
@@ -283,9 +301,7 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
         author = ", ".join(str(item).strip() for item in authors if str(item).strip())
     else:
         author = str(authors or "").strip()
-    summary = _normalize_cover_text(str(record.get("summary") or ""))
-    if not summary:
-        summary = summary_text_from_comments(record.get("comments"))
+    summary = resolve_record_summary(record)
     return CoverInfo(
         title=_normalize_cover_text(str(record.get("title") or "")),
         summary=summary,

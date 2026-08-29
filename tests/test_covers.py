@@ -30,6 +30,7 @@ from ao3kit.covers import (
     _format_footer,
     _normalize_cover_text,
     _scratch_draw,
+    resolve_record_summary,
     summary_text_from_comments,
 )
 
@@ -302,6 +303,23 @@ def test_summary_text_from_comments_skips_json_metadata():
     blob = '{"work_id": "9", "tags": ["Fluff"]}'
     assert summary_text_from_comments(blob) == ""
     assert summary_text_from_comments("Plain synopsis text.") == "Plain synopsis text."
+
+
+def test_resolve_record_summary_prefers_column_over_comments():
+    record = {"title": "A"}
+    assert (
+        resolve_record_summary(
+            record,
+            summary_column="Column blurb.",
+            comments="Comments blurb.",
+        )
+        == "Column blurb."
+    )
+    assert resolve_record_summary(record, comments="Comments blurb.") == "Comments blurb."
+    assert (
+        resolve_record_summary({"summary": "Record blurb."}, comments="Comments blurb.")
+        == "Record blurb."
+    )
 
 
 def test_summary_on_cover_when_enabled():

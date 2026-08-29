@@ -289,6 +289,8 @@ def write_layout_fields(db, book_id: int, record: dict[str, Any]) -> None:
         _set_custom(
             db, book_id, 'originaltags', fields['original_tags'], commit=False
         )
+    if present.get('summary') and fields.get('summary'):
+        _set_custom(db, book_id, 'summary', fields['summary'], commit=False)
 
     commit = getattr(db, 'commit', None)
     if callable(commit):

@@ -58,6 +58,15 @@ LAYOUT_COLUMN_SPECS: tuple[dict[str, Any], ...] = (
         'display': {'is_names': False, 'description': ''},
     },
     {
+        'role': 'summary',
+        'label': 'summary',
+        'lookup': '#summary',
+        'name': 'Summary',
+        'datatype': COMMENTS_DATATYPE,
+        'is_multiple': False,
+        'display': {'description': 'AO3 work summary'},
+    },
+    {
         'role': 'wordcount',
         'label': 'wordcount',
         'lookup': '#wordcount',
@@ -148,7 +157,7 @@ def ensure_custom_column(
 
 
 def ensure_layout_columns(db) -> list[str]:
-    """Create Fandom / Relationships / Collections / word count if missing.
+    """Create Fandom / Relationships / Collections / Summary / word count if missing.
 
     Returns labels that are not live in the open DB. Calibre only registers
     newly created columns after the library is reopened.

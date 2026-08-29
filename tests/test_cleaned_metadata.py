@@ -438,6 +438,30 @@ def test_record_from_library_fields_uses_comments_for_summary():
     assert record["summary"] == "They were roommates."
 
 
+def test_record_from_library_fields_prefers_summary_column_over_comments():
+    mod = load_cleaned()
+    record = mod.record_from_library_fields(
+        title="A Work",
+        identifiers={"url": "https://archiveofourown.org/works/9"},
+        summary="Column synopsis.",
+        comments="Comments synopsis.",
+    )
+    assert record is not None
+    assert record["summary"] == "Column synopsis."
+
+
+def test_calibre_fields_for_record_includes_summary():
+    mod = load_cleaned()
+    fields = mod.calibre_fields_for_record(
+        {
+            "work_id": "9",
+            "title": "A Work",
+            "summary": "They were roommates.",
+        }
+    )
+    assert fields["summary"] == "They were roommates."
+
+
 def test_layout_column_specs_match_fanfic_library():
     cols = load_columns()
     by_role = {spec["role"]: spec for spec in cols.LAYOUT_COLUMN_SPECS}
@@ -449,6 +473,9 @@ def test_layout_column_specs_match_fanfic_library():
     assert by_role["originaltags"]["label"] == "originaltags"
     assert by_role["originaltags"]["name"] == "Original Tags"
     assert by_role["originaltags"]["is_multiple"] is True
+    assert by_role["summary"]["label"] == "summary"
+    assert by_role["summary"]["name"] == "Summary"
+    assert by_role["summary"]["datatype"] == cols.COMMENTS_DATATYPE
     assert by_role["wordcount"]["label"] == "wordcount"
     assert by_role["wordcount"]["name"] == "word count"
     assert by_role["wordcount"]["datatype"] == "int"
@@ -498,6 +525,7 @@ def test_ensure_layout_columns_returns_pending_when_not_live():
         'relationships',
         'collections',
         'originaltags',
+        'summary',
         'wordcount',
     ]
     assert db.created == pending
@@ -516,7 +544,7 @@ def test_apply_layout_columns_reopens_library_when_columns_were_created():
 
 def test_apply_layout_columns_skips_reopen_when_already_live():
     cols = load_columns()
-    db = _FakeDB(live=('fandom', 'relationships', 'collections', 'originaltags', 'wordcount'))
+    db = _FakeDB(live=('fandom', 'relationships', 'collections', 'originaltags', 'summary', 'wordcount'))
     gui = _FakeGUI(db)
     cols.apply_layout_columns(gui)
     assert gui.moved == []

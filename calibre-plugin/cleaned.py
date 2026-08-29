@@ -9,6 +9,7 @@ with FanFicFare:
 * ``#relationships`` ← cleaned AO3 Relationship tags
 * ``#collections`` ← rule collection names
 * ``#originaltags`` ← pre-clean AO3 tags (warnings, ships, characters, freeforms)
+* ``#summary`` ← AO3 work summary (when the column exists; Comments is also read)
 * ``#wordcount`` ← AO3 word count (when present)
 * Tags ← remaining cleaned tags + ``Completed``
 * Series / series index ← first AO3 series membership (Calibre's built-in Series)
@@ -511,6 +512,10 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
     words = (record.get('metadata') or {}).get('words')
     wordcount = words if isinstance(words, int) else None
 
+    from ao3kit.covers import resolve_record_summary
+
+    summary = resolve_record_summary(record)
+
     work_id = canonical_work_id(record)
     url = canonical_work_url(record)
     identifiers: dict[str, str] = {}
@@ -541,6 +546,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         'tags': tags,
         'original_tags': original_tag_names(record),
         'wordcount': wordcount,
+        'summary': summary or None,
         'work_id': work_id,
         'url': url,
         'identifiers': identifiers,
@@ -619,6 +625,7 @@ def record_from_library_fields(
     characters: list[str] | None = None,
     wordcount: int | None = None,
     comments: str | None = None,
+    summary: str | None = None,
     raw_record: dict[str, Any] | None = None,
     is_complete: bool | None = None,
     series_name: str | None = None,
@@ -630,13 +637,16 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
-    from ao3kit.covers import summary_text_from_comments
+    from ao3kit.covers import resolve_record_summary
 
     def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
-        if not str(record.get('summary') or '').strip() and comments:
-            summary = summary_text_from_comments(comments)
-            if summary:
-                record['summary'] = summary
+        text = resolve_record_summary(
+            record,
+            summary_column=summary,
+            comments=comments,
+        )
+        if text:
+            record['summary'] = text
         return record
 
     ids = dict(identifiers or {})

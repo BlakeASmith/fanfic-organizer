@@ -47,7 +47,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 
 **Library layout**
 
-On first import into an empty library (or via plugin settings), creates and fills fanfic columns: **Fandom**, **Relationships**, **Collections**, **Original Tags**, **word count**, plus Calibre’s built-in **Series**. Identifiers store the work URL, AO3 work id, and first series id.
+On first import into an empty library (or via plugin settings), creates and fills fanfic columns: **Fandom**, **Relationships**, **Collections**, **Original Tags**, **Summary**, **word count**, plus Calibre’s built-in **Series**. Identifiers store the work URL, AO3 work id, and first series id. AO3 summaries are also written to Calibre **Comments** when Comments is empty (FanFicFare compatibility).
 
 ## Install
 
