@@ -17,6 +17,28 @@ from ao3kit.tags.collections import MATCH_KINDS as COLLECTION_MATCH_KINDS
 from ao3kit.tags.mappings import MATCH_KINDS
 
 
+def _collection_conditions_from_args(args: argparse.Namespace):
+    from ao3kit.tags.collections import CollectionCondition
+
+    raw_json = str(getattr(args, "conditions_json", "") or "").strip()
+    if raw_json:
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid --conditions-json: {exc}") from exc
+        if not isinstance(payload, list) or not payload:
+            raise ValueError("--conditions-json must be a non-empty JSON array")
+        return [CollectionCondition.from_dict(item) for item in payload if isinstance(item, dict)]
+
+    whens = list(getattr(args, "when", None) or [])
+    if not whens:
+        return None
+    casefold = not bool(getattr(args, "case_sensitive", False))
+    return [
+        CollectionCondition.from_when_spec(spec, casefold=casefold) for spec in whens
+    ]
+
+
 def _print(data: object) -> None:
     if isinstance(data, (dict, list)):
         json.dump(data, sys.stdout, indent=2, ensure_ascii=False, default=str)
@@ -168,38 +190,60 @@ def main(argv: list[str] | None = None) -> int:
     coll_sub.add_parser("list", help="List collection rules")
     coll_sub.add_parser("path", help="Print collections.yaml path")
 
+    def _add_collection_rule_flags(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--match",
+            default="mentions",
+            choices=list(COLLECTION_MATCH_KINDS),
+            help="Legacy single-condition match (ignored when --when is set)",
+        )
+        p.add_argument(
+            "--values",
+            default="",
+            help="Legacy match text (required unless --when is set)",
+        )
+        p.add_argument(
+            "--when",
+            action="append",
+            default=[],
+            metavar="field:op:value",
+            help=(
+                "AND condition, e.g. fandom:contains:Harry Potter or words:gte:200000 "
+                "(repeatable)"
+            ),
+        )
+        p.add_argument(
+            "--case-sensitive",
+            action="store_true",
+            help="Make --when text conditions case-sensitive",
+        )
+        p.add_argument(
+            "--conditions-json",
+            default="",
+            help="JSON array of condition objects (plugin / advanced; overrides --when)",
+        )
+        p.add_argument(
+            "--collection",
+            action="append",
+            default=[],
+            help="Collection name (repeatable; default: the match text)",
+        )
+        p.add_argument(
+            "--mode",
+            default="include",
+            choices=["include", "exclude"],
+        )
+        p.add_argument("--pin", action="store_true")
+        p.add_argument("--description", default="")
+        p.add_argument("--disabled", action="store_true")
+
     coll_add = coll_sub.add_parser("add", help="Add a collection rule")
-    coll_add.add_argument(
-        "--match",
-        default="mentions",
-        choices=list(COLLECTION_MATCH_KINDS),
-    )
-    coll_add.add_argument("--values", required=True)
-    coll_add.add_argument(
-        "--collection",
-        action="append",
-        default=[],
-        help="Collection name (repeatable; default: the match text)",
-    )
-    coll_add.add_argument(
-        "--mode",
-        default="include",
-        choices=["include", "exclude"],
-    )
+    _add_collection_rule_flags(coll_add)
     coll_add.add_argument("--id", default="")
-    coll_add.add_argument("--pin", action="store_true")
-    coll_add.add_argument("--description", default="")
-    coll_add.add_argument("--disabled", action="store_true")
 
     coll_set = coll_sub.add_parser("set", help="Update a collection rule")
     coll_set.add_argument("id")
-    coll_set.add_argument("--match", default="mentions", choices=list(COLLECTION_MATCH_KINDS))
-    coll_set.add_argument("--values", required=True)
-    coll_set.add_argument("--collection", action="append", default=[])
-    coll_set.add_argument("--mode", default="include", choices=["include", "exclude"])
-    coll_set.add_argument("--pin", action="store_true")
-    coll_set.add_argument("--description", default="")
-    coll_set.add_argument("--disabled", action="store_true")
+    _add_collection_rule_flags(coll_set)
 
     coll_rm = coll_sub.add_parser("remove", help="Delete a collection rule by id")
     coll_rm.add_argument("id")
@@ -551,9 +595,12 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "list":
             _print([rule.to_api_dict() for rule in cfg.load_collection_rules()])
             return 0
-        if cmd == "add":
+        if cmd in {"add", "set"}:
             existing = cfg.load_collection_rules()
             try:
+                conditions = _collection_conditions_from_args(args)
+                if not conditions and not str(getattr(args, "values", "") or "").strip():
+                    raise ValueError("Provide --values or at least one --when")
                 rule = collection_rule_from_form(
                     match=args.match,
                     values=args.values,
@@ -563,36 +610,24 @@ def main(argv: list[str] | None = None) -> int:
                     pin=args.pin,
                     rule_id=args.id,
                     description=args.description,
-                    existing_ids=[item.id for item in existing],
+                    existing_ids=[item.id for item in existing] if cmd == "add" else [],
+                    conditions=conditions,
                 )
             except ValueError as exc:
                 print(str(exc), file=sys.stderr)
                 return 1
-            if any(item.id == rule.id for item in existing):
-                print(f"Collection rule already exists: {rule.id}", file=sys.stderr)
-                return 1
-            existing.append(rule)
-            cfg.save_collection_rules(existing)
-            _print(rule.to_api_dict())
-            return 0
-        if cmd == "set":
-            existing = cfg.load_collection_rules()
-            try:
-                rule = collection_rule_from_form(
-                    match=args.match,
-                    values=args.values,
-                    collections=args.collection,
-                    mode=args.mode,
-                    enabled=not args.disabled,
-                    pin=args.pin,
-                    rule_id=args.id,
-                    description=args.description,
-                    existing_ids=[],
-                )
-                cfg.save_collection_rules(replace_collection_rule(existing, rule))
-            except (ValueError, KeyError) as exc:
-                print(str(exc), file=sys.stderr)
-                return 1
+            if cmd == "add":
+                if any(item.id == rule.id for item in existing):
+                    print(f"Collection rule already exists: {rule.id}", file=sys.stderr)
+                    return 1
+                existing.append(rule)
+                cfg.save_collection_rules(existing)
+            else:
+                try:
+                    cfg.save_collection_rules(replace_collection_rule(existing, rule))
+                except KeyError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 1
             _print(rule.to_api_dict())
             return 0
         try:

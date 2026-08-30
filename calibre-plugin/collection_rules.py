@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Calibre-free helpers for collection membership rules.
 
-Keep MATCH_CHOICES / MODE_CHOICES in sync with ``ao3kit.tags.collections``.
+Keep FIELD/OP/MATCH/MODE choices in sync with ``ao3kit.tags.collections``.
 """
 
 from __future__ import annotations
@@ -21,8 +21,170 @@ MODE_CHOICES = [
     ('include', 'Put matching books in'),
     ('exclude', 'Never put matching books in'),
 ]
+FIELD_CHOICES = [
+    ('tag', 'tag'),
+    ('fandom', 'fandom'),
+    ('relationship', 'relationship'),
+    ('character', 'character'),
+    ('author', 'author'),
+    ('title', 'title'),
+    ('summary', 'summary'),
+    ('series', 'series'),
+    ('words', 'word count'),
+    ('complete', 'complete'),
+    ('work_id', 'AO3 work id'),
+    ('calibre_uuid', 'Calibre book UUID'),
+]
+OP_CHOICES = [
+    ('contains', 'contains'),
+    ('is', 'is exactly'),
+    ('wildcard', 'matches wildcard'),
+    ('regex', 'matches regex'),
+    ('eq', '='),
+    ('gt', '>'),
+    ('gte', '≥'),
+    ('lt', '<'),
+    ('lte', '≤'),
+]
+TEXT_OPS = {'contains', 'is', 'wildcard', 'regex'}
+NUMERIC_OPS = {'eq', 'gt', 'gte', 'lt', 'lte'}
+TEXT_FIELDS = {
+    'tag',
+    'fandom',
+    'relationship',
+    'character',
+    'author',
+    'title',
+    'summary',
+    'series',
+    'work_id',
+    'calibre_uuid',
+}
+LEGACY_MATCH_TO_CONDITION = {
+    'mentions': ('tag', 'contains'),
+    'is_ci': ('tag', 'is'),
+    'fandom_mentions': ('fandom', 'contains'),
+    'author_ci': ('author', 'is'),
+    'work_id': ('work_id', 'is'),
+    'calibre_uuid': ('calibre_uuid', 'is'),
+}
 
 _MATCH_LABELS = dict(MATCH_CHOICES)
+_FIELD_LABELS = dict(FIELD_CHOICES)
+_OP_LABELS = dict(OP_CHOICES)
+
+
+def ops_for_field(field_name: str) -> list[tuple[str, str]]:
+    if field_name == 'words':
+        return [(key, label) for key, label in OP_CHOICES if key in NUMERIC_OPS]
+    if field_name == 'complete':
+        return [('is', 'is')]
+    return [(key, label) for key, label in OP_CHOICES if key in TEXT_OPS]
+
+
+def condition_from_legacy(match: str, values: Any) -> dict[str, Any]:
+    field_name, op = LEGACY_MATCH_TO_CONDITION.get(
+        str(match or 'mentions'), ('tag', 'contains')
+    )
+    if isinstance(values, str):
+        parsed = _split_csv(values)
+    else:
+        parsed = [str(item).strip() for item in (values or []) if str(item).strip()]
+    return {
+        'field': field_name,
+        'op': op,
+        'values': parsed,
+        'casefold': True,
+    }
+
+
+def conditions_from_row(row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    row = row or {}
+    raw = row.get('all')
+    if isinstance(raw, list) and raw:
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            out.append(normalize_condition(item))
+        if out:
+            return out
+    return [condition_from_legacy(str(row.get('match') or 'mentions'), row.get('values'))]
+
+
+def normalize_condition(item: dict[str, Any]) -> dict[str, Any]:
+    field_name = str(item.get('field') or 'tag').strip() or 'tag'
+    op = str(item.get('op') or 'contains').strip() or 'contains'
+    casefold = item.get('casefold', True)
+    if isinstance(casefold, str):
+        casefold = casefold.strip().casefold() not in {'0', 'false', 'no'}
+    values: list[str] = []
+    if 'values' in item and item.get('values') is not None:
+        raw_values = item.get('values')
+        if isinstance(raw_values, str):
+            values = _split_csv(raw_values)
+        else:
+            values = [str(v).strip() for v in raw_values if str(v).strip()]
+    elif item.get('value') is not None:
+        raw = item.get('value')
+        if isinstance(raw, bool):
+            values = ['true' if raw else 'false']
+        else:
+            text = str(raw).strip()
+            if text:
+                values = [text]
+    return {
+        'field': field_name,
+        'op': op,
+        'values': values,
+        'value': item.get('value'),
+        'casefold': bool(casefold),
+    }
+
+
+def format_condition(item: dict[str, Any]) -> str:
+    cond = normalize_condition(item)
+    field_label = _FIELD_LABELS.get(cond['field'], cond['field'])
+    op_label = _OP_LABELS.get(cond['op'], cond['op'])
+    if cond['field'] == 'words':
+        number = cond.get('value')
+        if number is None and cond['values']:
+            number = cond['values'][0]
+        return f'{field_label} {op_label} {number}'
+    if cond['field'] == 'complete':
+        flag = None
+        raw = cond.get('value')
+        if isinstance(raw, bool):
+            flag = raw
+        elif cond['values']:
+            flag = cond['values'][0].casefold() in {'1', 'true', 'yes', 'complete', 't'}
+        return 'complete' if flag else 'incomplete'
+    joined = ', '.join(cond['values'])
+    suffix = '' if cond.get('casefold', True) else ' (case-sensitive)'
+    return f'{field_label} {op_label} “{joined}”{suffix}'
+
+
+def when_spec(item: dict[str, Any]) -> str:
+    """Encode one condition as ``field:op:value`` for CLI ``--when``."""
+    cond = normalize_condition(item)
+    field_name = cond['field']
+    op = cond['op']
+    if field_name == 'words':
+        number = cond.get('value')
+        if number is None and cond['values']:
+            number = cond['values'][0]
+        return f'{field_name}:{op}:{number}'
+    if field_name == 'complete':
+        raw = cond.get('value')
+        if isinstance(raw, bool):
+            flag = raw
+        elif cond['values']:
+            flag = cond['values'][0].casefold() in {'1', 'true', 'yes', 'complete', 't'}
+        else:
+            flag = True
+        return f'{field_name}:{op}:{"true" if flag else "false"}'
+    value = ', '.join(cond['values'])
+    return f'{field_name}:{op}:{value}'
 
 
 def build_collections_list_argv() -> list[str]:
@@ -31,28 +193,21 @@ def build_collections_list_argv() -> list[str]:
 
 def build_collections_add_argv(
     *,
-    match: str,
-    values: str,
+    match: str = 'mentions',
+    values: str = '',
     collections: str,
     mode: str = 'include',
     pin: bool = False,
     enabled: bool = True,
     rule_id: str = '',
     description: str = '',
+    conditions: list[dict[str, Any]] | None = None,
+    case_sensitive: bool = False,
 ) -> list[str]:
-    argv = [
-        'config',
-        'collections',
-        'add',
-        '--match',
-        match,
-        '--values',
-        values,
-        '--mode',
-        mode,
-    ]
+    argv = ['config', 'collections', 'add', '--mode', mode]
     for name in _split_csv(collections):
         argv.extend(['--collection', name])
+    argv.extend(_condition_argv(match, values, conditions, case_sensitive))
     if pin:
         argv.append('--pin')
     if description.strip():
@@ -67,34 +222,43 @@ def build_collections_add_argv(
 def build_collections_set_argv(
     rule_id: str,
     *,
-    match: str,
-    values: str,
+    match: str = 'mentions',
+    values: str = '',
     collections: str,
     mode: str = 'include',
     pin: bool = False,
     enabled: bool = True,
     description: str = '',
+    conditions: list[dict[str, Any]] | None = None,
+    case_sensitive: bool = False,
 ) -> list[str]:
-    argv = [
-        'config',
-        'collections',
-        'set',
-        rule_id,
-        '--match',
-        match,
-        '--values',
-        values,
-        '--mode',
-        mode,
-    ]
+    argv = ['config', 'collections', 'set', rule_id, '--mode', mode]
     for name in _split_csv(collections):
         argv.extend(['--collection', name])
+    argv.extend(_condition_argv(match, values, conditions, case_sensitive))
     if pin:
         argv.append('--pin')
     if description.strip():
         argv.extend(['--description', description.strip()])
     if not enabled:
         argv.append('--disabled')
+    return argv
+
+
+def _condition_argv(
+    match: str,
+    values: str,
+    conditions: list[dict[str, Any]] | None,
+    case_sensitive: bool,
+) -> list[str]:
+    argv: list[str] = []
+    if conditions:
+        payload = [normalize_condition(item) for item in conditions]
+        argv.extend(['--conditions-json', json.dumps(payload, ensure_ascii=False)])
+        return argv
+    argv.extend(['--match', match, '--values', values])
+    if case_sensitive:
+        argv.append('--case-sensitive')
     return argv
 
 
@@ -298,12 +462,17 @@ def format_membership_why(item: dict[str, Any]) -> str:
 def format_when(row: dict[str, Any]) -> str:
     if row.get('when'):
         return str(row.get('when'))
+    if row.get('pin'):
+        values = row.get('values') or []
+        joined = values if isinstance(values, str) else ', '.join(str(item) for item in values)
+        desc = str(row.get('description') or joined)
+        return f'always this work ({desc})'
+    conditions = conditions_from_row(row)
+    if conditions:
+        return ' AND '.join(format_condition(item) for item in conditions)
     match = _MATCH_LABELS.get(str(row.get('match') or 'mentions'), 'tag contains')
     values = row.get('values') or []
     joined = values if isinstance(values, str) else ', '.join(str(item) for item in values)
-    if row.get('pin'):
-        desc = str(row.get('description') or joined)
-        return f'always this work ({desc})'
     return f'{match} “{joined}”'
 
 
