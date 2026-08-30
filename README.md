@@ -61,7 +61,7 @@ Linux installs Calibre without `sudo` into `~/.local/opt/calibre`. macOS needs [
 
 If Calibre is already open, quit it completely and reopen so the plugin loads.
 
-**Manual install:** download the latest **standard** release from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases) (`FanFicOrganizer-X.Y.Z.zip`). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`. GitHub **pre-releases** are automated preview builds for testers; skip them unless you want an unreleased main snapshot.
+**Manual install:** download the latest **standard** release from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases) (`FanFicOrganizer-X.Y.Z.zip`). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`. GitHub **pre-releases** are automated preview (main) and PR test builds; skip them unless you want an unreleased snapshot.
 
 1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose the zip.
 2. Restart Calibre.
