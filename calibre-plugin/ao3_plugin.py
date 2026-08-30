@@ -10,7 +10,6 @@ from calibre.gui2.actions import InterfaceAction
 from calibre_plugins.fanfic_organizer.dialogs import (
     ImportJsonlDialog,
     ProcessLibraryDialog,
-    ScrapeSearchDialog,
     SimilarSearchDialog,
     TagMappingsDialog,
     TagPurgeDialog,
@@ -311,7 +310,16 @@ class FanficOrganizerPlugin(InterfaceAction):
 
     def _populate_global_actions(self):
         self.menu.addSeparator()
-        self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
+        from calibre_plugins.fanfic_organizer.sources import all_sources
+
+        for source in all_sources():
+            label = getattr(source, 'menu_label', '') or ''
+            if not label:
+                continue
+            self.menu.addAction(
+                label,
+                lambda checked=False, src=source: self.run_source_import(src),
+            )
         self.menu.addAction(
             'Process library...', self.show_process_library_dialog
         )
@@ -543,26 +551,20 @@ class FanficOrganizerPlugin(InterfaceAction):
         self.jobs().start_prepared(job_dir)
 
     def show_scrape_dialog(self):
-        dialog = ScrapeSearchDialog(self.gui)
-        if not dialog.exec_():
+        from calibre_plugins.fanfic_organizer.sources import get_source
+
+        ao3 = get_source('ao3')
+        if ao3 is not None:
+            self.run_source_import(ao3)
+
+    def run_source_import(self, source):
+        values = source.run_import_dialog(self.gui)
+        if not values:
             return
-
-        values = dialog.values()
-        prefs['last_scrape_url'] = values['url']
-        prefs['last_tag_id'] = values['tag_id']
-        prefs['last_query'] = values['query']
-        prefs['last_max_results'] = values['max_results'] or '25'
-        prefs['download_epubs'] = values['download_epubs']
-        prefs['simplify_tags'] = values['simplify_tags']
-        prefs['drop_unmarked'] = values['drop_unmarked']
-        prefs['update_existing'] = values['update_existing']
-
-        from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
-
-        job_dir = self.jobs().prepare_job_dir('scrape')
+        job_dir = self.jobs().prepare_job_dir(getattr(source, 'job_kind', source.id))
         if job_dir is None:
             return
-        plan_scrape(
+        source.plan_job(
             merge_plugin_settings(values, plugin_runtime_settings()),
             job_dir,
         )
