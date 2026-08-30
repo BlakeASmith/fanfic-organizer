@@ -20,6 +20,37 @@ from calibre_plugins.fanfic_organizer.columns import (
 from calibre_plugins.fanfic_organizer.jsonl_loader import resolve_epub_path
 
 
+def _pubdate_for_calibre(value: Any):
+    """Convert a calendar date (or ISO string) to Calibre's pubdate datetime."""
+    if value is None or value == '':
+        return None
+    try:
+        from calibre.utils.date import parse_only_date
+    except ImportError:
+        parse_only_date = None
+    if parse_only_date is not None:
+        if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+            return parse_only_date(
+                f'{int(value.year):04d}-{int(value.month):02d}-{int(value.day):02d}'
+            )
+        return parse_only_date(str(value))
+    from datetime import datetime, timezone
+
+    if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+        return datetime(
+            int(value.year),
+            int(value.month),
+            int(value.day),
+            tzinfo=timezone.utc,
+        )
+    text = str(value).strip()
+    try:
+        year, month, day = (int(part) for part in text[:10].split('-'))
+    except (TypeError, ValueError):
+        return None
+    return datetime(year, month, day, tzinfo=timezone.utc)
+
+
 def build_metadata(
     record: dict[str, Any],
     *,
@@ -42,6 +73,14 @@ def build_metadata(
         mi.series = fields['series']
         index = fields.get('series_index')
         mi.series_index = float(index) if index is not None else 1.0
+
+    publisher = str(fields.get('publisher') or '').strip()
+    if publisher:
+        mi.publisher = publisher
+
+    pubdate = _pubdate_for_calibre(fields.get('published'))
+    if pubdate is not None:
+        mi.pubdate = pubdate
 
     present = layout or {}
     mi.tags = tags_for_calibre_library(
