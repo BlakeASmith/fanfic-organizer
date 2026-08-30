@@ -235,6 +235,157 @@ def test_form_infers_collection_from_match_text():
     assert rule.mode == "include"
 
 
+def test_and_fandom_and_word_count():
+    from ao3kit.tags.collections import CollectionCondition
+
+    rule = CollectionRule(
+        id="big-hp",
+        collections=["Big Harry Potter"],
+        all=[
+            CollectionCondition(field="fandom", op="contains", values=["Harry Potter"]),
+            CollectionCondition(field="words", op="gte", value=200_000),
+        ],
+    )
+    hit = {
+        "fandoms": ["Harry Potter - J. K. Rowling"],
+        "metadata": {"words": 250_000},
+    }
+    miss_words = {
+        "fandoms": ["Harry Potter - J. K. Rowling"],
+        "metadata": {"words": 1_000},
+    }
+    miss_fandom = {"fandoms": ["Marvel"], "metadata": {"words": 250_000}}
+    assert rule.matches(hit)
+    assert not rule.matches(miss_words)
+    assert not rule.matches(miss_fandom)
+    assert "AND" in rule.when_display()
+
+
+def test_title_wildcard_regex_and_casefold():
+    from ao3kit.tags.collections import CollectionCondition
+
+    wildcard = CollectionRule(
+        id="spider",
+        collections=["Spidey"],
+        all=[CollectionCondition(field="title", op="wildcard", values=["Spider*Man"])],
+    )
+    assert wildcard.matches({"title": "Spider-Man Returns"})
+    assert not wildcard.matches({"title": "Batman"})
+
+    regex = CollectionRule(
+        id="re",
+        collections=["X"],
+        all=[CollectionCondition(field="summary", op="regex", values=[r"time\s+travel"])],
+    )
+    assert regex.matches({"summary": "A story about time travel and tea."})
+    assert not regex.matches({"summary": "No spoilers here."})
+
+    sensitive = CollectionRule(
+        id="case",
+        collections=["X"],
+        all=[
+            CollectionCondition(
+                field="title", op="contains", values=["Foo"], casefold=False
+            )
+        ],
+    )
+    assert sensitive.matches({"title": "Foo bar"})
+    assert not sensitive.matches({"title": "foo bar"})
+
+    bad = CollectionRule(
+        id="bad",
+        collections=["X"],
+        all=[CollectionCondition(field="title", op="regex", values=["("])],
+    )
+    assert not bad.matches({"title": "anything"})
+
+
+def test_relationship_character_series_complete():
+    from ao3kit.tags.collections import CollectionCondition
+
+    ship = CollectionRule(
+        id="ship",
+        collections=["Drarry"],
+        all=[
+            CollectionCondition(
+                field="relationship", op="contains", values=["Harry Potter/Draco"]
+            )
+        ],
+    )
+    assert ship.matches({"relationships": ["Harry Potter/Draco Malfoy"]})
+
+    character = CollectionRule(
+        id="char",
+        collections=["River"],
+        all=[CollectionCondition(field="character", op="is", values=["River Song"])],
+    )
+    assert character.matches({"characters": ["River Song"]})
+
+    series = CollectionRule(
+        id="ser",
+        collections=["Series A"],
+        all=[CollectionCondition(field="series", op="contains", values=["Chronicles"])],
+    )
+    assert series.matches({"series": [{"name": "The Chronicles", "series_id": "1"}]})
+
+    complete = CollectionRule(
+        id="done",
+        collections=["Finished"],
+        all=[CollectionCondition(field="complete", op="is", value=True)],
+    )
+    assert complete.matches({"metadata": {"chapters": {"is_complete": True}}})
+    assert not complete.matches({"metadata": {"chapters": {"is_complete": False}}})
+
+
+def test_compound_yaml_roundtrip(tmp_path: Path):
+    from ao3kit.tags.collections import CollectionCondition
+
+    path = tmp_path / "collections.yaml"
+    rule = CollectionRule(
+        id="big-hp",
+        collections=["Big Harry Potter"],
+        all=[
+            CollectionCondition(field="fandom", op="contains", values=["Harry Potter"]),
+            CollectionCondition(field="words", op="gte", value=200_000),
+        ],
+    )
+    save_collection_rules(path, [rule])
+    loaded = load_collection_rules(path)
+    assert len(loaded) == 1
+    assert len(loaded[0].all) == 2
+    assert loaded[0].matches(
+        {"fandoms": ["Harry Potter"], "metadata": {"words": 200_000}}
+    )
+
+
+def test_config_cli_when_conditions(tmp_path: Path):
+    from ao3kit.config_cli import main
+
+    home = str(tmp_path / "home")
+    assert (
+        main(
+            [
+                "--home",
+                home,
+                "collections",
+                "add",
+                "--when",
+                "fandom:contains:Harry Potter",
+                "--when",
+                "words:gte:200000",
+                "--collection",
+                "Big Harry Potter",
+            ]
+        )
+        == 0
+    )
+    cfg = load_user_config(home=tmp_path / "home")
+    rules = cfg.load_collection_rules()
+    assert len(rules) == 1
+    assert len(rules[0].all) == 2
+    assert rules[0].collections == ["Big Harry Potter"]
+
+
 def test_collection_yaml_roundtrip(tmp_path: Path):
     path = tmp_path / "collections.yaml"
     rows = [

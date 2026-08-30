@@ -34,7 +34,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 
 **Tags and collections**
 
-- Collection rules (tag contains / is exactly, fandom, author, this work) and tag keep/rename/drop
+- Collection rules (AND conditions on tags/fandoms/ships/title/summary/word count/…) and tag keep/rename/drop
 - **Tag graph** of works and tags in the open library (group by fandom, ships, or crossovers); find similar from a node
 - **Tag purge** of Tags-column values that appear on at most *N* works (library-wide)
 - Background **tag cache** warmer so synonym and metatag lookups do not block search
