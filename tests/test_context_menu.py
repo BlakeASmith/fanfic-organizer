@@ -58,7 +58,12 @@ def test_layouts_needing_plugin_only_missing_keys():
 def test_menu_action_labels_context_is_selection_only():
     cm = load_context_menu()
     labels = cm.menu_action_labels(for_context=True)
-    assert labels == cm.SELECTION_ACTION_LABELS
+    assert labels == tuple(
+        label
+        for label in cm.SELECTION_ACTION_LABELS
+        if label != cm.OPEN_IN_AO3_LABEL
+    )
+    assert cm.OPEN_IN_AO3_LABEL not in labels
     assert "Complete selected" in labels
     assert "Fill from AO3" in labels
     assert "Search similar..." in labels
@@ -68,10 +73,33 @@ def test_menu_action_labels_context_is_selection_only():
     assert "Process library..." not in labels
 
 
-def test_menu_action_labels_toolbar_includes_global():
+def test_menu_action_labels_toolbar_includes_open_in_ao3():
     cm = load_context_menu()
     labels = cm.menu_action_labels(for_context=False)
+    assert labels[0] == cm.OPEN_IN_AO3_LABEL
     assert labels == cm.SELECTION_ACTION_LABELS + cm.GLOBAL_ACTION_LABELS
     assert "Search AO3 and import..." in labels
     assert "Tags and collections" in labels
     assert "Plugin settings..." in labels
+
+
+def test_insert_before_plugin_action_places_open_in_ao3():
+    cm = load_context_menu()
+    ordered = cm.insert_before_plugin_action(
+        ["Edit Metadata", None, "View", "Fanfic Organizer", "Remove books"],
+        "Fanfic Organizer",
+    )
+    assert ordered == [
+        "Edit Metadata",
+        None,
+        "View",
+        "Open in AO3",
+        "Fanfic Organizer",
+        "Remove books",
+    ]
+
+
+def test_insert_before_plugin_action_appends_when_missing():
+    cm = load_context_menu()
+    ordered = cm.insert_before_plugin_action(["Edit Metadata", "View"], "Fanfic Organizer")
+    assert ordered[-1] == "Open in AO3"

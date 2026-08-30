@@ -100,6 +100,21 @@ def work_url(work_id: Any) -> str | None:
     return f'https://archiveofourown.org/works/{text}'
 
 
+def ao3_work_url_from_book_fields(
+    identifiers: dict[str, Any] | None = None,
+    comments: str | None = None,
+) -> str:
+    """Canonical AO3 works URL from Calibre identifiers and/or comments."""
+    ids = identifiers or {}
+    url = str(ids.get('url') or '').strip()
+    work_id = str(ids.get('ao3') or '').strip() or (work_id_from_url(url) or '')
+    if not work_id:
+        work_id = work_id_from_url(comments) or ''
+    if work_id:
+        return work_url(work_id) or ''
+    return ''
+
+
 def canonical_work_id(record: dict[str, Any]) -> str:
     work_id = str(record.get('work_id') or '').strip()
     if work_id:

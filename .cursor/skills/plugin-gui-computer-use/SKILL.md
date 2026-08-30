@@ -90,6 +90,7 @@ Series is Calibre’s built-in field (AO3 series name + index). Publisher is `Ar
 
 **Fanfic Organizer** (teal book / F):
 
+- Open in AO3 *(needs a selection; also top-level on library right-click)*
 - Search AO3 and import...
 - Search similar... *(needs a selection)*
 - Import JSONL or zip...

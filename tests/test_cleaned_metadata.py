@@ -138,6 +138,29 @@ def test_work_id_from_url_and_book_match():
     assert not mod.book_matches_work({"url": "https://example.com/1"}, work_id="9")
 
 
+def test_ao3_work_url_from_book_fields():
+    mod = load_cleaned()
+    assert (
+        mod.ao3_work_url_from_book_fields({"ao3": "79168296"})
+        == "https://archiveofourown.org/works/79168296"
+    )
+    assert (
+        mod.ao3_work_url_from_book_fields(
+            {"url": "https://www.archiveofourown.org/works/9/chapters/1"}
+        )
+        == "https://archiveofourown.org/works/9"
+    )
+    assert (
+        mod.ao3_work_url_from_book_fields(
+            {},
+            comments='See <a href="https://archiveofourown.org/works/42">AO3</a>',
+        )
+        == "https://archiveofourown.org/works/42"
+    )
+    assert mod.ao3_work_url_from_book_fields({"isbn": "x"}) == ""
+    assert mod.ao3_work_url_from_book_fields(None, None) == ""
+
+
 def test_existing_book_id_from_identifiers_matches_ao3_and_url():
     mod = load_cleaned()
     books = [
