@@ -12,6 +12,33 @@ CONTEXT_MENU_LAYOUT_KEYS = (
     'action-layout-context-menu-cover-browser',
 )
 
+# Top-level labels for actions that need a book selection.
+SELECTION_ACTION_LABELS = (
+    'Complete selected',
+    'Fill from AO3',
+    'Download EPUB',
+    'Generate covers',
+    'Import rest of series',
+    'Fill series',
+    'Simplify tags, fandoms & relationships',
+    'Edit collections...',
+    'Recompute collections',
+    'Add to a collection...',
+    'Search similar...',
+)
+
+# Top-level labels / submenus that are library-wide (toolbar only).
+GLOBAL_ACTION_LABELS = (
+    'Search AO3 and import...',
+    'Process library...',
+    'Running jobs...',
+    'Tags and collections',
+    'Import',
+    'Check for updates...',
+    'Deploy to KOReader…',
+    'Plugin settings...',
+)
+
 
 def ensure_name_in_layout(
     layout: Sequence[str | None] | None,
@@ -38,3 +65,10 @@ def layouts_needing_plugin(
         if changed:
             updates[key] = new_layout
     return updates
+
+
+def menu_action_labels(*, for_context: bool) -> tuple[str, ...]:
+    """Labels shown on the plugin menu for toolbar vs library right-click."""
+    if for_context:
+        return SELECTION_ACTION_LABELS
+    return SELECTION_ACTION_LABELS + GLOBAL_ACTION_LABELS
