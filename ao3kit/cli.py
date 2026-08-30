@@ -11,6 +11,7 @@ Usage:
   python -m ao3kit login    # test AO3 username/password
   python -m ao3kit rate     # limiter snapshot + AO3 request log
   python -m ao3kit library  # estimate unmatched tags / missing EPUBs from JSONL
+  python -m ao3kit wikipedia  # search/fetch Wikipedia articles to JSONL
 """
 
 from __future__ import annotations
@@ -31,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "scrape",
         help="Scrape AO3 search results to JSONL (optionally download EPUBs)",
+    )
+    sub.add_parser(
+        "wikipedia",
+        help="Search or fetch Wikipedia articles to JSONL (source=wikipedia)",
     )
     sub.add_parser(
         "tags",
@@ -79,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.scrape import main as scrape_main
 
         return scrape_main(rest)
+
+    if command == "wikipedia":
+        from ao3kit.sources.wikipedia import main as wikipedia_main
+
+        return wikipedia_main(rest)
 
     if command == "tags":
         from ao3kit.tags.metadata import main as tags_main

@@ -686,6 +686,7 @@ class ScrapeSearchDialog(QDialog):
         }
 
 
+
 def _checked_flag():
     try:
         return Qt.ItemIsUserCheckable
