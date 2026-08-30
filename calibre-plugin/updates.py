@@ -313,13 +313,93 @@ def latest_stable_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None
     return latest_release(stable)
 
 
-def summarize_release_notes(body: str, *, limit: int = 4000) -> str:
+_PRE_1_0_SECTION_RE = re.compile(
+    r"(?ms)^###\s+Pre-1\.0\s*\n.*?(?=^##\s|\Z)"
+)
+
+
+def strip_release_notes_boilerplate(body: str) -> str:
+    """Drop the repeated Pre-1.0 disclaimer so the useful changelog stays visible."""
     text = (body or "").strip()
+    if not text:
+        return ""
+    cleaned = _PRE_1_0_SECTION_RE.sub("", text).strip()
+    # Collapse leftover blank runs after stripping the disclaimer.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned
+
+
+def summarize_release_notes(body: str, *, limit: int = 8000) -> str:
+    text = strip_release_notes_boilerplate(body)
     if not text:
         return "No release notes."
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
+
+
+def format_release_changelog_entry(release: ReleaseInfo) -> str:
+    """One release's notes with a version heading for the updater pane."""
+    published = format_published_at(release.published_at)
+    heading = release.version_text
+    if release.is_preview:
+        heading += " (preview)"
+    if published:
+        heading += f" — {published}"
+    notes = summarize_release_notes(release.body)
+    if notes == "No release notes.":
+        return f"{heading}\n\nNo release notes."
+    return f"{heading}\n\n{notes}"
+
+
+def releases_between(
+    releases: Iterable[ReleaseInfo],
+    *,
+    older: ParsedVersion,
+    newer: ParsedVersion,
+) -> list[ReleaseInfo]:
+    """Releases strictly after ``older`` and at or before ``newer``, newest first."""
+    items = [
+        item
+        for item in releases
+        if compare_parsed_versions(item.parsed, older) > 0
+        and compare_parsed_versions(item.parsed, newer) <= 0
+    ]
+    items.sort(key=lambda item: version_sort_key(item.parsed), reverse=True)
+    return items
+
+
+def changelog_for_selection(
+    releases: Iterable[ReleaseInfo],
+    selected: ReleaseInfo,
+    *,
+    installed: ParsedVersion | None = None,
+) -> str:
+    """Changelog text for the updater when ``selected`` is chosen.
+
+    When upgrading past the installed build, include every listed release
+    between the two so the pane answers “what does this update do?”.
+    Downgrades and same-version picks show only the selected release.
+    """
+    current = installed if installed is not None else installed_version_parsed()
+    cmp = compare_parsed_versions(selected.parsed, current)
+    if cmp > 0:
+        between = releases_between(
+            releases, older=current, newer=selected.parsed
+        )
+        if len(between) > 1:
+            header = (
+                f"What's new since {current.text()} "
+                f"({len(between)} releases up to {selected.version_text}):"
+            )
+            parts = [format_release_changelog_entry(item) for item in between]
+            return summarize_release_notes(
+                header + "\n\n" + "\n\n———\n\n".join(parts),
+                limit=16000,
+            )
+        if between:
+            return format_release_changelog_entry(between[0])
+    return format_release_changelog_entry(selected)
 
 
 def download_release(url: str, dest: Path, *, timeout: float = 120.0) -> Path:
