@@ -17,10 +17,11 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Publish a GitHub **PR pre-release** (`X.Y.Z-pr.<n>+<sha>`) for each pull-request plugin build, with a download comment on the PR; **Check for updates…** lists those builds when **Include preview / PR pre-releases** is checked.
 - Add selected-book actions to the Calibre library right-click menu (Complete, Fill from AO3, Download EPUB, covers, series, simplify, collections, Search similar); the right-click submenu shows only those selection actions (Search AO3, jobs, tags, settings stay on the toolbar).
 - Reorder the plugin menu (selected-book actions first) and move **Import JSONL or zip** under an **Import** submenu.
 - Show a **Changelog** pane on **Check for updates…** with GitHub release notes for the selected build (and every listed release between your installed version and an upgrade), plus **Open on GitHub…** for the full page.
-- Add a **Include preview pre-releases** checkbox on **Check for updates…** (off by default; remembered) so standard releases stay the default list and testers can opt in to main-branch builds.
+- Add a **Include preview / PR pre-releases** checkbox on **Check for updates…** (off by default; remembered) so standard releases stay the default list and testers can opt in to main-branch and pull-request builds.
 - Add preview GitHub pre-releases to **Check for updates…** so testers can install automated main-branch builds (`X.Y.Z-preview.<run>+<sha>`) from the plugin menu.
 - Add optional **Deploy to KOReader…** for Kobo/Android with KOReader: run it from the Fanfic Organizer menu after USB sync to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. Deploy is blocked unless the device looks like a Kobo with KOReader (`.adds/koreader`) or Android storage with a `koreader/` folder; nothing is written to Kindles or other readers.
 - Add optional **Summary** on generated EPUB covers (Plugin settings → Cover style → Show on cover), with the same wrap/shrink normalization as the title and separate title/summary font sizes.

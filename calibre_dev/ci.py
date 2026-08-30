@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from calibre_dev.changelog import (
     ChangelogError,
@@ -18,8 +19,9 @@ from calibre_dev.release_urls import GITHUB_REPO
 from calibre_dev.versioning import (
     format_pr_version,
     format_preview_version,
+    github_download_path,
     plugin_zip_name,
-    pr_zip_name,
+    pr_release_notes,
     preview_release_notes,
     release_tag_name,
 )
@@ -65,12 +67,35 @@ def cmd_preview_meta(args: argparse.Namespace) -> int:
 
 def cmd_pr_meta(args: argparse.Namespace) -> int:
     version = format_pr_version(_next_base_version(), args.pr, args.sha)
-    zip_name = pr_zip_name(args.pr, args.sha)
+    tag = release_tag_name(version)
+    zip_name = plugin_zip_name(version)
+    pr_url = (args.pr_url or "").strip() or (
+        f"https://github.com/{GITHUB_REPO}/pull/{int(args.pr)}"
+    )
+    latest = f"https://github.com/{GITHUB_REPO}/releases/latest"
+    notes = pr_release_notes(
+        pr_number=args.pr,
+        git_hash=args.sha,
+        pr_url=pr_url,
+        latest_release_url=latest,
+    )
+    notes_path = Path(args.notes_file)
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    notes_path.write_text(notes, encoding="utf-8")
+    download_path = github_download_path(tag, zip_name)
     _write_github_output(
         {
             "version": version,
+            "tag": tag,
             "zip_name": zip_name,
-            "artifact_name": Path(zip_name).stem,
+            "notes_file": str(notes_path),
+            "download_url": (
+                f"https://github.com/{GITHUB_REPO}/releases/download/{download_path}"
+            ),
+            "html_url": (
+                f"https://github.com/{GITHUB_REPO}/releases/tag/"
+                f"{quote(tag, safe='v./-')}"
+            ),
         }
     )
     return 0
@@ -106,9 +131,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     preview.set_defaults(func=cmd_preview_meta)
 
-    pr_meta = sub.add_parser("pr-meta", help="PR zip name and embedded plugin version.")
+    pr_meta = sub.add_parser(
+        "pr-meta",
+        help="PR pre-release version, tag, zip name, and notes.",
+    )
     pr_meta.add_argument("--pr", required=True, help="Pull request number.")
     pr_meta.add_argument("--sha", required=True, help="Full or short git commit SHA.")
+    pr_meta.add_argument(
+        "--pr-url",
+        default="",
+        help="Pull request HTML URL (default: repo pull/N).",
+    )
+    pr_meta.add_argument(
+        "--notes-file",
+        default="pr-notes.md",
+        help="Write PR release notes here (read-only changelog scrape).",
+    )
     pr_meta.set_defaults(func=cmd_pr_meta)
 
     annotate = sub.add_parser(

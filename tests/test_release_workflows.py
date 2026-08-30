@@ -24,17 +24,18 @@ def test_preview_workflow_does_not_push_and_marks_prerelease():
     assert "preview-meta" in text
 
 
-def test_pr_workflow_does_not_create_releases():
+def test_pr_workflow_publishes_prerelease():
     text = _read("pr-build.yml")
     assert "pull_request" in text
-    assert "action-gh-release" not in text
-    assert "git tag" not in text
-    assert "prerelease" not in text
-    assert "upload-artifact" in text
-    assert "artifact-url" in text
+    assert "softprops/action-gh-release" in text
+    assert "prerelease: true" in text
+    assert "make_latest: false" in text
+    assert "contents: write" in text
     assert "pull-requests: write" in text
     assert "pr-meta" in text
-    assert "Download the artifact from this run" not in text
+    assert "upload-artifact" not in text
+    assert "CI test build" not in text
+    assert "PR plugin pre-release" in text
 
 
 def test_release_workflow_is_manual_with_bump_and_skips_preview_tags():

@@ -164,11 +164,11 @@ def test_release_from_api_prefers_versioned_zip_asset():
     assert parsed.download_url.endswith("versioned.zip")
 
 
-def test_release_from_api_skips_drafts_prereleases_and_missing_asset():
+def test_release_from_api_skips_drafts_unknown_prereleases_and_missing_asset():
     updates = load_updates()
     assert updates.release_from_api(_sample_release(draft=True)) is None
     assert updates.release_from_api(
-        _sample_release(tag="v0.27.0-pr.3+abc1234", prerelease=True)
+        _sample_release(tag="v0.27.0-beta.1", prerelease=True)
     ) is None
     assert updates.release_from_api(_sample_release(include_asset=False)) is None
     parsed = updates.release_from_api(_sample_release())
@@ -187,8 +187,24 @@ def test_release_from_api_accepts_preview_prereleases():
     parsed = updates.release_from_api(record)
     assert parsed is not None
     assert parsed.is_preview
+    assert not parsed.is_pr_build
     assert parsed.version_text == "0.31.0-preview.452+7a4f9b2"
     assert parsed.download_url.endswith("FanFicOrganizer-0.31.0-preview.452+7a4f9b2.zip")
+
+
+def test_release_from_api_accepts_pr_prereleases():
+    updates = load_updates()
+    record = _sample_release(
+        tag="v0.32.0-pr.12+abcdef1",
+        prerelease=True,
+    )
+    parsed = updates.release_from_api(record)
+    assert parsed is not None
+    assert parsed.is_pr_build
+    assert not parsed.is_preview
+    assert parsed.is_channel_prerelease
+    assert parsed.version_text == "0.32.0-pr.12+abcdef1"
+    assert parsed.download_url.endswith("FanFicOrganizer-0.32.0-pr.12+abcdef1.zip")
 
 
 def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
@@ -210,19 +226,23 @@ def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
-def test_filter_releases_omits_previews_by_default():
+def test_filter_releases_omits_previews_and_pr_builds_by_default():
     updates = load_updates()
     stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
     preview = updates.release_from_api(
         _sample_release(tag="v0.32.0-preview.1+abc1234", prerelease=True)
     )
-    assert stable is not None and preview is not None
-    filtered = updates.filter_releases([preview, stable])
+    pr_build = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.9+abcdef1", prerelease=True)
+    )
+    assert stable is not None and preview is not None and pr_build is not None
+    filtered = updates.filter_releases([pr_build, preview, stable])
     assert [item.version_text for item in filtered] == ["0.31.0"]
     with_pre = updates.filter_releases(
-        [preview, stable], include_prereleases=True
+        [pr_build, preview, stable], include_prereleases=True
     )
     assert [item.version_text for item in with_pre] == [
+        "0.32.0-pr.9+abcdef1",
         "0.32.0-preview.1+abc1234",
         "0.31.0",
     ]
