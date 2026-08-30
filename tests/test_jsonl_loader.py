@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import importlib.util
 from io import BytesIO
 from pathlib import Path
@@ -49,6 +50,42 @@ def test_resolve_epub_falls_back_to_work_id(tmp_path: Path):
     epub.write_bytes(b"PK")
     path = loader.resolve_epub_path({"work_id": "77"}, tmp_path)
     assert path == epub
+
+
+def test_load_jsonl_accepts_calibre_identity_without_ao3(tmp_path: Path):
+    """Process library simplify includes books that have no AO3 id yet."""
+    loader = load_jsonl_loader()
+    jsonl = tmp_path / "cleaned.jsonl"
+    jsonl.write_text(
+        '{"title":"No AO3 yet","calibre_book_id":42,'
+        '"cleaned":{"simplified":["Fluff"]}}\n'
+        '{"title":"UUID only","calibre_uuid":"abc-def",'
+        '"cleaned":{"simplified":["Angst"]}}\n',
+        encoding="utf-8",
+    )
+    records = loader.load_jsonl_records(jsonl)
+    assert len(records) == 2
+    assert records[0]["calibre_book_id"] == 42
+    assert records[1]["calibre_uuid"] == "abc-def"
+
+
+def test_load_jsonl_rejects_row_with_no_identity(tmp_path: Path):
+    loader = load_jsonl_loader()
+    jsonl = tmp_path / "bad.jsonl"
+    jsonl.write_text('{"title":"orphan"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="missing work_id, url, calibre_book_id"):
+        loader.load_jsonl_records(jsonl)
+
+
+def test_record_has_identity():
+    loader = load_jsonl_loader()
+    assert loader.record_has_identity({"work_id": "1"})
+    assert loader.record_has_identity({"url": "https://archiveofourown.org/works/1"})
+    assert loader.record_has_identity({"calibre_book_id": 7})
+    assert loader.record_has_identity({"calibre_uuid": "u"})
+    assert not loader.record_has_identity({"title": "x"})
+    assert not loader.record_has_identity({"calibre_book_id": 0})
+    assert not loader.record_has_identity({"calibre_book_id": ""})
 
 
 def test_load_import_zip_extracts_bundle(tmp_path: Path):
