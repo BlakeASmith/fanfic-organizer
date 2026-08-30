@@ -574,6 +574,47 @@ def test_calibre_fields_include_series():
     assert fields["identifiers"]["ao3series"] == "6133236"
 
 
+def test_parse_ao3_date_accepts_iso_and_blurb_forms():
+    mod = load_cleaned()
+    from datetime import date
+
+    assert mod.parse_ao3_date("2026-08-21") == date(2026, 8, 21)
+    assert mod.parse_ao3_date("21 Aug 2026") == date(2026, 8, 21)
+    assert mod.parse_ao3_date("01 Jan 2020") == date(2020, 1, 1)
+    assert mod.parse_ao3_date("") is None
+    assert mod.parse_ao3_date(None) is None
+    assert mod.parse_ao3_date("not a date") is None
+
+
+def test_calibre_fields_include_publisher_and_published():
+    mod = load_cleaned()
+    from datetime import date
+
+    fields = mod.calibre_fields_for_record(
+        {
+            "work_id": "1",
+            "title": "A Work",
+            "date": "2026-08-21",
+            "tags": ["Fluff"],
+        }
+    )
+    assert fields["publisher"] == "Archive of Our Own"
+    assert fields["published"] == date(2026, 8, 21)
+
+    blurbs = mod.calibre_fields_for_record(
+        {
+            "work_id": "2",
+            "title": "Blurb Work",
+            "date": "21 Aug 2026",
+        }
+    )
+    assert blurbs["published"] == date(2026, 8, 21)
+
+    missing = mod.calibre_fields_for_record({"work_id": "3", "title": "No Date"})
+    assert missing["publisher"] == "Archive of Our Own"
+    assert missing["published"] is None
+
+
 def test_record_from_library_restores_series_identifier():
     mod = load_cleaned()
     record = mod.record_from_library_fields(

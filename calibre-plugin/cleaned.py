@@ -13,6 +13,8 @@ with FanFicFare:
 * ``#wordcount`` ← AO3 word count (when present)
 * Tags ← remaining cleaned tags + ``Completed``
 * Series / series index ← first AO3 series membership (Calibre's built-in Series)
+* Publisher ← ``Archive of Our Own`` (Calibre's built-in Publisher)
+* Published ← AO3 published / listing date (Calibre's built-in Published / ``pubdate``)
 
 When those custom columns are absent, fandoms / ships / collections stay on
 the standard Tags field instead of being dropped.
@@ -24,6 +26,7 @@ import importlib.util
 import re
 import sys
 from collections.abc import Iterable
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,27 @@ FFF_INJECTED_TAGS = frozenset({'fanfiction', 'completed', 'complete'})
 RELATIONSHIP_CATEGORIES = frozenset({'relationship'})
 FANDOM_CATEGORIES = frozenset({'fandom'})
 COMPLETED_TAG = 'Completed'
+AO3_PUBLISHER = 'Archive of Our Own'
+
+# Work pages use YYYY-MM-DD; search blurbs use "21 Aug 2026".
+_AO3_ISO_DATE_RE = re.compile(r'^(\d{4})-(\d{2})-(\d{2})$')
+_AO3_BLURB_DATE_RE = re.compile(
+    r'^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$',
+)
+_AO3_MONTHS = {
+    'jan': 1,
+    'feb': 2,
+    'mar': 3,
+    'apr': 4,
+    'may': 5,
+    'jun': 6,
+    'jul': 7,
+    'aug': 8,
+    'sep': 9,
+    'oct': 10,
+    'nov': 11,
+    'dec': 12,
+}
 
 
 def _resolve_record_summary(*args: Any, **kwargs: Any) -> str:
@@ -479,6 +503,35 @@ def primary_series(record: dict[str, Any]) -> dict[str, Any] | None:
     return items[0] if items else None
 
 
+def parse_ao3_date(value: Any) -> date | None:
+    """Parse AO3 work-page or search-blurb dates into a calendar date."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    match = _AO3_ISO_DATE_RE.match(text)
+    if match:
+        try:
+            return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError:
+            return None
+    match = _AO3_BLURB_DATE_RE.match(text)
+    if match:
+        month = _AO3_MONTHS.get(match.group(2)[:3].casefold())
+        if month is None:
+            return None
+        try:
+            return date(int(match.group(3)), month, int(match.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
 def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
     """Split a work record into the fanfic-library Calibre fields."""
     payload = build_cleaned_payload(record)
@@ -564,6 +617,8 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         if series_id:
             identifiers['ao3series'] = series_id
 
+    published = parse_ao3_date(record.get('date'))
+
     return {
         'fandoms': _unique_names(fandoms),
         'relationships': _unique_names(relationships),
@@ -579,6 +634,8 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         'series_index': series_index,
         'series_id': series_id,
         'series_list': series_memberships_from_record(record),
+        'publisher': AO3_PUBLISHER,
+        'published': published,
         'source': payload.get('source'),
     }
 
