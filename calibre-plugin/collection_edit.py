@@ -10,6 +10,7 @@ from pathlib import Path
 from PyQt5.Qt import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -31,11 +32,12 @@ from PyQt5.Qt import (
 from calibre.gui2 import error_dialog, question_dialog
 
 from calibre_plugins.fanfic_organizer.tag_complete import (
-    attach_collection_match_completer,
+    attach_collection_field_completer,
 )
 from calibre_plugins.fanfic_organizer.collection_rules import (
-    MATCH_CHOICES,
+    FIELD_CHOICES,
     MODE_CHOICES,
+    TEXT_FIELDS,
     build_collections_list_argv,
     build_collections_pin_argv,
     build_collections_remove_argv,
@@ -44,11 +46,13 @@ from calibre_plugins.fanfic_organizer.collection_rules import (
     build_collections_unpin_argv,
     collection_names_from_explain,
     collection_names_from_rules,
+    conditions_from_row,
     flatten_explain_rows,
     format_membership_status,
     format_membership_why,
     format_when,
     merge_collection_names,
+    ops_for_field,
     parse_rules_list,
 )
 
@@ -131,6 +135,189 @@ def load_known_collection_names(parent, db, extra: list[str] | None = None) -> l
     )
 
 
+class CollectionConditionRow(QWidget):
+    """One AND condition: field + op + value (+ case for text)."""
+
+    def __init__(self, parent=None, data: dict | None = None):
+        super().__init__(parent)
+        self._data = dict(data or {})
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.field = QComboBox()
+        for value, label in FIELD_CHOICES:
+            self.field.addItem(label, value)
+        self.op = QComboBox()
+        self.values = QLineEdit()
+        self.casefold = QCheckBox('Aa')
+        self.casefold.setToolTip('Case-insensitive (checked) or case-sensitive')
+        self.casefold.setChecked(True)
+        self.remove_btn = QPushButton('Remove')
+        layout.addWidget(self.field)
+        layout.addWidget(self.op)
+        layout.addWidget(self.values, 1)
+        layout.addWidget(self.casefold)
+        layout.addWidget(self.remove_btn)
+        attach_collection_field_completer(self.values, self.field, parent)
+        self.field.currentIndexChanged.connect(self._sync_field)
+        self._load(self._data)
+        self._sync_field()
+
+    def _load(self, data: dict) -> None:
+        field_name = str(data.get('field') or 'tag')
+        idx = self.field.findData(field_name)
+        if idx >= 0:
+            self.field.setCurrentIndex(idx)
+        self._refill_ops(field_name)
+        op = str(data.get('op') or '')
+        idx = self.op.findData(op)
+        if idx >= 0:
+            self.op.setCurrentIndex(idx)
+        if field_name == 'complete':
+            raw = data.get('value')
+            if isinstance(raw, bool):
+                flag = raw
+            else:
+                values = data.get('values') or []
+                text = str(values[0]).casefold() if values else 'true'
+                flag = text in {'1', 'true', 'yes', 'complete', 't'}
+            self.values.setText('complete' if flag else 'incomplete')
+        elif field_name == 'words':
+            number = data.get('value')
+            if number is None:
+                values = data.get('values') or []
+                number = values[0] if values else ''
+            self.values.setText(str(number or ''))
+        else:
+            values = data.get('values') or []
+            if not values and data.get('value') is not None:
+                values = [data.get('value')]
+            self.values.setText(
+                values
+                if isinstance(values, str)
+                else ', '.join(str(item) for item in values)
+            )
+        self.casefold.setChecked(bool(data.get('casefold', True)))
+
+    def _refill_ops(self, field_name: str) -> None:
+        current = str(self.op.currentData() or '')
+        self.op.blockSignals(True)
+        self.op.clear()
+        for value, label in ops_for_field(field_name):
+            self.op.addItem(label, value)
+        idx = self.op.findData(current)
+        self.op.setCurrentIndex(idx if idx >= 0 else 0)
+        self.op.blockSignals(False)
+
+    def _sync_field(self, *_args) -> None:
+        field_name = str(self.field.currentData() or 'tag')
+        self._refill_ops(field_name)
+        is_text = field_name in TEXT_FIELDS
+        self.casefold.setVisible(is_text)
+        if field_name == 'words':
+            self.values.setPlaceholderText('200000')
+        elif field_name == 'complete':
+            self.values.setPlaceholderText('complete or incomplete')
+        elif field_name == 'title':
+            self.values.setPlaceholderText('title text')
+        elif field_name == 'summary':
+            self.values.setPlaceholderText('summary text')
+        else:
+            self.values.setPlaceholderText('match text')
+
+    def to_dict(self) -> dict | None:
+        field_name = str(self.field.currentData() or 'tag')
+        op = str(self.op.currentData() or 'contains')
+        text = self.values.text().strip()
+        if not text:
+            return None
+        if field_name == 'words':
+            return {'field': field_name, 'op': op, 'value': text, 'casefold': True}
+        if field_name == 'complete':
+            flag = text.casefold() in {
+                '1',
+                'true',
+                'yes',
+                'complete',
+                'completed',
+                't',
+            }
+            return {'field': field_name, 'op': 'is', 'value': flag, 'casefold': True}
+        return {
+            'field': field_name,
+            'op': op,
+            'values': [part.strip() for part in text.split(',') if part.strip()],
+            'casefold': bool(self.casefold.isChecked()),
+        }
+
+
+class CollectionConditionsEditor(QWidget):
+    """Editable AND list of collection conditions."""
+
+    def __init__(self, parent=None, conditions: list[dict] | None = None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel('All of these must match (AND). Use * and ? for wildcards.')
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self._rows_host = QVBoxLayout()
+        layout.addLayout(self._rows_host)
+        self._rows: list[CollectionConditionRow] = []
+        btn_row = QHBoxLayout()
+        self.add_btn = QPushButton('Add condition')
+        self.add_btn.clicked.connect(lambda: self.add_condition())
+        btn_row.addWidget(self.add_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+        initial = list(conditions or []) or [{'field': 'tag', 'op': 'contains', 'values': []}]
+        for item in initial:
+            self.add_condition(item)
+
+    def add_condition(self, data: dict | None = None) -> None:
+        row = CollectionConditionRow(self, data)
+        row.remove_btn.clicked.connect(lambda: self._remove_row(row))
+        self._rows.append(row)
+        self._rows_host.addWidget(row)
+        self._sync_remove_buttons()
+
+    def _remove_row(self, row: CollectionConditionRow) -> None:
+        if len(self._rows) <= 1:
+            return
+        self._rows.remove(row)
+        self._rows_host.removeWidget(row)
+        row.deleteLater()
+        self._sync_remove_buttons()
+
+    def _sync_remove_buttons(self) -> None:
+        enabled = len(self._rows) > 1
+        for row in self._rows:
+            row.remove_btn.setEnabled(enabled)
+
+    def clear(self) -> None:
+        while self._rows:
+            row = self._rows.pop()
+            self._rows_host.removeWidget(row)
+            row.deleteLater()
+        self.add_condition()
+
+    def set_conditions(self, conditions: list[dict]) -> None:
+        while self._rows:
+            row = self._rows.pop()
+            self._rows_host.removeWidget(row)
+            row.deleteLater()
+        items = list(conditions or []) or [{'field': 'tag', 'op': 'contains', 'values': []}]
+        for item in items:
+            self.add_condition(item)
+
+    def conditions(self) -> list[dict]:
+        out: list[dict] = []
+        for row in self._rows:
+            item = row.to_dict()
+            if item is not None:
+                out.append(item)
+        return out
+
+
 class CollectionRuleEditDialog(QDialog):
     """Add or edit one collection membership rule."""
 
@@ -140,28 +327,17 @@ class CollectionRuleEditDialog(QDialog):
         self.setWindowTitle(
             'Edit collection rule' if self._row.get('id') else 'New collection rule'
         )
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(640)
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.collections = QLineEdit()
         self.collections.setText(_join(self._row.get('collections')))
         form.addRow('Collection', self.collections)
 
-        if_row = QWidget()
-        if_layout = QHBoxLayout(if_row)
-        if_layout.setContentsMargins(0, 0, 0, 0)
-        self.match = QComboBox()
-        for value, label in MATCH_CHOICES:
-            self.match.addItem(label, value)
-        idx = self.match.findData(str(self._row.get('match') or 'mentions'))
-        if idx >= 0:
-            self.match.setCurrentIndex(idx)
-        self.values = QLineEdit()
-        self.values.setText(_join(self._row.get('values')))
-        attach_collection_match_completer(self.values, self.match, parent)
-        if_layout.addWidget(self.match)
-        if_layout.addWidget(self.values, 1)
-        form.addRow('When', if_row)
+        self.conditions = CollectionConditionsEditor(
+            self, conditions_from_row(self._row) if self._row else None
+        )
+        form.addRow('When', self.conditions)
 
         self.mode = QComboBox()
         for value, label in MODE_CHOICES:
@@ -185,23 +361,40 @@ class CollectionRuleEditDialog(QDialog):
 
     def argv(self) -> list[str] | None:
         collection = self.collections.text().strip()
-        values = self.values.text().strip()
-        match = str(self.match.currentData() or 'mentions')
-        if not values:
-            error_dialog(self, 'Fanfic Organizer', 'Type something to match first.', show=True)
+        conditions = self.conditions.conditions()
+        if not conditions:
+            error_dialog(self, 'Fanfic Organizer', 'Add at least one condition.', show=True)
             return None
-        if match in {'work_id', 'calibre_uuid'} and not collection:
-            error_dialog(self, 'Fanfic Organizer', 'Type a collection name first.', show=True)
-            return None
-        pin = match in {'work_id', 'calibre_uuid'} or bool(self._row.get('pin'))
+        pin_fields = {str(item.get('field') or '') for item in conditions}
+        needs_collection = bool(pin_fields & {'work_id', 'calibre_uuid'}) or len(conditions) > 1
+        if needs_collection and not collection:
+            # Infer only for single tag-like text conditions.
+            first = conditions[0]
+            if first.get('field') not in {
+                'tag',
+                'fandom',
+                'relationship',
+                'character',
+                'author',
+            } or not (first.get('values') or [first.get('value')]):
+                error_dialog(
+                    self, 'Fanfic Organizer', 'Type a collection name first.', show=True
+                )
+                return None
+        if not collection:
+            values = conditions[0].get('values') or []
+            collection = str(values[0] if values else conditions[0].get('value') or '').strip()
+        pin = bool(self._row.get('pin')) or (
+            len(conditions) == 1
+            and str(conditions[0].get('field') or '') in {'work_id', 'calibre_uuid'}
+        )
         fields = {
-            'match': match,
-            'values': values,
             'collections': collection,
             'mode': str(self.mode.currentData() or 'include'),
             'pin': pin,
             'enabled': bool(self._row.get('enabled', True)),
             'description': str(self._row.get('description') or ''),
+            'conditions': conditions,
         }
         rule_id = str(self._row.get('id') or '')
         if rule_id:

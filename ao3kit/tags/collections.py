@@ -9,21 +9,29 @@ Collection rules live in ``collections.yaml`` under the XDG config dir.
 Mapping rows that still
 list collections keep working through the tag engine; this module overlays
 YAML rules (including pins and excludes) on top.
+
+Rules match with an AND list of conditions (``all:``). Legacy single
+``match`` + ``values`` rows desugar to one condition on load.
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field as dc_field, fields
 from pathlib import Path
 from typing import Any, Iterable, Literal, Sequence
 
 from ao3kit.tags.mappings import allocate_id, parse_csv, slugify
 
+logger = logging.getLogger(__name__)
+
 COLLECTIONS_FILENAME = "collections.yaml"
 _SAFE_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 _WORK_ID_RE = re.compile(r"/works/(\d+)")
+_INVALID_REGEX: set[str] = set()
 
+# Legacy single-field match kinds (still accepted on load / simple forms).
 CollectionMatch = Literal[
     "mentions",
     "is_ci",
@@ -34,6 +42,32 @@ CollectionMatch = Literal[
 ]
 CollectionMode = Literal["include", "exclude"]
 
+CollectionField = Literal[
+    "tag",
+    "fandom",
+    "relationship",
+    "character",
+    "author",
+    "title",
+    "summary",
+    "series",
+    "words",
+    "complete",
+    "work_id",
+    "calibre_uuid",
+]
+CollectionOp = Literal[
+    "contains",
+    "is",
+    "wildcard",
+    "regex",
+    "eq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+]
+
 MATCH_KINDS: tuple[CollectionMatch, ...] = (
     "mentions",
     "is_ci",
@@ -43,6 +77,34 @@ MATCH_KINDS: tuple[CollectionMatch, ...] = (
     "calibre_uuid",
 )
 MODES: tuple[CollectionMode, ...] = ("include", "exclude")
+FIELD_KINDS: tuple[CollectionField, ...] = (
+    "tag",
+    "fandom",
+    "relationship",
+    "character",
+    "author",
+    "title",
+    "summary",
+    "series",
+    "words",
+    "complete",
+    "work_id",
+    "calibre_uuid",
+)
+TEXT_OPS: tuple[CollectionOp, ...] = ("contains", "is", "wildcard", "regex")
+NUMERIC_OPS: tuple[CollectionOp, ...] = ("eq", "gt", "gte", "lt", "lte")
+BOOL_OPS: tuple[CollectionOp, ...] = ("is",)
+OP_KINDS: tuple[CollectionOp, ...] = (
+    "contains",
+    "is",
+    "wildcard",
+    "regex",
+    "eq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+)
 
 MATCH_CHOICES: tuple[tuple[CollectionMatch, str], ...] = (
     ("mentions", "tag contains"),
@@ -56,9 +118,63 @@ MODE_CHOICES: tuple[tuple[CollectionMode, str], ...] = (
     ("include", "Put matching books in"),
     ("exclude", "Never put matching books in"),
 )
+FIELD_CHOICES: tuple[tuple[CollectionField, str], ...] = (
+    ("tag", "tag"),
+    ("fandom", "fandom"),
+    ("relationship", "relationship"),
+    ("character", "character"),
+    ("author", "author"),
+    ("title", "title"),
+    ("summary", "summary"),
+    ("series", "series"),
+    ("words", "word count"),
+    ("complete", "complete"),
+    ("work_id", "AO3 work id"),
+    ("calibre_uuid", "Calibre book UUID"),
+)
+OP_CHOICES: tuple[tuple[CollectionOp, str], ...] = (
+    ("contains", "contains"),
+    ("is", "is exactly"),
+    ("wildcard", "matches wildcard"),
+    ("regex", "matches regex"),
+    ("eq", "="),
+    ("gt", ">"),
+    ("gte", "≥"),
+    ("lt", "<"),
+    ("lte", "≤"),
+)
 
 _MATCH_LABELS = dict(MATCH_CHOICES)
 _MODE_LABELS = dict(MODE_CHOICES)
+_FIELD_LABELS = dict(FIELD_CHOICES)
+_OP_LABELS = dict(OP_CHOICES)
+
+_LEGACY_TO_CONDITION: dict[CollectionMatch, tuple[CollectionField, CollectionOp]] = {
+    "mentions": ("tag", "contains"),
+    "is_ci": ("tag", "is"),
+    "fandom_mentions": ("fandom", "contains"),
+    "author_ci": ("author", "is"),
+    "work_id": ("work_id", "is"),
+    "calibre_uuid": ("calibre_uuid", "is"),
+}
+
+_TEXT_FIELDS = frozenset(
+    {
+        "tag",
+        "fandom",
+        "relationship",
+        "character",
+        "author",
+        "title",
+        "summary",
+        "series",
+        "work_id",
+        "calibre_uuid",
+    }
+)
+_AUTO_COLLECTION_FIELDS = frozenset(
+    {"tag", "fandom", "relationship", "character", "author"}
+)
 
 
 def _norm(value: Any) -> str:
@@ -154,6 +270,72 @@ def relationships_of(record: dict[str, Any]) -> list[str]:
     return names
 
 
+def characters_of(record: dict[str, Any]) -> list[str]:
+    names = _as_name_list(record.get("characters"))
+    cleaned = record.get("cleaned")
+    if isinstance(cleaned, dict):
+        names = unique_names([*names, *_as_name_list(cleaned.get("characters"))])
+    return names
+
+
+def series_names_of(record: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    series = record.get("series")
+    if isinstance(series, list):
+        for item in series:
+            if isinstance(item, dict):
+                names.append(str(item.get("name") or "").strip())
+            else:
+                names.append(str(item).strip())
+    elif isinstance(series, str):
+        names.append(series.strip())
+    cleaned = record.get("cleaned")
+    if isinstance(cleaned, dict):
+        names.extend(_as_name_list(cleaned.get("series")))
+    return unique_names(names)
+
+
+def title_of(record: dict[str, Any]) -> str:
+    return str(record.get("title") or "").strip()
+
+
+def summary_of(record: dict[str, Any]) -> str:
+    return str(record.get("summary") or "").strip()
+
+
+def words_of(record: dict[str, Any]) -> int | None:
+    meta = record.get("metadata")
+    if isinstance(meta, dict) and meta.get("words") is not None:
+        try:
+            return int(str(meta.get("words")).replace(",", ""))
+        except (TypeError, ValueError):
+            pass
+    for key in ("wordcount", "word_count", "words"):
+        if record.get(key) is None:
+            continue
+        try:
+            return int(str(record.get(key)).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def complete_of(record: dict[str, Any]) -> bool | None:
+    meta = record.get("metadata")
+    if isinstance(meta, dict):
+        chapters = meta.get("chapters")
+        if isinstance(chapters, dict) and "is_complete" in chapters:
+            return bool(chapters.get("is_complete"))
+        if "is_complete" in meta:
+            return bool(meta.get("is_complete"))
+    if "is_complete" in record:
+        return bool(record.get("is_complete"))
+    tags = {_norm(tag) for tag in _as_name_list(record.get("tags"))}
+    if "completed" in tags or "complete" in tags:
+        return True
+    return None
+
+
 def engine_collection_names(record: dict[str, Any]) -> list[str]:
     cleaned = record.get("cleaned")
     if not isinstance(cleaned, dict):
@@ -164,10 +346,10 @@ def engine_collection_names(record: dict[str, Any]) -> list[str]:
 def names_for_collection_match(record: dict[str, Any]) -> list[str]:
     """Tag-like names a 'tag contains / is exactly' rule can see."""
     names = [
-        * _as_name_list(record.get("tags")),
+        *_as_name_list(record.get("tags")),
         *fandoms_of(record),
         *relationships_of(record),
-        *_as_name_list(record.get("characters")),
+        *characters_of(record),
     ]
     cleaned = record.get("cleaned")
     if isinstance(cleaned, dict):
@@ -186,20 +368,349 @@ def current_collections_of(record: dict[str, Any]) -> list[str] | None:
     return _as_name_list(record.get("current_collections"))
 
 
-def _contains(names: Sequence[str], needle: str) -> bool:
-    n = _norm(needle)
+def _prep_text(value: str, *, casefold: bool) -> str:
+    text = str(value or "").strip()
+    return text.casefold() if casefold else text
+
+
+def _contains(names: Sequence[str], needle: str, *, casefold: bool = True) -> bool:
+    n = _prep_text(needle, casefold=casefold)
     if not n:
         return False
     for name in names:
-        hay = _norm(name)
+        hay = _prep_text(name, casefold=casefold)
         if n == hay or n in hay:
             return True
     return False
 
 
-def _exact(names: Sequence[str], needle: str) -> bool:
-    n = _norm(needle)
-    return bool(n) and any(_norm(name) == n for name in names)
+def _exact(names: Sequence[str], needle: str, *, casefold: bool = True) -> bool:
+    n = _prep_text(needle, casefold=casefold)
+    return bool(n) and any(_prep_text(name, casefold=casefold) == n for name in names)
+
+
+def _wildcard_to_regex(pattern: str) -> str:
+    parts: list[str] = []
+    for char in pattern:
+        if char == "*":
+            parts.append(".*")
+        elif char == "?":
+            parts.append(".")
+        else:
+            parts.append(re.escape(char))
+    return "".join(parts)
+
+
+def _compile_pattern(pattern: str, *, casefold: bool, wildcard: bool) -> re.Pattern[str] | None:
+    flags = re.IGNORECASE if casefold else 0
+    source = _wildcard_to_regex(pattern) if wildcard else pattern
+    try:
+        return re.compile(source, flags)
+    except re.error as exc:
+        key = f"{'w' if wildcard else 'r'}:{casefold}:{pattern}"
+        if key not in _INVALID_REGEX:
+            _INVALID_REGEX.add(key)
+            logger.warning(
+                "Invalid collection %s pattern %r: %s",
+                "wildcard" if wildcard else "regex",
+                pattern,
+                exc,
+            )
+        return None
+
+
+def _regex_match(names: Sequence[str], pattern: str, *, casefold: bool, wildcard: bool) -> bool:
+    compiled = _compile_pattern(pattern, casefold=casefold, wildcard=wildcard)
+    if compiled is None:
+        return False
+    return any(bool(compiled.search(str(name or ""))) for name in names)
+
+
+def _parse_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().casefold()
+    if text in {"1", "true", "yes", "complete", "completed", "t"}:
+        return True
+    if text in {"0", "false", "no", "incomplete", "wip", "f"}:
+        return False
+    return None
+
+
+def _parse_number(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass
+class CollectionCondition:
+    """One predicate in a collection rule (AND'd with siblings)."""
+
+    field: CollectionField = "tag"
+    op: CollectionOp = "contains"
+    values: list[str] = dc_field(default_factory=list)
+    value: str | int | bool | None = None
+    casefold: bool = True
+
+    def validate(self) -> None:
+        if self.field not in FIELD_KINDS:
+            raise ValueError(f"Unknown collection field {self.field!r}")
+        if self.op not in OP_KINDS:
+            raise ValueError(f"Unknown collection op {self.op!r}")
+        if self.field == "words":
+            if self.op not in NUMERIC_OPS:
+                raise ValueError(f"Word-count conditions need a numeric op, not {self.op!r}")
+            if self._numeric_value() is None:
+                raise ValueError("Word-count condition needs a number")
+            return
+        if self.field == "complete":
+            if self.op not in BOOL_OPS:
+                raise ValueError("Complete conditions use op 'is'")
+            if self._bool_value() is None:
+                raise ValueError("Complete condition needs true or false")
+            return
+        if self.op not in TEXT_OPS:
+            raise ValueError(f"Text field {self.field!r} cannot use op {self.op!r}")
+        if not self.text_values():
+            raise ValueError("Collection condition needs something to match")
+
+    def text_values(self) -> list[str]:
+        values = [str(item).strip() for item in self.values if str(item).strip()]
+        if values:
+            return values
+        if self.value is None or isinstance(self.value, bool):
+            return []
+        text = str(self.value).strip()
+        return [text] if text else []
+
+    def _numeric_value(self) -> int | None:
+        if self.value is not None and not isinstance(self.value, bool):
+            parsed = _parse_number(self.value)
+            if parsed is not None:
+                return parsed
+        for item in self.values:
+            parsed = _parse_number(item)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _bool_value(self) -> bool | None:
+        if self.value is not None:
+            parsed = _parse_bool(self.value)
+            if parsed is not None:
+                return parsed
+        for item in self.values:
+            parsed = _parse_bool(item)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def display(self) -> str:
+        field_label = _FIELD_LABELS.get(self.field, self.field)
+        op_label = _OP_LABELS.get(self.op, self.op)
+        if self.field == "words":
+            number = self._numeric_value()
+            return f"{field_label} {op_label} {number}"
+        if self.field == "complete":
+            flag = self._bool_value()
+            return "complete" if flag else "incomplete"
+        joined = ", ".join(self.text_values())
+        suffix = "" if self.casefold else " (case-sensitive)"
+        return f"{field_label} {op_label} “{joined}”{suffix}"
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"field": self.field, "op": self.op}
+        if self.field == "words":
+            data["value"] = self._numeric_value()
+        elif self.field == "complete":
+            data["value"] = self._bool_value()
+        else:
+            values = self.text_values()
+            if len(values) == 1:
+                data["value"] = values[0]
+            else:
+                data["values"] = values
+            if not self.casefold:
+                data["casefold"] = False
+        return data
+
+    def to_api_dict(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        payload["field_label"] = _FIELD_LABELS.get(self.field, self.field)
+        payload["op_label"] = _OP_LABELS.get(self.op, self.op)
+        payload["display"] = self.display()
+        payload["casefold"] = self.casefold
+        if self.field not in {"words", "complete"}:
+            payload["values"] = self.text_values()
+        return payload
+
+    def matches(self, record: dict[str, Any]) -> bool:
+        if self.field == "words":
+            words = words_of(record)
+            target = self._numeric_value()
+            if words is None or target is None:
+                return False
+            if self.op == "eq":
+                return words == target
+            if self.op == "gt":
+                return words > target
+            if self.op == "gte":
+                return words >= target
+            if self.op == "lt":
+                return words < target
+            if self.op == "lte":
+                return words <= target
+            return False
+        if self.field == "complete":
+            actual = complete_of(record)
+            wanted = self._bool_value()
+            if actual is None or wanted is None:
+                return False
+            return actual is wanted
+
+        needles = self.text_values()
+        if not needles:
+            return False
+        haystacks = self._text_haystacks(record)
+        casefold = self.casefold
+        if self.field == "work_id":
+            # Work ids are numeric strings; compare exactly.
+            casefold = False
+            haystacks = [work_id_of(record)] if work_id_of(record) else []
+        if self.op == "contains":
+            return any(_contains(haystacks, needle, casefold=casefold) for needle in needles)
+        if self.op == "is":
+            if self.field == "work_id":
+                return any(str(item) == work_id_of(record) for item in needles)
+            return any(_exact(haystacks, needle, casefold=casefold) for needle in needles)
+        if self.op == "wildcard":
+            return any(
+                _regex_match(haystacks, needle, casefold=casefold, wildcard=True)
+                for needle in needles
+            )
+        if self.op == "regex":
+            return any(
+                _regex_match(haystacks, needle, casefold=casefold, wildcard=False)
+                for needle in needles
+            )
+        return False
+
+    def _text_haystacks(self, record: dict[str, Any]) -> list[str]:
+        if self.field == "tag":
+            return names_for_collection_match(record)
+        if self.field == "fandom":
+            return fandoms_of(record)
+        if self.field == "relationship":
+            return relationships_of(record)
+        if self.field == "character":
+            return characters_of(record)
+        if self.field == "author":
+            return authors_of(record)
+        if self.field == "series":
+            return series_names_of(record)
+        if self.field == "title":
+            title = title_of(record)
+            return [title] if title else []
+        if self.field == "summary":
+            summary = summary_of(record)
+            return [summary] if summary else []
+        if self.field == "work_id":
+            work_id = work_id_of(record)
+            return [work_id] if work_id else []
+        if self.field == "calibre_uuid":
+            uuid = calibre_uuid_of(record)
+            return [uuid] if uuid else []
+        return []
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CollectionCondition:
+        field_name = str(data.get("field") or "tag").strip()
+        op = str(data.get("op") or "contains").strip()
+        casefold = data.get("casefold", True)
+        if isinstance(casefold, str):
+            casefold = casefold.strip().casefold() not in {"0", "false", "no"}
+        values = parse_csv(data.get("values")) if "values" in data else []
+        if not values and "value" in data and data.get("value") is not None:
+            raw = data.get("value")
+            if isinstance(raw, bool):
+                values = ["true" if raw else "false"]
+            elif isinstance(raw, (int, float)):
+                values = [str(int(raw))]
+            else:
+                values = parse_csv(raw)
+        cond = cls(
+            field=field_name,  # type: ignore[arg-type]
+            op=op,  # type: ignore[arg-type]
+            values=values,
+            value=data.get("value"),
+            casefold=bool(casefold),
+        )
+        # Normalize numeric/bool into value for stable saves.
+        if cond.field == "words":
+            cond.value = cond._numeric_value()
+            cond.values = []
+        elif cond.field == "complete":
+            flag = cond._bool_value()
+            cond.value = flag
+            cond.values = []
+        else:
+            cond.value = None
+            text_values = [str(item).strip() for item in values if str(item).strip()]
+            if not text_values and data.get("value") is not None:
+                text = str(data.get("value")).strip()
+                if text:
+                    text_values = [text]
+            cond.values = text_values
+        cond.validate()
+        return cond
+
+    @classmethod
+    def from_legacy(cls, match: CollectionMatch, values: Sequence[str]) -> CollectionCondition:
+        field_name, op = _LEGACY_TO_CONDITION[match]
+        return cls(field=field_name, op=op, values=[str(item).strip() for item in values if str(item).strip()])
+
+    @classmethod
+    def from_when_spec(cls, spec: str, *, casefold: bool = True) -> CollectionCondition:
+        """Parse ``field:op:value`` (value may contain colons)."""
+        text = str(spec or "").strip()
+        parts = text.split(":", 2)
+        if len(parts) < 3 or not parts[0].strip() or not parts[1].strip():
+            raise ValueError(
+                "When spec must look like field:op:value "
+                "(example: fandom:contains:Harry Potter)"
+            )
+        field_name, op, raw_value = parts[0].strip(), parts[1].strip(), parts[2]
+        return cls.from_dict(
+            {
+                "field": field_name,
+                "op": op,
+                "value": raw_value,
+                "casefold": casefold,
+            }
+        )
+
+
+def conditions_from_legacy(match: CollectionMatch, values: Sequence[str]) -> list[CollectionCondition]:
+    return [CollectionCondition.from_legacy(match, values)]
+
+
+def legacy_from_conditions(
+    conditions: Sequence[CollectionCondition],
+) -> tuple[CollectionMatch, list[str]] | None:
+    """Map a single simple condition back to legacy match/values when possible."""
+    if len(conditions) != 1:
+        return None
+    cond = conditions[0]
+    if not cond.casefold and cond.field in _TEXT_FIELDS:
+        return None
+    for match, (field_name, op) in _LEGACY_TO_CONDITION.items():
+        if cond.field == field_name and cond.op == op:
+            return match, cond.text_values()
+    return None
 
 
 @dataclass
@@ -208,45 +719,94 @@ class CollectionRule:
 
     id: str
     match: CollectionMatch = "mentions"
-    values: list[str] = field(default_factory=list)
-    collections: list[str] = field(default_factory=list)
+    values: list[str] = dc_field(default_factory=list)
+    collections: list[str] = dc_field(default_factory=list)
     mode: CollectionMode = "include"
     enabled: bool = True
     pin: bool = False
     description: str = ""
+    all: list[CollectionCondition] = dc_field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.all:
+            legacy = legacy_from_conditions(self.all)
+            if legacy is not None:
+                self.match, self.values = legacy
+            elif not self.values:
+                # Keep match/values meaningful for pin helpers when possible.
+                first = self.all[0]
+                if first.field == "work_id" and first.op == "is":
+                    self.match = "work_id"
+                    self.values = first.text_values()
+                elif first.field == "calibre_uuid" and first.op == "is":
+                    self.match = "calibre_uuid"
+                    self.values = first.text_values()
+        elif self.values:
+            if self.match not in MATCH_KINDS:
+                self.match = "mentions"
+            self.all = conditions_from_legacy(self.match, self.values)
+
+    def conditions(self) -> list[CollectionCondition]:
+        if self.all:
+            return list(self.all)
+        if self.values:
+            return conditions_from_legacy(self.match, self.values)
+        return []
 
     def validate(self) -> None:
         if not self.id or not _SAFE_ID.match(self.id):
             raise ValueError(
                 f"Invalid collection rule id {self.id!r}: use letters, numbers, _ or -"
             )
-        if self.match not in MATCH_KINDS:
-            raise ValueError(f"Unknown collection match {self.match!r}")
         if self.mode not in MODES:
             raise ValueError(f"Unknown collection mode {self.mode!r}")
-        if not self.values:
-            raise ValueError("Collection rule needs something to match")
         if not self.collections:
             raise ValueError("Collection rule needs a collection name")
+        conds = self.conditions()
+        if not conds:
+            raise ValueError("Collection rule needs something to match")
+        if self.match not in MATCH_KINDS:
+            raise ValueError(f"Unknown collection match {self.match!r}")
+        for cond in conds:
+            cond.validate()
 
     def suggested_id(self) -> str:
         prefix = "pin" if self.pin else ("never" if self.mode == "exclude" else "in")
-        key = self.values[0] if self.values else self.id
+        conds = self.conditions()
+        if conds:
+            first = conds[0]
+            if first.field == "words":
+                key = f"words-{first.op}-{first._numeric_value()}"
+            elif first.field == "complete":
+                key = "complete" if first._bool_value() else "incomplete"
+            else:
+                key = first.text_values()[0] if first.text_values() else first.field
+            field_part = first.field
+        else:
+            key = self.values[0] if self.values else self.id
+            field_part = self.match
         coll = self.collections[0] if self.collections else "collection"
-        return f"{prefix}-{self.match}-{slugify(str(key))}-{slugify(coll)}"
+        return f"{prefix}-{field_part}-{slugify(str(key))}-{slugify(coll)}"
 
     def match_label(self) -> str:
-        return _MATCH_LABELS.get(self.match, self.match)
+        conds = self.conditions()
+        if len(conds) == 1:
+            return conds[0].display().split(" “", 1)[0]
+        if self.match in _MATCH_LABELS:
+            return _MATCH_LABELS[self.match]
+        return "match"
 
     def mode_label(self) -> str:
         return _MODE_LABELS.get(self.mode, self.mode)
 
     def when_display(self) -> str:
-        joined = ", ".join(self.values)
         if self.pin:
-            who = self.description or joined
+            who = self.description or ", ".join(self.values) or "this work"
             return f"always this work ({who})"
-        return f"{self.match_label()} “{joined}”"
+        conds = self.conditions()
+        if not conds:
+            return ""
+        return " AND ".join(cond.display() for cond in conds)
 
     def then_display(self) -> str:
         names = ", ".join(self.collections)
@@ -255,7 +815,8 @@ class CollectionRule:
         return names
 
     def to_api_dict(self) -> dict[str, Any]:
-        return {
+        conds = self.conditions()
+        payload = {
             "id": self.id,
             "match": self.match,
             "values": list(self.values),
@@ -264,50 +825,75 @@ class CollectionRule:
             "enabled": self.enabled,
             "pin": self.pin,
             "description": self.description,
+            "all": [cond.to_api_dict() for cond in conds],
             "match_label": self.match_label(),
             "mode_label": self.mode_label(),
             "when": self.when_display(),
             "then": self.then_display(),
         }
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if data.get("mode") == "include":
-            data.pop("mode", None)
-        if not data.get("pin"):
-            data.pop("pin", None)
-        if not data.get("description"):
-            data.pop("description", None)
-        if data.get("enabled") is True:
-            data.pop("enabled", None)
+        conds = self.conditions()
+        data: dict[str, Any] = {"id": self.id, "collections": list(self.collections)}
+        legacy = legacy_from_conditions(conds)
+        # Prefer all: for compound / non-legacy; keep match/values for simple legacy.
+        if legacy is not None and len(conds) == 1:
+            match, values = legacy
+            data["match"] = match
+            data["values"] = values
+        else:
+            data["all"] = [cond.to_dict() for cond in conds]
+            # Preserve pin identity helpers.
+            if self.pin and self.values:
+                data["match"] = self.match
+                data["values"] = list(self.values)
+        if self.mode != "include":
+            data["mode"] = self.mode
+        if self.pin:
+            data["pin"] = True
+        if self.description:
+            data["description"] = self.description
+        if not self.enabled:
+            data["enabled"] = False
         return data
 
     def matches(self, record: dict[str, Any]) -> bool:
         if not self.enabled:
             return False
-        values = [str(item).strip() for item in self.values if str(item).strip()]
-        if not values:
+        conds = self.conditions()
+        if not conds:
             return False
-        if self.match == "work_id":
-            work_id = work_id_of(record)
-            return bool(work_id) and any(str(item) == work_id for item in values)
-        if self.match == "calibre_uuid":
-            uuid = calibre_uuid_of(record)
-            return bool(uuid) and any(_norm(item) == _norm(uuid) for item in values)
-        if self.match == "author_ci":
-            return any(_exact(authors_of(record), item) for item in values)
-        if self.match == "fandom_mentions":
-            fandoms = fandoms_of(record)
-            return any(_contains(fandoms, item) for item in values)
-        names = names_for_collection_match(record)
-        if self.match == "is_ci":
-            return any(_exact(names, item) for item in values)
-        return any(_contains(names, item) for item in values)
+        return all(cond.matches(record) for cond in conds)
+
+    def copy_with(self, **changes: Any) -> CollectionRule:
+        payload = {
+            "id": self.id,
+            "match": self.match,
+            "values": list(self.values),
+            "collections": list(self.collections),
+            "mode": self.mode,
+            "enabled": self.enabled,
+            "pin": self.pin,
+            "description": self.description,
+            "all": [
+                CollectionCondition(
+                    field=cond.field,
+                    op=cond.op,
+                    values=list(cond.values),
+                    value=cond.value,
+                    casefold=cond.casefold,
+                )
+                for cond in self.conditions()
+            ],
+        }
+        payload.update(changes)
+        return CollectionRule(**payload)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CollectionRule:
         known = {item.name for item in fields(cls)}
-        payload = {key: value for key, value in data.items() if key in known}
+        payload = {key: value for key, value in data.items() if key in known and key != "all"}
         if "values" in payload:
             payload["values"] = parse_csv(payload["values"])
         elif "value" in data:
@@ -316,18 +902,31 @@ class CollectionRule:
             payload["collections"] = parse_csv(payload["collections"])
         elif "collection" in data:
             payload["collections"] = parse_csv(data.get("collection"))
+        conditions: list[CollectionCondition] = []
+        raw_all = data.get("all")
+        if isinstance(raw_all, list) and raw_all:
+            conditions = [
+                CollectionCondition.from_dict(item)
+                for item in raw_all
+                if isinstance(item, dict)
+            ]
         rule = cls(**payload)
+        if conditions:
+            rule.all = conditions
+            rule.__post_init__()
+        elif rule.values:
+            rule.all = conditions_from_legacy(rule.match, rule.values)
         rule.validate()
         return rule
 
 
 @dataclass
 class ComputedCollections:
-    included: list[str] = field(default_factory=list)
-    excluded: list[str] = field(default_factory=list)
-    included_sources: dict[str, list[str]] = field(default_factory=dict)
-    excluded_sources: dict[str, list[str]] = field(default_factory=dict)
-    matched_rule_ids: list[str] = field(default_factory=list)
+    included: list[str] = dc_field(default_factory=list)
+    excluded: list[str] = dc_field(default_factory=list)
+    included_sources: dict[str, list[str]] = dc_field(default_factory=dict)
+    excluded_sources: dict[str, list[str]] = dc_field(default_factory=dict)
+    matched_rule_ids: list[str] = dc_field(default_factory=list)
 
     def names(self) -> list[str]:
         skip = {_norm(name) for name in self.excluded}
@@ -442,7 +1041,9 @@ def explain_record_collections(
     )
     overlay_names = unique_names([*engine, *computed.included])
     overlay_keys = {
-        _norm(name) for name in overlay_names if _norm(name) not in {_norm(item) for item in computed.excluded}
+        _norm(name)
+        for name in overlay_names
+        if _norm(name) not in {_norm(item) for item in computed.excluded}
     }
     current_keys = {_norm(name) for name in current_names}
     excluded_keys = {_norm(name) for name in computed.excluded}
@@ -561,12 +1162,8 @@ def upsert_pin(
             continue
         if rule.enabled and collection in rule.collections:
             return updated, None
-        updated[index] = CollectionRule(
-            id=rule.id,
-            match=rule.match,
-            values=list(rule.values),
+        updated[index] = rule.copy_with(
             collections=unique_names([*rule.collections, collection]),
-            mode=rule.mode,
             enabled=True,
             pin=True,
             description=description or rule.description,
@@ -581,6 +1178,7 @@ def upsert_pin(
         enabled=True,
         pin=True,
         description=description,
+        all=conditions_from_legacy(match, [value]),
     )
     pin.id = allocate_id(pin.suggested_id(), [item.id for item in updated])
     pin.validate()
@@ -627,18 +1225,7 @@ def remove_pin(
             name for name in rule.collections if _norm(name) != collection_key
         ]
         if leftover:
-            kept.append(
-                CollectionRule(
-                    id=rule.id,
-                    match=rule.match,
-                    values=list(rule.values),
-                    collections=leftover,
-                    mode=rule.mode,
-                    enabled=rule.enabled,
-                    pin=True,
-                    description=rule.description,
-                )
-            )
+            kept.append(rule.copy_with(collections=leftover, pin=True))
         else:
             removed.append(rule)
     return kept, removed
@@ -703,8 +1290,8 @@ def recompute_records(
 
 def collection_rule_from_form(
     *,
-    match: str,
-    values: str | Sequence[str],
+    match: str = "mentions",
+    values: str | Sequence[str] = (),
     collections: str | Sequence[str],
     mode: str = "include",
     enabled: bool = True,
@@ -712,24 +1299,55 @@ def collection_rule_from_form(
     rule_id: str = "",
     description: str = "",
     existing_ids: Iterable[str] = (),
+    conditions: Sequence[CollectionCondition | dict[str, Any]] | None = None,
 ) -> CollectionRule:
-    if match not in MATCH_KINDS:
-        raise ValueError(f"Unknown collection match {match!r}")
     if mode not in MODES:
         raise ValueError(f"Unknown collection mode {mode!r}")
+    parsed_conditions: list[CollectionCondition] = []
+    if conditions:
+        for item in conditions:
+            if isinstance(item, CollectionCondition):
+                parsed_conditions.append(item)
+            else:
+                parsed_conditions.append(CollectionCondition.from_dict(dict(item)))
     parsed_values = parse_csv(values)
+    if not parsed_conditions:
+        if match not in MATCH_KINDS:
+            raise ValueError(f"Unknown collection match {match!r}")
+        if not parsed_values:
+            raise ValueError("Collection rule needs something to match")
+        parsed_conditions = conditions_from_legacy(match, parsed_values)  # type: ignore[arg-type]
     parsed_collections = parse_csv(collections)
-    if not parsed_collections and parsed_values and match in {"mentions", "is_ci", "fandom_mentions", "author_ci"}:
-        parsed_collections = [parsed_values[0]]
+    if not parsed_collections and parsed_conditions:
+        first = parsed_conditions[0]
+        if first.field in _AUTO_COLLECTION_FIELDS and first.text_values():
+            parsed_collections = [first.text_values()[0]]
+    legacy = legacy_from_conditions(parsed_conditions)
+    rule_match: CollectionMatch = legacy[0] if legacy else (
+        "work_id"
+        if parsed_conditions and parsed_conditions[0].field == "work_id"
+        else "calibre_uuid"
+        if parsed_conditions and parsed_conditions[0].field == "calibre_uuid"
+        else "mentions"
+    )
+    rule_values = legacy[1] if legacy else (
+        parsed_conditions[0].text_values()
+        if parsed_conditions
+        and parsed_conditions[0].field in {"work_id", "calibre_uuid"}
+        else []
+    )
+    if pin and not rule_values and parsed_conditions:
+        rule_values = parsed_conditions[0].text_values()
     rule = CollectionRule(
         id=rule_id.strip() or "collection",
-        match=match,  # type: ignore[arg-type]
-        values=parsed_values,
+        match=rule_match,
+        values=rule_values,
         collections=parsed_collections,
         mode=mode,  # type: ignore[arg-type]
         enabled=bool(enabled),
         pin=bool(pin),
         description=description,
+        all=parsed_conditions,
     )
     if not rule_id.strip():
         rule.id = allocate_id(rule.suggested_id(), existing_ids)
@@ -785,16 +1403,7 @@ def toggle_collection_rule(
         if existing.id != rule_id:
             continue
         flag = (not existing.enabled) if enabled is None else bool(enabled)
-        updated[index] = CollectionRule(
-            id=existing.id,
-            match=existing.match,
-            values=list(existing.values),
-            collections=list(existing.collections),
-            mode=existing.mode,
-            enabled=flag,
-            pin=existing.pin,
-            description=existing.description,
-        )
+        updated[index] = existing.copy_with(enabled=flag)
         return updated
     raise KeyError(f"No collection rule named {rule_id!r}")
 
@@ -832,7 +1441,7 @@ def save_collection_rules(path: Path | str, rules: Sequence[CollectionRule]) -> 
         import yaml
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("PyYAML required: pip install pyyaml") from exc
-    payload = {"rules": [rule.to_dict() | {"id": rule.id} for rule in rules]}
+    payload = {"rules": [rule.to_dict() for rule in rules]}
     text = yaml.safe_dump(
         payload,
         sort_keys=False,

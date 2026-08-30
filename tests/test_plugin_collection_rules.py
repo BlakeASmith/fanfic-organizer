@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 PLUGIN_COLLECTIONS = (
@@ -19,11 +20,48 @@ def load_plugin_collections():
 
 
 def test_plugin_match_and_mode_choices_match_library():
-    from ao3kit.tags.collections import MATCH_CHOICES, MODE_CHOICES
+    from ao3kit.tags.collections import (
+        FIELD_CHOICES,
+        MATCH_CHOICES,
+        MODE_CHOICES,
+        OP_CHOICES,
+    )
 
     mod = load_plugin_collections()
     assert list(mod.MATCH_CHOICES) == list(MATCH_CHOICES)
     assert list(mod.MODE_CHOICES) == list(MODE_CHOICES)
+    assert list(mod.FIELD_CHOICES) == list(FIELD_CHOICES)
+    assert list(mod.OP_CHOICES) == list(OP_CHOICES)
+
+
+def test_build_collections_add_conditions_json():
+    mod = load_plugin_collections()
+    argv = mod.build_collections_add_argv(
+        collections="Big Harry Potter",
+        conditions=[
+            {"field": "fandom", "op": "contains", "values": ["Harry Potter"]},
+            {"field": "words", "op": "gte", "value": 200000},
+        ],
+    )
+    assert argv[:3] == ["config", "collections", "add"]
+    assert "--conditions-json" in argv
+    payload = json.loads(argv[argv.index("--conditions-json") + 1])
+    assert payload[0]["field"] == "fandom"
+    assert payload[1]["field"] == "words"
+
+
+def test_format_when_compound():
+    mod = load_plugin_collections()
+    row = {
+        "all": [
+            {"field": "fandom", "op": "contains", "values": ["Harry Potter"]},
+            {"field": "words", "op": "gte", "value": 200000},
+        ],
+        "collections": ["Big Harry Potter"],
+        "when": 'fandom contains “Harry Potter” AND word count ≥ 200000',
+    }
+    assert "AND" in mod.format_when(row)
+    assert "Harry Potter" in mod.format_when(row)
 
 
 def test_build_collections_add_and_pin_argv():
