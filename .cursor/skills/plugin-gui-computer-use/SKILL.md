@@ -80,7 +80,7 @@ Plugin custom columns (created on first import into an empty library, or Plugin 
 | Original Tags | `#originaltags` |
 | word count | `#wordcount` |
 
-Series is Calibre’s built-in field (AO3 series name + index). Identifiers: `url`, `ao3`, `ao3series`.
+Series is Calibre’s built-in field (AO3 series name + index). Publisher is `Archive of Our Own`; Published is the AO3 published / listing date. Identifiers: `url`, `ao3`, `ao3series`.
 
 **To show a hidden column (once):** right-click any column header → check the name. Drag the header next to Author(s) if the test must read it without horizontal scroll. If Title + Author is enough, skip this.
 

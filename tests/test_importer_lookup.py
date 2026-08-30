@@ -30,6 +30,11 @@ def load_importer():
             self.title = title
             self.authors = authors
             self.tags = []
+            self.publisher = None
+            self.pubdate = None
+            self.series = None
+            self.series_index = None
+            self.comments = None
             self._ids = {}
 
         def set_identifiers(self, ids):
@@ -185,3 +190,39 @@ def test_refresh_updates_recount_existing_books():
     assert model.books_added_n is None
     assert model.refresh_ids_args == ([5], 3)
     assert tags.recount_calls == 1
+
+
+def test_build_metadata_sets_publisher_and_pubdate():
+    from datetime import datetime, timezone
+
+    mod = load_importer()
+    mi = mod.build_metadata(
+        {
+            "work_id": "42",
+            "title": "Dated Work",
+            "author": "Writer",
+            "date": "2026-08-21",
+            "tags": ["Fluff"],
+        }
+    )
+    assert mi.publisher == "Archive of Our Own"
+    assert mi.pubdate == datetime(2026, 8, 21, tzinfo=timezone.utc)
+
+    no_date = mod.build_metadata({"work_id": "43", "title": "Undated", "author": "W"})
+    assert no_date.publisher == "Archive of Our Own"
+    assert no_date.pubdate is None
+
+
+def test_build_metadata_parses_blurb_date():
+    from datetime import datetime, timezone
+
+    mod = load_importer()
+    mi = mod.build_metadata(
+        {
+            "work_id": "44",
+            "title": "Blurb",
+            "author": "W",
+            "date": "21 Aug 2026",
+        }
+    )
+    assert mi.pubdate == datetime(2026, 8, 21, tzinfo=timezone.utc)

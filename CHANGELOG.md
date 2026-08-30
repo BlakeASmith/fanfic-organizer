@@ -17,11 +17,9 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
-<<<<<<< HEAD
+- Populate Calibre’s built-in **Publisher** (`Archive of Our Own`) and **Published** (AO3 published / listing date) on import, Fill from AO3, and simplify writeback.
 - Add **Open in AO3** as a top-level library right-click action (teal icon) and on the Fanfic Organizer toolbar menu to open selected books on archiveofourown.org from their `ao3` / `url` identifiers ([demo](demos/README.md#open-in-ao3)).
-=======
 - Support richer collection rules: AND conditions, title/summary/series/relationship/character/word-count/complete fields, wildcard and regex text match, and optional case-sensitive matching (Collections & tag rules and `config collections --when`).
->>>>>>> origin/main
 - Split **Check for updates…** into separate **Include preview pre-releases** and **Include PR pre-releases** checkboxes (each remembered) so PR builds are easy to find without main-branch preview noise; when both are on, PR rows sort above previews at the same version.
 - Publish a GitHub **PR pre-release** (`X.Y.Z-pr.<n>+<sha>`) for each pull-request plugin build, with a download comment on the PR; **Check for updates…** lists and installs those builds when **Include PR pre-releases** is checked (new commits on the same PR stay installable even when only the ``+sha`` changes).
 - Add selected-book actions to the Calibre library right-click menu (Complete, Fill from AO3, Download EPUB, covers, series, simplify, collections, Search similar); the right-click submenu shows only those selection actions (Search AO3, jobs, tags, settings stay on the toolbar).
