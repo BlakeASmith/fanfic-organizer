@@ -150,7 +150,7 @@ Count Pages columns (page count / readability) are not created. There is no sepa
 
 After **Import** (with simplify) or **Simplify tags, fandoms & relationships for selected books**, the plugin prints a unique `before → after` remapping summary in the progress log and in the completion dialog (Show details). The same AO3 synonym collapse and user tag rules run on Tags, Fandom, and Relationships. Fandom metatags (e.g. Marvel) are appended to Fandom only.
 
-**Edit collections** (Selected books, and a button on **Collections & tag rules**) lists each selected book and collection, shows which rules put it there or keep it out, and lets you Always / Never pin, add a book to an existing or new collection (even when no rule matches, or it already belongs to a different one), keep an unexplained membership as a pin, edit or turn off shared rules, or write the computed set back to Calibre. It does not fetch AO3 or change tags. **Recompute collections** and **Add to a collection** remain shortcuts under Selected books. **Collections & tag rules** has two tabs. **Collections** are computed from rules (tag contains / is exactly, fandom, author, or a single AO3 work). Match fields autocomplete tag and fandom names from the local tag cache (and authors from the open library). Recompute and add use those rules only — they do not fetch AO3 or run tag keep/rename/drop. Recompute replaces the Collections column. Adding a book to a collection by hand — in Calibre, or **Add selected books to a collection** — is saved as a per-work pin so the next recompute puts it back. Use a **Never** rule to keep matching books out; removing a collection in Calibre alone does not stick. Plugin settings can turn off remembering hand-adds (`collections_remember_manual_adds`). **Tag rules** keep / rename / remove tags. Uncheck **On** to ignore a rule; double-click a row to edit. **Try a tag** shows AO3’s usual name plus tag rules. Older mapping rows that named a collection still apply on Simplify until you move them to the Collections tab.
+**Edit collections** (Selected books, and a button on **Collections & tag rules**) lists each selected book and collection, shows which rules put it there or keep it out, and lets you Always / Never pin, add a book to an existing or new collection (even when no rule matches, or it already belongs to a different one), keep an unexplained membership as a pin, edit or turn off shared rules, or write the computed set back to Calibre. It does not fetch AO3 or change tags. **Recompute collections** and **Add to a collection** remain shortcuts under Selected books. **Collections & tag rules** has two tabs. **Collections** are computed from rules: one or more AND conditions per rule (tag / fandom / relationship / character / author / title / summary / series / word count / complete / this work), with contains / exact / wildcard / regex and optional case-sensitive text. Match fields autocomplete tag and fandom names from the local tag cache (and authors from the open library). Recompute and add use those rules only — they do not fetch AO3 or run tag keep/rename/drop. Recompute replaces the Collections column. Adding a book to a collection by hand — in Calibre, or **Add selected books to a collection** — is saved as a per-work pin so the next recompute puts it back. Use a **Never** rule to keep matching books out; removing a collection in Calibre alone does not stick. Plugin settings can turn off remembering hand-adds (`collections_remember_manual_adds`). **Tag rules** keep / rename / remove tags. Uncheck **On** to ignore a rule; double-click a row to edit. **Try a tag** shows AO3’s usual name plus tag rules. Older mapping rows that named a collection still apply on Simplify until you move them to the Collections tab.
 
 **Warm tag cache** (Tags and collections) collects unique tags / fandoms / ships / characters from the **whole open library**, writes them to the XDG cache names file, and shells out to `python -m ao3kit tags warm start`. The daemon fetches uncached AO3 mappings slowly so Search / Download / Simplify can still run; it does not write Calibre metadata. If a warmer is already running, this updates the names file and the daemon picks it up on the next poll. It shows up as job id `warm` in **Running jobs…**. **Tag cache log** attaches to the XDG cache log (same as `python -m ao3kit tags warm log --follow` or `python -m ao3kit job attach warm`). **Stop tag cache** sends `tags warm stop` (or `job stop warm`) and shows which tags were cached this run (Show details for the full list).
 
@@ -248,15 +248,18 @@ Edit collection rules in the Calibre plugin (**Edit collections of selected book
 
 Collections on a work are a **view of rules**, not a separate stored truth. Recompute anytime (`tags collections` or the plugin action). That path does not fetch AO3 or simplify tags. Membership is **includes** (YAML rules, plus leftover mapping/Python collections already stored on the work) **minus excludes**. The plugin **Edit collections of selected books** dialog (and `tags collections --explain`) shows which rules produced each membership.
 
-| When | Then |
-|---|---|
-| tag contains | Any tag/fandom/ship/character name already on the work includes this text |
-| tag is exactly | Exact tag (or AO3’s usual name) |
-| fandom contains | Fandom name includes this text |
-| author is | Exact author name |
-| this AO3 work / this book | Per-work pin (`work_id` or Calibre UUID) |
+Each rule has an **AND** list of conditions (`all:` in `collections.yaml`). Multiple values on one text condition are OR. Multiple rules that target the same collection still union. Legacy single `match` + `values` rows desugar to one condition.
 
-A collection you add by hand on one book becomes an include pin for that work (unless `collections_remember_manual_adds` is false). Manual removals do **not** become exclude pins — add a **Never** rule if you want a book kept out.
+| Field | Ops |
+|---|---|
+| tag / fandom / relationship / character / author / title / summary / series | contains, is exactly, wildcard (`*` / `?`), regex; case-insensitive by default |
+| word count | = / > / ≥ / < / ≤ |
+| complete | is complete / incomplete |
+| this AO3 work / this book | Exact id (per-work pins) |
+
+Example: fandom contains “Harry Potter” AND words ≥ 200000 → Big Harry Potter. CLI: `config collections add --when fandom:contains:Harry Potter --when words:gte:200000 --collection "Big Harry Potter"`.
+
+A collection you add by hand on one book becomes an include pin for that work (unless `collections_remember_manual_adds` is false). Manual removals do **not** become exclude pins — add a **Never** rule if you want a book kept out. Python rule modules remain for custom logic the table cannot express.
 
 ### Extra tag mappings (on top of canonical)
 
