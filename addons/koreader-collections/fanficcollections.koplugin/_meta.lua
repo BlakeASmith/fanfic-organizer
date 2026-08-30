@@ -4,6 +4,7 @@ return {
     name = "fanficcollections",
     fullname = _("Fanfic collections"),
     description = _(
-        "Browse books by fanfic-organizer collection names synced from Calibre."
+        "Browse Fanfic Organizer collection names synced from Calibre. "
+        .. "For metadata filters and smart shelves, see SmartCollections."
     ),
 }

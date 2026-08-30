@@ -67,6 +67,12 @@ def library_book_id(book: Any) -> int | None:
     return None
 
 
+def _storage_label(oncard: str | None) -> str:
+    if oncard is None:
+        return "main"
+    return str(oncard)
+
+
 def _dedupe_books(books: Iterable[Any], *, seen: set[str] | None = None) -> Iterable[Any]:
     if seen is None:
         seen = set()
@@ -82,19 +88,22 @@ def _dedupe_books(books: Iterable[Any], *, seen: set[str] | None = None) -> Iter
         yield book
 
 
-def _iter_booklists(booklists: Iterable[Any] | None) -> Iterable[Any]:
-    """Yield books from GUI ``booklists()`` (main, card a, card b)."""
+def _iter_booklists(booklists: Iterable[Any] | None) -> Iterable[tuple[Any, str]]:
+    """Yield ``(book, storage)`` from GUI ``booklists()`` (main, card a, card b)."""
     if not booklists:
         return
     seen: set[str] = set()
-    for booklist in booklists:
+    labels = ("main", "carda", "cardb")
+    for idx, booklist in enumerate(booklists):
         if not booklist:
             continue
-        yield from _dedupe_books(booklist, seen=seen)
+        storage = labels[idx] if idx < len(labels) else "main"
+        for book in _dedupe_books(booklist, seen=seen):
+            yield book, storage
 
 
-def _iter_device_books(device: Any) -> Iterable[Any]:
-    """Yield books from main memory and cards via Calibre's ``books(oncard=…)``.
+def _iter_device_books(device: Any) -> Iterable[tuple[Any, str]]:
+    """Yield ``(book, storage)`` from main memory and cards via ``books(oncard=…)``.
 
     Stock Calibre device drivers (including KOBOTOUCH) take ``oncard`` /
     ``end_session`` — never ``main_memory``. Match ``gui2.device``: scan
@@ -122,7 +131,9 @@ def _iter_device_books(device: Any) -> Iterable[Any]:
                 return
         if not booklist:
             continue
-        yield from _dedupe_books(booklist, seen=seen)
+        storage = _storage_label(oncard)
+        for book in _dedupe_books(booklist, seen=seen):
+            yield book, storage
 
 
 def build_collections_index(
@@ -142,7 +153,7 @@ def build_collections_index(
         if booklists is not None
         else _iter_device_books(device)
     )
-    for book in source:
+    for book, storage in source:
         db_id = library_book_id(book)
         lpath = getattr(book, "lpath", None)
         if not db_id or not lpath:
@@ -154,6 +165,8 @@ def build_collections_index(
         entry: dict[str, Any] = {
             "lpath": str(lpath).replace("\\", "/"),
             "collections": collections,
+            "storage": storage,
+            "filename": Path(str(lpath).replace("\\", "/")).name,
         }
         title = getattr(mi, "title", None)
         if title:
@@ -175,6 +188,14 @@ def build_collections_index_from_rows(rows: Iterable[dict[str, Any]]) -> list[di
             continue
         collections = _strip_collections(row.get("collections"))
         entry: dict[str, Any] = {"lpath": lpath, "collections": collections}
+        storage = row.get("storage")
+        if storage:
+            entry["storage"] = str(storage)
+        filename = row.get("filename")
+        if filename:
+            entry["filename"] = str(filename)
+        elif lpath:
+            entry["filename"] = Path(lpath).name
         title = row.get("title")
         if title:
             entry["title"] = str(title)
