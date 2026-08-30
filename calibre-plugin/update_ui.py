@@ -37,8 +37,20 @@ from calibre_plugins.fanfic_organizer.updates import (
     is_same_installed_build,
     latest_release,
     latest_stable_release,
+    release_list_sort_key,
     spawn_calibre_restart,
 )
+
+
+def _migrate_prerelease_prefs() -> None:
+    """Split the old combined checkbox into preview vs PR prefs once."""
+    if not prefs.get("include_prereleases", False):
+        return
+    if not prefs.get("include_previews", False):
+        prefs["include_previews"] = True
+    if not prefs.get("include_pr_builds", False):
+        prefs["include_pr_builds"] = True
+    prefs["include_prereleases"] = False
 
 
 class _FetchReleasesWorker(QThread):
@@ -81,6 +93,8 @@ class UpdateCheckDialog(QDialog):
         self._fetch_worker: _FetchReleasesWorker | None = None
         self._install_worker: _InstallReleaseWorker | None = None
 
+        _migrate_prerelease_prefs()
+
         layout = QVBoxLayout()
         self.setLayout(layout)
 
@@ -99,20 +113,34 @@ class UpdateCheckDialog(QDialog):
         form.addRow("Latest on GitHub", self.latest_label)
         layout.addLayout(form)
 
-        self.include_prereleases = QCheckBox(
-            "Include preview / PR pre-releases"
+        self.include_previews = QCheckBox(
+            "Include preview pre-releases (main branch)"
         )
-        self.include_prereleases.setChecked(
-            bool(prefs.get("include_prereleases", False))
+        self.include_previews.setChecked(
+            bool(prefs.get("include_previews", False))
         )
-        self.include_prereleases.setToolTip(
-            "When checked, list automated GitHub pre-releases "
-            "(main-branch X.Y.Z-preview.<run>+<sha> and PR "
-            "X.Y.Z-pr.<n>+<sha>) alongside standard releases. "
+        self.include_previews.setToolTip(
+            "When checked, list automated main-branch GitHub pre-releases "
+            "(X.Y.Z-preview.<run>+<sha>) alongside standard releases. "
             "Prefer standard releases for daily use."
         )
-        self.include_prereleases.stateChanged.connect(self._on_prerelease_toggled)
-        layout.addWidget(self.include_prereleases)
+        self.include_previews.stateChanged.connect(self._on_filters_toggled)
+        layout.addWidget(self.include_previews)
+
+        self.include_pr_builds = QCheckBox(
+            "Include PR pre-releases (pull requests)"
+        )
+        self.include_pr_builds.setChecked(
+            bool(prefs.get("include_pr_builds", False))
+        )
+        self.include_pr_builds.setToolTip(
+            "When checked, list pull-request GitHub pre-releases "
+            "(X.Y.Z-pr.<n>+<sha>) alongside standard releases. "
+            "Use this to try a PR build without scrolling through main-branch "
+            "previews."
+        )
+        self.include_pr_builds.stateChanged.connect(self._on_filters_toggled)
+        layout.addWidget(self.include_pr_builds)
 
         self.status = QLabel("Contacting GitHub…")
         self.status.setWordWrap(True)
@@ -199,15 +227,27 @@ class UpdateCheckDialog(QDialog):
         self._all_releases = list(worker.finished_with_result or [])
         self._apply_release_list()
 
-    def _on_prerelease_toggled(self, _state=None):
-        prefs["include_prereleases"] = self.include_prereleases.isChecked()
+    def _on_filters_toggled(self, _state=None):
+        prefs["include_previews"] = self.include_previews.isChecked()
+        prefs["include_pr_builds"] = self.include_pr_builds.isChecked()
         if self._all_releases:
             self._apply_release_list()
 
+    def _filter_flags(self) -> tuple[bool, bool]:
+        return (
+            self.include_previews.isChecked(),
+            self.include_pr_builds.isChecked(),
+        )
+
     def _apply_release_list(self):
-        include = self.include_prereleases.isChecked()
-        self._releases = filter_releases(
-            self._all_releases, include_prereleases=include
+        include_previews, include_pr_builds = self._filter_flags()
+        filtered = filter_releases(
+            self._all_releases,
+            include_previews=include_previews,
+            include_pr_builds=include_pr_builds,
+        )
+        self._releases = sorted(
+            filtered, key=release_list_sort_key, reverse=True
         )
         self.version_combo.blockSignals(True)
         self.version_combo.clear()
@@ -231,11 +271,12 @@ class UpdateCheckDialog(QDialog):
         self.version_combo.setEnabled(bool(self._releases))
         latest = latest_release(self._releases)
         latest_stable = latest_stable_release(self._all_releases)
+        any_channel = include_previews or include_pr_builds
         if latest is None:
             self.latest_label.setText("No releases found")
-            if self._all_releases and not include:
+            if self._all_releases and not any_channel:
                 self.status.setText(
-                    "No standard releases found. Enable preview / PR "
+                    "No standard releases found. Enable preview or PR "
                     "pre-releases to see automated test builds."
                 )
             else:
@@ -244,7 +285,7 @@ class UpdateCheckDialog(QDialog):
                 )
             self._refresh_selection()
             return
-        if include and latest_stable is not None:
+        if any_channel and latest_stable is not None:
             latest_text = latest_stable.version_text
             if (
                 latest.is_channel_prerelease
@@ -253,7 +294,7 @@ class UpdateCheckDialog(QDialog):
                 kind = "PR" if latest.is_pr_build else "preview"
                 latest_text += f" ({kind}: {latest.version_text})"
             self.latest_label.setText(latest_text)
-        elif include and latest.is_channel_prerelease:
+        elif any_channel and latest.is_channel_prerelease:
             kind = "PR" if latest.is_pr_build else "preview"
             self.latest_label.setText(f"{latest.version_text} ({kind} only)")
         else:

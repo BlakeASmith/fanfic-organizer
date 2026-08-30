@@ -68,7 +68,7 @@ jobs:
               `GitHub pre-release: [${version}](${htmlUrl})`,
               '',
               'This is a **PR test build** (`X.Y.Z-pr.<n>+<sha>`), marked as a GitHub pre-release.',
-              'Enable **Include preview / PR pre-releases** in **Check for updates…** to install it from the plugin.',
+              'Enable **Include PR pre-releases** in **Check for updates…** to install it from the plugin.',
               'Prefer a [standard release](https://github.com/${{ github.repository }}/releases/latest) for daily use.',
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({

@@ -35,7 +35,9 @@ prefs.defaults = {
     'set_calibre_cover': True,
     'context_menu_placed': False,
     'koreader_path': '.adds/koreader',
-    'include_prereleases': False,
+    'include_prereleases': False,  # legacy; migrated to the two flags below
+    'include_previews': False,
+    'include_pr_builds': False,
 }
 
 

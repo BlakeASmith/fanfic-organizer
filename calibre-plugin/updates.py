@@ -318,22 +318,57 @@ def fetch_releases(*, per_page: int = 100) -> list[ReleaseInfo]:
 def filter_releases(
     releases: Iterable[ReleaseInfo],
     *,
-    include_prereleases: bool = False,
+    include_previews: bool = False,
+    include_pr_builds: bool = False,
+    include_prereleases: bool | None = None,
 ) -> list[ReleaseInfo]:
     """Return releases for the update picker.
 
-    When ``include_prereleases`` is false, preview and PR GitHub pre-releases
-    are omitted.
+    ``include_previews`` and ``include_pr_builds`` control main-branch preview
+    and pull-request pre-releases independently. ``include_prereleases`` is a
+    deprecated alias that enables both when set.
     """
-    items = list(releases)
-    if include_prereleases:
-        return items
-    return [item for item in items if not item.is_channel_prerelease]
+    if include_prereleases is not None:
+        include_previews = include_prereleases
+        include_pr_builds = include_prereleases
+    out: list[ReleaseInfo] = []
+    for item in releases:
+        if item.is_pr_build:
+            if include_pr_builds:
+                out.append(item)
+        elif item.is_preview:
+            if include_previews:
+                out.append(item)
+        else:
+            out.append(item)
+    return out
+
+
+def release_list_sort_key(release: ReleaseInfo) -> tuple:
+    """Sort key for the updater combo (use with ``reverse=True``).
+
+    Same base version: stable, then PR builds, then main-branch previews so PR
+    rows are not buried under preview noise when both filters are on.
+    """
+    if release.is_pr_build:
+        channel = 1
+    elif release.is_preview:
+        channel = 0
+    else:
+        channel = 2
+    return (
+        release.parsed.major,
+        release.parsed.minor,
+        release.parsed.patch,
+        channel,
+        _prerelease_sort_key(release.parsed.prerelease),
+        release.parsed.build or "",
+    )
 
 
 def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
     ordered = sorted(
-        releases, key=lambda item: version_sort_key(item.parsed), reverse=True
+        releases, key=release_list_sort_key, reverse=True
     )
     return ordered[0] if ordered else None
 
