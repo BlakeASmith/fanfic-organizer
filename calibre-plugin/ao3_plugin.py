@@ -25,11 +25,12 @@ except NameError:
 
 
 PLUGIN_ICON = 'images/icon.png'
+OPEN_IN_AO3_ICON = 'images/open-in-ao3.png'
 
 
-def load_plugin_icon(action) -> QIcon:
+def load_plugin_icon(action, resource: str = PLUGIN_ICON) -> QIcon:
     try:
-        data = action.load_resources([PLUGIN_ICON]).get(PLUGIN_ICON)
+        data = action.load_resources([resource]).get(resource)
     except Exception:
         data = None
     if not data:
@@ -169,6 +170,12 @@ class FanficOrganizerPlugin(InterfaceAction):
         from calibre_plugins.fanfic_organizer.context_menu import OPEN_IN_AO3_LABEL
 
         action = QAction(OPEN_IN_AO3_LABEL, self.gui)
+        icon = load_plugin_icon(self, OPEN_IN_AO3_ICON)
+        action.setIcon(icon)
+        try:
+            action.setIconVisibleInMenu(True)
+        except Exception:
+            pass
         action.setStatusTip('Open the selected book(s) on archiveofourown.org')
         action.triggered.connect(self.open_selected_in_ao3)
         self._open_in_ao3_action = action
@@ -253,6 +260,11 @@ class FanficOrganizerPlugin(InterfaceAction):
             open_ao3 = self.menu.addAction(
                 'Open in AO3', self.open_selected_in_ao3
             )
+            open_ao3.setIcon(load_plugin_icon(self, OPEN_IN_AO3_ICON))
+            try:
+                open_ao3.setIconVisibleInMenu(True)
+            except Exception:
+                pass
             open_ao3.setEnabled(has_selection)
             open_ao3.setStatusTip(
                 'Open the selected book(s) on archiveofourown.org'
