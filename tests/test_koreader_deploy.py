@@ -41,16 +41,27 @@ class _Meta:
 
 
 class _Book:
-    def __init__(self, db_id: int, lpath: str):
-        self.db_id = db_id
+    def __init__(
+        self,
+        library_id: int | None,
+        lpath: str,
+        *,
+        via: str = "application_id",
+    ):
         self.lpath = lpath
+        self.application_id = None
+        self.db_id = None
+        if library_id is not None:
+            setattr(self, via, library_id)
 
 
 class _Db:
     def __init__(self, meta: dict[int, _Meta]):
         self._meta = meta
+        self.get_metadata_calls: list[tuple[object, bool]] = []
 
-    def get_metadata(self, db_id, get_user_categories=False):
+    def get_metadata(self, db_id, index_is_id=False, get_user_categories=False):
+        self.get_metadata_calls.append((db_id, index_is_id))
         return self._meta[db_id]
 
 
@@ -67,19 +78,20 @@ class _Device:
         card_books: list[_Book] | None = None,
     ):
         self._books = books
-        self._card_books = card_books or []
+        self._card_books = list(card_books or [])
         self._main_prefix = main_prefix
         self._card_a_prefix = card_prefix
         self.DEVICE_PLUGBOARD_NAME = plugboard
+        self.books_calls: list[tuple[object, bool]] = []
 
-    def books(self, main_memory=True, oncard=None):
+    def books(self, oncard=None, end_session=True):
+        # Mirror stock Calibre: reject the old mistaken main_memory kwarg.
+        self.books_calls.append((oncard, end_session))
         if oncard == "carda":
-            return list(self._card_books)
+            return list(self._card_books) if self._card_a_prefix else []
         if oncard == "cardb":
             return []
-        if main_memory:
-            return list(self._books)
-        return []
+        return list(self._books)
 
 
 def _seed_kobo_koreader(prefix: Path, *, subdir: str = ".adds/koreader") -> Path:
@@ -114,31 +126,90 @@ def test_build_collections_index_from_device_books(tmp_path: Path):
     assert entries[0]["collections"] == ["Harry Potter", "Fluff"]
     assert entries[0]["storage"] == "main"
     assert entries[1]["collections"] == []
+    assert [call[0] for call in device.books_calls] == [None, "carda", "cardb"]
+    assert db.get_metadata_calls == [(1, True), (2, True)]
 
 
-def test_build_collections_index_includes_sd_card_books(tmp_path: Path):
-    mount = tmp_path / "internal"
+def test_build_collections_index_uses_application_id(tmp_path: Path):
+    """Calibre Kobo matching sets application_id, not db_id."""
+    mount = tmp_path / "kobo"
+    _seed_kobo_koreader(mount)
+    db = _Db({7: _Meta("Alpha", ["A"], ["DW"])})
+    matched = _Book(7, "A/Alpha.epub", via="application_id")
+    unmatched = _Book(None, "Other/Sideload.epub")
+    sony_style = _Book(7, "A/Also.epub", via="db_id")
+    # Distinct library ids so both matched rows are kept.
+    sony_style.db_id = 7
+    device = _Device([matched, unmatched, sony_style], str(mount))
+    entries = build_collections_index(db, device)
+    assert [row["lpath"] for row in entries] == ["A/Alpha.epub", "A/Also.epub"]
+    assert all(row["collections"] == ["DW"] for row in entries)
+
+
+def test_build_collections_index_prefers_gui_booklists(tmp_path: Path):
+    mount = tmp_path / "kobo"
+    _seed_kobo_koreader(mount)
+    db = _Db({3: _Meta("From GUI", ["A"], ["Matched"])})
+    device = _Device([_Book(99, "ignored.epub")], str(mount))
+    booklists = ([_Book(3, "A/From GUI.epub")], [], [])
+    entries = build_collections_index(db, device, booklists=booklists)
+    assert len(entries) == 1
+    assert entries[0]["lpath"] == "A/From GUI.epub"
+    assert entries[0]["collections"] == ["Matched"]
+    assert device.books_calls == []
+
+
+def test_build_collections_index_includes_card_books(tmp_path: Path):
+    mount = tmp_path / "kobo"
     sd = tmp_path / "sd"
     _seed_kobo_koreader(mount)
     _seed_kobo_koreader(sd)
     db = _Db(
         {
-            1: _Meta("Internal", ["Author A"], ["Main"]),
-            2: _Meta("SD card", ["Author B"], ["SD"]),
+            1: _Meta("Main", ["A"], ["On Device"]),
+            2: _Meta("Card", ["B"], ["On SD"]),
         }
     )
     device = _Device(
-        [_Book(1, "Internal.epub")],
+        [_Book(1, "A/Main.epub")],
         str(mount),
         str(sd),
-        card_books=[_Book(2, "SD/Title.epub")],
+        card_books=[_Book(2, "B/Card.epub")],
     )
     entries = build_collections_index(db, device)
-    assert len(entries) == 2
-    by_lpath = {entry["lpath"]: entry for entry in entries}
-    assert by_lpath["Internal.epub"]["storage"] == "main"
-    assert by_lpath["SD/Title.epub"]["storage"] == "carda"
-    assert by_lpath["SD/Title.epub"]["collections"] == ["SD"]
+    assert [row["lpath"] for row in entries] == ["A/Main.epub", "B/Card.epub"]
+    assert entries[0]["storage"] == "main"
+    assert entries[1]["storage"] == "carda"
+    assert entries[1]["collections"] == ["On SD"]
+
+
+def test_build_collections_index_rejects_main_memory_kwarg(tmp_path: Path):
+    """Real KOBOTOUCH.books() raises TypeError on main_memory=…."""
+
+    class _StrictKobo:
+        DEVICE_PLUGBOARD_NAME = "KOBOTOUCH"
+
+        def __init__(self, books: list[_Book], prefix: str):
+            self._books = books
+            self._main_prefix = prefix
+            self._card_a_prefix = ""
+
+        def books(self, oncard=None, end_session=True):
+            if oncard in ("carda", "cardb"):
+                return []
+            return list(self._books)
+
+    mount = tmp_path / "kobo"
+    _seed_kobo_koreader(mount)
+    db = _Db({1: _Meta("Alpha", ["A"], ["X"])})
+    device = _StrictKobo([_Book(1, "A/Alpha.epub")], str(mount))
+
+    with pytest.raises(TypeError, match="main_memory"):
+        device.books(main_memory=True)
+
+    entries = build_collections_index(db, device)
+    assert len(entries) == 1
+    assert entries[0]["collections"] == ["X"]
 
 
 def test_atomic_write_json(tmp_path: Path):
@@ -282,7 +353,9 @@ def test_deploy_to_mtp_device(tmp_path: Path):
             self.filesystem_cache = type("Cache", (), {"entries": [_Storage()]})()
             self.uploaded: dict[tuple[str, ...], bytes] = {}
 
-        def books(self, main_memory=True):
+        def books(self, oncard=None, end_session=True):
+            if oncard in ("carda", "cardb"):
+                return []
             return list(self._books)
 
         def list_folder_by_name(self, storage, *names):

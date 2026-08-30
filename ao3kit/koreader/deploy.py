@@ -47,42 +47,118 @@ def _strip_collections(raw: Any) -> list[str]:
     return out
 
 
-def _iter_device_books(device: Any):
-    """Yield ``(book, storage)`` for main memory and removable cards."""
+def library_book_id(book: Any) -> int | None:
+    """Return the open-library book id Calibre matched onto a device book.
+
+    After connect, ``gui.set_books_in_library`` stores that id on
+    ``application_id`` (Kobo and most drivers). ``db_id`` is only set by a
+    few drivers (e.g. Sony). Prefer ``application_id``.
+    """
+    for attr in ("application_id", "db_id"):
+        raw = getattr(book, attr, None)
+        if raw is None or raw is False:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return value
+    return None
+
+
+def _storage_label(oncard: str | None) -> str:
+    if oncard is None:
+        return "main"
+    return str(oncard)
+
+
+def _dedupe_books(books: Iterable[Any], *, seen: set[str] | None = None) -> Iterable[Any]:
+    if seen is None:
+        seen = set()
+    for book in books:
+        if not book:
+            continue
+        lpath = getattr(book, "lpath", None)
+        key = str(lpath).replace("\\", "/") if lpath else ""
+        if key:
+            if key in seen:
+                continue
+            seen.add(key)
+        yield book
+
+
+def _iter_booklists(booklists: Iterable[Any] | None) -> Iterable[tuple[Any, str]]:
+    """Yield ``(book, storage)`` from GUI ``booklists()`` (main, card a, card b)."""
+    if not booklists:
+        return
+    seen: set[str] = set()
+    labels = ("main", "carda", "cardb")
+    for idx, booklist in enumerate(booklists):
+        if not booklist:
+            continue
+        storage = labels[idx] if idx < len(labels) else "main"
+        for book in _dedupe_books(booklist, seen=seen):
+            yield book, storage
+
+
+def _iter_device_books(device: Any) -> Iterable[tuple[Any, str]]:
+    """Yield ``(book, storage)`` from main memory and cards via ``books(oncard=…)``.
+
+    Stock Calibre device drivers (including KOBOTOUCH) take ``oncard`` /
+    ``end_session`` — never ``main_memory``. Match ``gui2.device``: scan
+    main, carda, and cardb.
+
+    Prefer ``gui.booklists()`` when available: those lists already have
+    ``application_id`` from library matching. A fresh ``device.books()``
+    call does not.
+    """
     books_method = getattr(device, "books", None)
     if not callable(books_method):
         return
-    seen_lpaths: set[str] = set()
-    for storage in (None, "carda", "cardb"):
+    seen: set[str] = set()
+    locations = ((None, False), ("carda", False), ("cardb", True))
+    for oncard, end_session in locations:
         try:
-            if storage is None:
-                batch = books_method(main_memory=True)
-            else:
-                batch = books_method(oncard=storage)
+            booklist = books_method(oncard=oncard, end_session=end_session)
         except TypeError:
-            if storage is not None:
+            # Non-Calibre stubs may expose a zero-arg books(); only try once.
+            if oncard is not None:
                 continue
-            batch = books_method(main_memory=True)
-        for book in batch:
-            lpath = getattr(book, "lpath", None)
-            if not lpath:
-                continue
-            key = str(lpath).replace("\\", "/")
-            if key in seen_lpaths:
-                continue
-            seen_lpaths.add(key)
-            yield book, storage or "main"
+            try:
+                booklist = books_method()
+            except TypeError:
+                return
+        if not booklist:
+            continue
+        storage = _storage_label(oncard)
+        for book in _dedupe_books(booklist, seen=seen):
+            yield book, storage
 
 
-def build_collections_index(db: Any, device: Any) -> list[dict[str, Any]]:
-    """Build the collections-only JSON from books on the connected device."""
+def build_collections_index(
+    db: Any,
+    device: Any,
+    *,
+    booklists: Iterable[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the collections-only JSON from books on the connected device.
+
+    Pass Calibre ``gui.booklists()`` when calling from the plugin so matched
+    ``application_id`` values are used. Falls back to ``device.books()``.
+    """
     entries: list[dict[str, Any]] = []
-    for book, storage in _iter_device_books(device):
-        db_id = getattr(book, "db_id", None)
+    source = (
+        _iter_booklists(booklists)
+        if booklists is not None
+        else _iter_device_books(device)
+    )
+    for book, storage in source:
+        db_id = library_book_id(book)
         lpath = getattr(book, "lpath", None)
         if not db_id or not lpath:
             continue
-        mi = db.get_metadata(db_id, get_user_categories=True)
+        mi = db.get_metadata(db_id, index_is_id=True, get_user_categories=True)
         collections = _strip_collections(mi.get(COLLECTIONS_COLUMN))
         if not collections:
             collections = _strip_collections(mi.get("collections"))
@@ -111,6 +187,9 @@ def build_collections_index_from_rows(rows: Iterable[dict[str, Any]]) -> list[di
             continue
         collections = _strip_collections(row.get("collections"))
         entry: dict[str, Any] = {"lpath": lpath, "collections": collections}
+        storage = row.get("storage")
+        if storage:
+            entry["storage"] = str(storage)
         title = row.get("title")
         if title:
             entry["title"] = str(title)
@@ -308,9 +387,10 @@ def deploy_to_device(
     plugin_source: Path | None = None,
     install_koplugin: bool = True,
     koreader_subdir: str = DEFAULT_KOREADER_SUBDIR,
+    booklists: Iterable[Any] | None = None,
 ) -> dict[str, Any]:
     """Install the KOReader plugin (optional) and write collections JSON on the device."""
-    entries = build_collections_index(db, device)
+    entries = build_collections_index(db, device, booklists=booklists)
     mounts = detect_koreader_mounts(device, koreader_subdir=koreader_subdir)
     written: list[str] = []
     installed: list[str] = []

@@ -8,6 +8,7 @@ from ao3kit.koreader.deploy import (
     deploy_to_device,
     install_plugin,
     koreader_roots,
+    library_book_id,
     resolve_bundled_plugin_source,
 )
 from ao3kit.koreader.detect import (
@@ -29,5 +30,6 @@ __all__ = [
     "install_plugin",
     "koreader_deployable",
     "koreader_roots",
+    "library_book_id",
     "resolve_bundled_plugin_source",
 ]

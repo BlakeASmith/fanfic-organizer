@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Show a **Changelog** pane on **Check for updates…** with GitHub release notes for the selected build (and every listed release between your installed version and an upgrade), plus **Open on GitHub…** for the full page.
 - Add a **Include preview pre-releases** checkbox on **Check for updates…** (off by default; remembered) so standard releases stay the default list and testers can opt in to main-branch builds.
 - Add preview GitHub pre-releases to **Check for updates…** so testers can install automated main-branch builds (`X.Y.Z-preview.<run>+<sha>`) from the plugin menu.
 - Add optional **Deploy to KOReader…** for Kobo/Android with KOReader: run it from the Fanfic Organizer menu after USB sync to install a small KOReader plugin and write `fanfic.collections.json` from the `#collections` column. Deploy is blocked unless the device looks like a Kobo with KOReader (`.adds/koreader`) or Android storage with a `koreader/` folder; nothing is written to Kindles or other readers.
@@ -26,7 +27,9 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
-- Fix the bundled **Fanfic collections** KOReader plugin crashing on load: define the plugin with `WidgetContainer:extend` so Calibre can instantiate it with a UI handle, resolve book paths using SmartCollections-style Calibre library discovery, include SD-card books in deploy JSON, open collection books through the File Manager search path, and show a debug dialog instead of crashing when load/open/path lookup fails.
+- Fix the bundled **Fanfic collections** KOReader plugin crashing on load: define the plugin with `WidgetContainer:extend` so Calibre can instantiate it with a UI handle, resolve book paths from the deployed ``fanfic.collections.json`` (``lpath`` plus ``storage`` hints and KOReader home/storage roots — not Calibre ``metadata.calibre`` on the device), include SD-card books in deploy JSON, open collection books through the File Manager search path, and show a debug dialog instead of crashing when load/open/path lookup fails.
+- Fix **Deploy to KOReader…** reporting **0 book(s)** when the library has matched on-device books: use Calibre’s matched device booklists and ``application_id`` (not ``db_id``) to read ``#collections``.
+- Fix **Deploy to KOReader…** crashing on Calibre 9.13 (`KOBOTOUCH.books() got an unexpected keyword argument 'main_memory'`): list device books with Calibre's `books(oncard=…)` API (main memory plus cards).
 - Fix **Deploy to KOReader…** staying disabled on Android phones connected over MTP: detect the on-device `koreader/` folder through Calibre's MTP driver and write collections metadata and the bundled plugin over MTP.
 - Fix **ModuleNotFoundError: No module named 'ao3kit'** when a USB device is connected and the Fanfic Organizer menu opens **Deploy to KOReader…**: load bundled/checkout ``ao3kit`` onto Calibre's path for in-process deploy, and keep the menu usable if that import still fails.
 - Give up sooner on hung or unreachable AO3 pages: HTML requests time out at 20s (was 60s), at most two timeout attempts, and Cloudflare origin timeouts (522/524) stop after the same short budget instead of a long 5xx retry loop.

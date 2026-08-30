@@ -81,6 +81,63 @@ def _write_bundle_zip(path: Path) -> None:
         zf.writestr("__init__.py", "from calibre.customize import InterfaceActionBase\n")
 
 
+def test_strip_release_notes_boilerplate_removes_pre_1_0():
+    updates = load_updates()
+    body = (
+        "### Features\n\n- Add updates.\n\n"
+        "### Pre-1.0\n\n"
+        "This project will stay below 1.0 for a long time.\n"
+    )
+    assert updates.summarize_release_notes(body) == "### Features\n\n- Add updates."
+    assert updates.summarize_release_notes("") == "No release notes."
+
+
+def test_changelog_for_selection_aggregates_upgrades():
+    updates = load_updates()
+    older = updates.release_from_api(
+        {
+            **_sample_release(tag="v0.29.0"),
+            "body": "### Features\n- Older.",
+        }
+    )
+    mid = updates.release_from_api(
+        {
+            **_sample_release(tag="v0.30.0"),
+            "body": "### Features\n- Middle.",
+        }
+    )
+    newer = updates.release_from_api(
+        {
+            **_sample_release(tag="v0.31.0"),
+            "body": (
+                "### Features\n- Newer.\n\n"
+                "### Pre-1.0\n\nPrefer Stable.\n"
+            ),
+        }
+    )
+    assert older is not None and mid is not None and newer is not None
+    text = updates.changelog_for_selection(
+        [newer, mid, older],
+        newer,
+        installed=updates.ParsedVersion(0, 29, 0),
+    )
+    assert "What's new since 0.29.0" in text
+    assert "0.31.0" in text
+    assert "0.30.0" in text
+    assert "Newer." in text
+    assert "Middle." in text
+    assert "Prefer Stable." not in text
+    assert "Older." not in text
+    same = updates.changelog_for_selection(
+        [newer, mid, older],
+        mid,
+        installed=updates.ParsedVersion(0, 30, 0),
+    )
+    assert "What's new since" not in same
+    assert "0.30.0" in same
+    assert "Middle." in same
+
+
 def test_parse_version_accepts_optional_v_prefix():
     updates = load_updates()
     assert updates.parse_version("0.27.0") == (0, 27, 0)

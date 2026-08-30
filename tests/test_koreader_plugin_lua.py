@@ -26,16 +26,17 @@ def test_main_lua_defines_plugin_class_not_instance():
     assert "run_action" in text
 
 
-def test_metadata_lua_resolves_paths_from_calibre_library_roots():
+def test_metadata_lua_resolves_paths_from_deploy_json():
     text = (PLUGIN_DIR / "metadata.lua").read_text(encoding="utf-8")
-    assert "metadata.calibre" in text
     assert "function Metadata.resolve_path(book)" in text
     assert "resolve_path_with_debug" in text
     assert "Metadata.library_roots()" in text
     assert "KOBO_STORAGE_ROOTS" in text
-    assert "cache/calibre/libraries.lua" in text
-    assert "find_calibre_metadata" in text
-    assert ".calibre.metadata" in text
+    assert "book.storage" in text
+    assert "fanfic.collections.json" in text
+    assert "metadata.calibre" not in text
+    assert "find_calibre_metadata" not in text
+    assert "cache/calibre/libraries.lua" not in text
     assert 'DataStorage:getDataDir() .. "/" .. lpath' not in text
 
 

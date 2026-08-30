@@ -126,14 +126,29 @@ class KoreaderSupport:
             return None
         if not silent:
             books = int(result.get("books") or 0)
-            info_dialog(
-                gui,
-                "Fanfic Organizer",
+            msg = (
                 f"Deployed collections for {books} book(s) on the device.\n\n"
-                "In KOReader: Search → Fanfic collections.",
-                show=True,
+                "In KOReader: Search → Fanfic collections."
             )
+            if books == 0:
+                msg += (
+                    "\n\nIf books are on the device but the count is 0, open the "
+                    "Device view and confirm they show as matched to this library "
+                    "(On Device). Then Deploy again."
+                )
+            info_dialog(gui, "Fanfic Organizer", msg, show=True)
         return result
+
+    def _gui_booklists(self):
+        """Return Calibre's matched device booklists, or None."""
+        gui = self.plugin.gui
+        booklists = getattr(gui, "booklists", None)
+        if not callable(booklists):
+            return None
+        try:
+            return booklists()
+        except Exception:
+            return None
 
     def _deploy_to_device(self, db, device) -> dict[str, Any]:
         _detect, koreader_deploy = self._import_koreader()
@@ -153,4 +168,5 @@ class KoreaderSupport:
             plugin_source=plugin_source,
             install_koplugin=plugin_source is not None,
             koreader_subdir=self.koreader_subdir(),
+            booklists=self._gui_booklists(),
         )
