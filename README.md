@@ -57,6 +57,8 @@ On first import into an empty library (or via plugin settings), creates and fill
 curl -fsSL https://raw.githubusercontent.com/BlakeASmith/fanfic-organizer/main/scripts/install.sh | bash
 ```
 
+Pass `--url 'https://github.com/…/releases/download/…/FanFicOrganizer-….zip'` for a PR pre-release zip, or in Calibre use **Check for updates… → Include PR builds**.
+
 Linux installs Calibre without `sudo` into `~/.local/opt/calibre`. macOS needs [Homebrew](https://brew.sh/); Windows needs [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/). Pass `--no-install-calibre` to skip that step if you manage Calibre yourself.
 
 If Calibre is already open, quit it completely and reopen so the plugin loads.

@@ -3,7 +3,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/BlakeASmith/fanfic-organizer/main/scripts/install.sh | bash
 #
-# Options are forwarded to install_plugin.py (--version TAG, --zip PATH, --no-start).
+# Options are forwarded to install_plugin.py
+# (--version TAG, --url URL, --zip PATH, --no-start, --no-install-calibre).
+# PR build example (needs gh auth or GITHUB_TOKEN):
+#   bash scripts/install.sh --url 'https://github.com/.../actions/runs/.../artifacts/...'
 
 set -euo pipefail
 

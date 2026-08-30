@@ -255,6 +255,23 @@ def preview_release_notes(
     return banner + "\n\n" + notes.strip() + "\n"
 
 
+def pr_release_notes(
+    *,
+    pr_number: int | str,
+    git_hash: str,
+    pr_url: str,
+    latest_release_url: str,
+) -> str:
+    number = int(pr_number)
+    sha = short_sha(git_hash)
+    return (
+        f"CI test build for [PR #{number}]({pr_url}) "
+        f"(commit `{sha}`).\n\n"
+        "This is an automated **PR pre-release** for testers. "
+        f"Prefer the [latest standard release]({latest_release_url}) for daily use.\n"
+    )
+
+
 def included_in_release_notice(version: str, repo: str) -> str:
     tag = release_tag_name(version)
     url = f"https://github.com/{repo}/releases/tag/{quote(tag, safe='v./-')}"
@@ -293,6 +310,7 @@ __all__ = [
     "prepend_included_notice",
     "preview_fallback_notes",
     "preview_release_notes",
+    "pr_release_notes",
     "parse_semver",
     "release_tag_name",
     "rewrite_zip_entry",

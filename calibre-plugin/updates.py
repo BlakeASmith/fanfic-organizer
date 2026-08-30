@@ -12,6 +12,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -41,6 +42,17 @@ SEMVER_RE = re.compile(
     r"(?:\+(?P<build>[0-9A-Za-z.-]+))?$"
 )
 PREVIEW_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-preview(?:\.|$|\+)")
+PR_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-pr\.\d+")
+# https://github.com/OWNER/REPO/actions/runs/RUN/artifacts/ID
+_ACTIONS_ARTIFACT_PAGE_RE = re.compile(
+    r"^/(?P<owner>[^/]+)/(?P<repo>[^/]+)/actions/runs/\d+/artifacts/(?P<id>\d+)/?$",
+    re.IGNORECASE,
+)
+# https://api.github.com/repos/OWNER/REPO/actions/artifacts/ID[/zip]
+_ACTIONS_ARTIFACT_API_RE = re.compile(
+    r"^/repos/(?P<owner>[^/]+)/(?P<repo>[^/]+)/actions/artifacts/(?P<id>\d+)(?:/zip)?/?$",
+    re.IGNORECASE,
+)
 USER_AGENT = "Fanfic-Organizer-Plugin-Updater"
 RESTART_DELAY_S = 2.0
 SHUTDOWN_WAIT_S = 20.0
@@ -68,8 +80,21 @@ class ParsedVersion:
         return bool(self.prerelease and self.prerelease.startswith("preview"))
 
     @property
+    def is_pr_build(self) -> bool:
+        return bool(self.prerelease and self.prerelease.startswith("pr."))
+
+    @property
     def is_stable(self) -> bool:
         return not self.prerelease and not self.build
+
+    @property
+    def pr_number(self) -> int | None:
+        if not self.is_pr_build or not self.prerelease:
+            return None
+        # ``pr.44`` or ``pr.44.extra``
+        part = self.prerelease.split(".", 1)[1] if "." in self.prerelease else ""
+        head = part.split(".", 1)[0]
+        return int(head) if head.isdigit() else None
 
     def text(self) -> str:
         value = f"{self.major}.{self.minor}.{self.patch}"
@@ -97,6 +122,14 @@ class ReleaseInfo:
     @property
     def version_text(self) -> str:
         return self.version_display
+
+    @property
+    def is_pr_build(self) -> bool:
+        return self.parsed.is_pr_build
+
+    @property
+    def pr_number(self) -> int | None:
+        return self.parsed.pr_number
 
 
 def _prerelease_sort_key(prerelease: str | None) -> tuple:
@@ -158,6 +191,16 @@ def is_preview_tag(tag: str) -> bool:
         return False
 
 
+def is_pr_tag(tag: str) -> bool:
+    text = (tag or "").strip()
+    if PR_TAG_RE.search(text):
+        return True
+    try:
+        return parse_semver(text).is_pr_build
+    except UpdateError:
+        return False
+
+
 def installed_version_parsed() -> ParsedVersion:
     try:
         return parse_semver(installed_version_text())
@@ -186,14 +229,21 @@ def installed_version_text() -> str:
     return plugin_version_string(installed_version())
 
 
-def _github_request(url: str, *, timeout: float = 30.0) -> Any:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": USER_AGENT,
-        },
-    )
+def _github_request(
+    url: str,
+    *,
+    timeout: float = 30.0,
+    token: str | None = None,
+) -> Any:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    auth = github_auth_token(explicit=token)
+    if auth:
+        request.add_unredirected_header("Authorization", f"Bearer {auth}")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
@@ -242,7 +292,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
     if not tag:
         return None
     prerelease = bool(record.get("prerelease"))
-    if prerelease and not is_preview_tag(tag):
+    if prerelease and not (is_preview_tag(tag) or is_pr_tag(tag)):
         return None
     try:
         parsed = parse_semver(tag)
@@ -270,7 +320,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
     )
 
 
-def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
+def fetch_releases(*, per_page: int = 100) -> list[ReleaseInfo]:
     url = f"{github_releases_api()}?per_page={max(1, min(per_page, 100))}"
     payload = _github_request(url)
     if not isinstance(payload, list):
@@ -286,16 +336,40 @@ def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
     return releases
 
 
+def select_pr_builds(releases: Iterable[ReleaseInfo]) -> list[ReleaseInfo]:
+    """Latest PR pre-release per pull-request number (newest first by PR #)."""
+    newest: dict[int, ReleaseInfo] = {}
+    for item in releases:
+        if not item.is_pr_build:
+            continue
+        number = item.pr_number
+        if number is None:
+            continue
+        existing = newest.get(number)
+        if existing is None or compare_parsed_versions(item.parsed, existing.parsed) > 0:
+            newest[number] = item
+        elif (
+            existing is not None
+            and compare_parsed_versions(item.parsed, existing.parsed) == 0
+            and (item.published_at or "") > (existing.published_at or "")
+        ):
+            newest[number] = item
+    builds = list(newest.values())
+    builds.sort(key=lambda item: item.pr_number or 0, reverse=True)
+    return builds
+
+
 def filter_releases(
     releases: Iterable[ReleaseInfo],
     *,
     include_prereleases: bool = False,
 ) -> list[ReleaseInfo]:
-    """Return releases for the update picker.
+    """Return standard/preview releases for the update picker (never PR builds).
 
     When ``include_prereleases`` is false, preview GitHub pre-releases are omitted.
+    PR pre-releases are always omitted here — use ``select_pr_builds``.
     """
-    items = list(releases)
+    items = [item for item in releases if not item.is_pr_build]
     if include_prereleases:
         return items
     return [item for item in items if not item.is_preview]
@@ -309,7 +383,9 @@ def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
 
 
 def latest_stable_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
-    stable = [item for item in releases if not item.is_preview]
+    stable = [
+        item for item in releases if not item.is_preview and not item.is_pr_build
+    ]
     return latest_release(stable)
 
 
@@ -342,7 +418,14 @@ def format_release_changelog_entry(release: ReleaseInfo) -> str:
     """One release's notes with a version heading for the updater pane."""
     published = format_published_at(release.published_at)
     heading = release.version_text
-    if release.is_preview:
+    if release.is_pr_build:
+        number = release.pr_number
+        heading = (
+            f"PR #{number} · {release.version_text}"
+            if number is not None
+            else f"{release.version_text} (PR build)"
+        )
+    elif release.is_preview:
         heading += " (preview)"
     if published:
         heading += f" — {published}"
@@ -380,7 +463,10 @@ def changelog_for_selection(
     When upgrading past the installed build, include every listed release
     between the two so the pane answers “what does this update do?”.
     Downgrades and same-version picks show only the selected release.
+    PR builds always show their own notes only.
     """
+    if selected.is_pr_build:
+        return format_release_changelog_entry(selected)
     current = installed if installed is not None else installed_version_parsed()
     cmp = compare_parsed_versions(selected.parsed, current)
     if cmp > 0:
@@ -402,6 +488,152 @@ def changelog_for_selection(
     return format_release_changelog_entry(selected)
 
 
+def parse_actions_artifact_url(url: str) -> tuple[str, str, int] | None:
+    """Parse a GitHub Actions artifact page or API URL."""
+    text = (url or "").strip()
+    if not text:
+        return None
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if host in {"github.com", "www.github.com"}:
+        match = _ACTIONS_ARTIFACT_PAGE_RE.match(path)
+    elif host == "api.github.com":
+        match = _ACTIONS_ARTIFACT_API_RE.match(path)
+    else:
+        return None
+    if match is None:
+        return None
+    try:
+        artifact_id = int(match.group("id"))
+    except ValueError:
+        return None
+    return match.group("owner"), match.group("repo"), artifact_id
+
+
+def is_actions_artifact_url(url: str) -> bool:
+    return parse_actions_artifact_url(url) is not None
+
+
+def actions_artifact_zip_api_url(owner: str, repo: str, artifact_id: int) -> str:
+    return (
+        f"https://api.github.com/repos/{owner}/{repo}/actions/artifacts/"
+        f"{int(artifact_id)}/zip"
+    )
+
+
+def _find_gh_binary() -> str | None:
+    found = shutil.which("gh")
+    if found:
+        return found
+    for candidate in (
+        Path.home() / ".local" / "bin" / "gh",
+        Path("/opt/homebrew/bin/gh"),
+        Path("/usr/local/bin/gh"),
+    ):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def github_auth_token(*, explicit: str | None = None) -> str | None:
+    """Token for Actions artifact downloads.
+
+    Order: explicit argument, ``GITHUB_TOKEN``, ``GH_TOKEN``, then ``gh auth token``.
+    """
+    for value in (
+        explicit,
+        os.environ.get("GITHUB_TOKEN"),
+        os.environ.get("GH_TOKEN"),
+    ):
+        text = (value or "").strip()
+        if text:
+            return text
+    gh_bin = _find_gh_binary()
+    if not gh_bin:
+        return None
+    try:
+        completed = subprocess.run(
+            [gh_bin, "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    token = (completed.stdout or "").strip()
+    return token or None
+
+
+def download_actions_artifact(
+    url: str,
+    dest: Path,
+    *,
+    token: str | None = None,
+    timeout: float = 120.0,
+) -> Path:
+    """Download a GitHub Actions artifact archive (auth required)."""
+    parsed = parse_actions_artifact_url(url)
+    if parsed is None:
+        raise UpdateError(
+            "Not a GitHub Actions artifact URL. Paste a link like "
+            "https://github.com/…/actions/runs/…/artifacts/…"
+        )
+    owner, repo, artifact_id = parsed
+    auth = github_auth_token(explicit=token)
+    if not auth:
+        raise UpdateError(
+            "GitHub Actions artifacts require authentication. "
+            "Paste a personal access token below, set GITHUB_TOKEN / GH_TOKEN, "
+            "or run `gh auth login`."
+        )
+    api_url = actions_artifact_zip_api_url(owner, repo, artifact_id)
+    # Authorization must not follow the redirect to Azure blob storage.
+    request = urllib.request.Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    request.add_unredirected_header("Authorization", f"Bearer {auth}")
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise UpdateError(
+                "GitHub refused the Actions artifact download "
+                f"(HTTP {exc.code}). Check the token can read artifacts for "
+                f"{owner}/{repo}."
+            ) from exc
+        if exc.code == 404:
+            raise UpdateError(
+                f"Actions artifact {artifact_id} was not found "
+                f"(expired or wrong id) for {owner}/{repo}."
+            ) from exc
+        raise UpdateError(
+            f"Download failed ({exc.code}): {exc.reason}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise UpdateError(f"Download failed: {exc.reason}") from exc
+    if not data:
+        raise UpdateError(f"Download of Actions artifact {artifact_id} was empty.")
+    dest.write_bytes(data)
+    if not zip_has_bundled_ao3kit(dest):
+        dest.unlink(missing_ok=True)
+        raise UpdateError(
+            "Downloaded artifact is not a bundled Fanfic Organizer plugin"
+        )
+    return dest
+
+
 def download_release(url: str, dest: Path, *, timeout: float = 120.0) -> Path:
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -421,6 +653,21 @@ def download_release(url: str, dest: Path, *, timeout: float = 120.0) -> Path:
         dest.unlink(missing_ok=True)
         raise UpdateError(f"{ZIP_ASSET_NAME} is not a bundled Fanfic Organizer plugin")
     return dest
+
+
+def download_plugin_url(
+    url: str,
+    dest: Path,
+    *,
+    token: str | None = None,
+    timeout: float = 120.0,
+) -> Path:
+    """Download a release asset or Actions artifact into ``dest``."""
+    if is_actions_artifact_url(url):
+        return download_actions_artifact(
+            url, dest, token=token, timeout=timeout
+        )
+    return download_release(url, dest, timeout=timeout)
 
 
 def find_calibre_tool(name: str) -> str:
@@ -619,6 +866,26 @@ def download_and_install(release: ReleaseInfo) -> Path:
         download_release(release.download_url, dest)
         install_plugin_zip(dest)
         return dest
+
+
+def download_and_install_from_url(
+    url: str,
+    *,
+    token: str | None = None,
+) -> Path:
+    """Install from a release asset URL or Actions artifact page URL."""
+    text = (url or "").strip()
+    if not text:
+        raise UpdateError("Paste a plugin zip or Actions artifact URL.")
+    with tempfile.TemporaryDirectory(prefix="fanfic-organizer-update-") as tmp:
+        dest = Path(tmp) / ZIP_ASSET_NAME
+        download_plugin_url(text, dest, token=token)
+        install_plugin_zip(dest)
+        return dest
+
+
+def download_and_install_selection(item: ReleaseInfo) -> Path:
+    return download_and_install(item)
 
 
 def compare_to_installed(release: ReleaseInfo) -> int:

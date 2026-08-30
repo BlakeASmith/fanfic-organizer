@@ -164,11 +164,11 @@ def test_release_from_api_prefers_versioned_zip_asset():
     assert parsed.download_url.endswith("versioned.zip")
 
 
-def test_release_from_api_skips_drafts_prereleases_and_missing_asset():
+def test_release_from_api_skips_drafts_unknown_prereleases_and_missing_asset():
     updates = load_updates()
     assert updates.release_from_api(_sample_release(draft=True)) is None
     assert updates.release_from_api(
-        _sample_release(tag="v0.27.0-pr.3+abc1234", prerelease=True)
+        _sample_release(tag="v0.27.0-beta.1", prerelease=True)
     ) is None
     assert updates.release_from_api(_sample_release(include_asset=False)) is None
     parsed = updates.release_from_api(_sample_release())
@@ -176,6 +176,20 @@ def test_release_from_api_skips_drafts_prereleases_and_missing_asset():
     assert parsed.version == (0, 27, 0)
     assert parsed.version_text == "0.27.0"
     assert parsed.download_url.endswith("FanFicOrganizer-0.27.0.zip")
+
+
+def test_release_from_api_accepts_pr_prereleases():
+    updates = load_updates()
+    record = _sample_release(
+        tag="v0.32.0-pr.44+3990e2b",
+        prerelease=True,
+    )
+    parsed = updates.release_from_api(record)
+    assert parsed is not None
+    assert parsed.is_pr_build
+    assert parsed.pr_number == 44
+    assert parsed.version_text == "0.32.0-pr.44+3990e2b"
+    assert not parsed.is_preview
 
 
 def test_release_from_api_accepts_preview_prereleases():
@@ -210,22 +224,49 @@ def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
-def test_filter_releases_omits_previews_by_default():
+def test_filter_releases_omits_previews_and_pr_builds_by_default():
     updates = load_updates()
     stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
     preview = updates.release_from_api(
         _sample_release(tag="v0.32.0-preview.1+abc1234", prerelease=True)
     )
-    assert stable is not None and preview is not None
-    filtered = updates.filter_releases([preview, stable])
+    pr_build = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.9+abcdef1", prerelease=True)
+    )
+    assert stable is not None and preview is not None and pr_build is not None
+    filtered = updates.filter_releases([preview, pr_build, stable])
     assert [item.version_text for item in filtered] == ["0.31.0"]
     with_pre = updates.filter_releases(
-        [preview, stable], include_prereleases=True
+        [preview, pr_build, stable], include_prereleases=True
     )
     assert [item.version_text for item in with_pre] == [
         "0.32.0-preview.1+abc1234",
         "0.31.0",
     ]
+
+
+def test_select_pr_builds_keeps_newest_per_pr():
+    updates = load_updates()
+    older = updates.release_from_api(
+        {
+            **_sample_release(tag="v0.32.0-pr.10+aaaaaaa", prerelease=True),
+            "published_at": "2026-08-01T00:00:00Z",
+        }
+    )
+    newer = updates.release_from_api(
+        {
+            **_sample_release(tag="v0.32.0-pr.10+bbbbbbb", prerelease=True),
+            "published_at": "2026-08-02T00:00:00Z",
+        }
+    )
+    other = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.9+ccccccc", prerelease=True)
+    )
+    stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
+    assert older and newer and other and stable
+    builds = updates.select_pr_builds([older, newer, other, stable])
+    assert [b.pr_number for b in builds] == [10, 9]
+    assert builds[0].version_text == "0.32.0-pr.10+bbbbbbb"
 
 
 def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
@@ -348,3 +389,91 @@ def test_spawn_calibre_restart_uses_detached_shell(monkeypatch: pytest.MonkeyPat
     updates.spawn_calibre_restart()
     assert captured["argv"][0] in {"sh", "cmd.exe"}
     assert "--shutdown-running-calibre" in captured["argv"][-1]
+
+
+def test_parse_actions_artifact_url():
+    updates = load_updates()
+    page = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "33291839740/artifacts/9726194078"
+    )
+    assert updates.parse_actions_artifact_url(page) == (
+        "BlakeASmith",
+        "fanfic-organizer",
+        9726194078,
+    )
+    assert updates.is_actions_artifact_url(page)
+    assert not updates.is_actions_artifact_url(
+        "https://github.com/BlakeASmith/fanfic-organizer/releases/latest"
+    )
+
+
+def test_download_actions_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    updates = load_updates()
+    good = tmp_path / "artifact.zip"
+    _write_bundle_zip(good)
+    dest = tmp_path / "out.zip"
+    page = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "1/artifacts/2"
+    )
+    api = updates.actions_artifact_zip_api_url(
+        "BlakeASmith", "fanfic-organizer", 2
+    )
+
+    def fake_urlopen(request, timeout=0):
+        assert request.full_url == api
+        assert request.unredirected_hdrs.get("Authorization") == "Bearer tok"
+        assert "Authorization" not in request.headers
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return good.read_bytes()
+
+        return Response()
+
+    monkeypatch.setattr(updates.urllib.request, "urlopen", fake_urlopen)
+    updates.download_actions_artifact(page, dest, token="tok")
+    assert dest.is_file()
+
+
+def test_download_and_install_from_url_routes_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    updates = load_updates()
+    page = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "1/artifacts/2"
+    )
+    called: list[str] = []
+
+    def fake_download(url, dest, *, token=None, timeout=120.0):
+        called.append(url)
+        _write_bundle_zip(dest)
+        return dest
+
+    monkeypatch.setattr(updates, "download_actions_artifact", fake_download)
+    monkeypatch.setattr(updates, "install_plugin_zip", lambda path: None)
+    updates.download_and_install_from_url(page, token="tok")
+    assert called == [page]
+
+
+def test_download_actions_artifact_requires_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    updates = load_updates()
+    monkeypatch.setattr(updates, "github_auth_token", lambda **kwargs: None)
+    with pytest.raises(updates.UpdateError, match="authentication"):
+        updates.download_actions_artifact(
+            "https://github.com/BlakeASmith/fanfic-organizer/"
+            "actions/runs/1/artifacts/2",
+            tmp_path / "x.zip",
+        )

@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from calibre_dev.install_release import (
+    download_actions_artifact_zip,
     download_release_zip,
+    github_auth_token,
     install_release_zip,
     latest_zip_candidates,
     post_install_message,
@@ -19,6 +21,9 @@ from calibre_dev.release_urls import (
     GITHUB_REPO,
     RAW_INSTALL_SH,
     RELEASE_ZIP_NAME,
+    actions_artifact_zip_api_url,
+    is_actions_artifact_url,
+    parse_actions_artifact_url,
     pick_zip_download_url,
     release_tag,
     release_zip_url,
@@ -87,6 +92,124 @@ def test_release_tag():
 def test_raw_install_sh_points_at_repo():
     assert RAW_INSTALL_SH.endswith("/scripts/install.sh")
     assert GITHUB_REPO in RAW_INSTALL_SH
+
+
+def test_parse_actions_artifact_page_url():
+    url = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "33291839740/artifacts/9726194078"
+    )
+    assert parse_actions_artifact_url(url) == (
+        "BlakeASmith",
+        "fanfic-organizer",
+        9726194078,
+    )
+    assert is_actions_artifact_url(url)
+    assert not is_actions_artifact_url(
+        "https://github.com/BlakeASmith/fanfic-organizer/releases/latest"
+    )
+
+
+def test_parse_actions_artifact_api_url():
+    url = (
+        "https://api.github.com/repos/BlakeASmith/fanfic-organizer/"
+        "actions/artifacts/9726194078/zip"
+    )
+    assert parse_actions_artifact_url(url) == (
+        "BlakeASmith",
+        "fanfic-organizer",
+        9726194078,
+    )
+    assert actions_artifact_zip_api_url(
+        "BlakeASmith", "fanfic-organizer", 9726194078
+    ) == url
+
+
+def test_github_auth_token_prefers_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "from-github")
+    monkeypatch.setenv("GH_TOKEN", "from-gh")
+    assert github_auth_token() == "from-github"
+    monkeypatch.delenv("GITHUB_TOKEN")
+    assert github_auth_token() == "from-gh"
+
+
+def test_download_actions_artifact_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    payload = b"PK\x03\x04artifact"
+    dest = tmp_path / RELEASE_ZIP_NAME
+    page = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "33291839740/artifacts/9726194078"
+    )
+    api = actions_artifact_zip_api_url(
+        "BlakeASmith", "fanfic-organizer", 9726194078
+    )
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=120):
+        assert timeout == 120
+        assert request.full_url == api
+        assert request.unredirected_hdrs.get("Authorization") == "Bearer test-token"
+        assert "Authorization" not in request.headers
+        return FakeResponse()
+
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "calibre_dev.install_release.urllib.request.urlopen",
+        fake_urlopen,
+    )
+    used = download_actions_artifact_zip(page, dest)
+    assert used == api
+    assert dest.read_bytes() == payload
+
+
+def test_download_release_zip_routes_artifact_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    dest = tmp_path / RELEASE_ZIP_NAME
+    page = (
+        "https://github.com/BlakeASmith/fanfic-organizer/actions/runs/"
+        "1/artifacts/2"
+    )
+    called: list[str] = []
+
+    def fake_artifact(url: str, path: Path) -> str:
+        called.append(url)
+        path.write_bytes(b"zip")
+        return "https://api.github.com/…/zip"
+
+    monkeypatch.setattr(
+        "calibre_dev.install_release.download_actions_artifact_zip",
+        fake_artifact,
+    )
+    used = download_release_zip(dest, url=page)
+    assert called == [page]
+    assert used.endswith("/zip")
+
+
+def test_download_actions_artifact_requires_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "calibre_dev.install_release.github_auth_token",
+        lambda: None,
+    )
+    with pytest.raises(RuntimeError, match="authentication"):
+        download_actions_artifact_zip(
+            "https://github.com/BlakeASmith/fanfic-organizer/"
+            "actions/runs/1/artifacts/2",
+            tmp_path / "x.zip",
+        )
 
 
 def test_download_release_zip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

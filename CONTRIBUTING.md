@@ -55,7 +55,7 @@ One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__
 
 **Preview pre-releases** are created automatically on every push to `main`. They use `X.Y.Z-preview.<GitHub run number>+<short SHA>` (next 0.x minor as `X.Y.Z`), tag `v` plus that string, and are marked GitHub pre-releases. The pipeline only *reads* `[Unreleased]` for notes; it never writes `CHANGELOG.md`. Prefer a standard release for daily use.
 
-**PR builds** upload `FanFicOrganizer-PR-<n>-<sha>.zip` and comment a direct download link for that zip. They do not create tags or GitHub releases.
+**PR builds** publish a public GitHub **pre-release** (`X.Y.Z-pr.<n>+<sha>`) with the plugin zip and comment a download link. Install from Calibre (**Check for updates…** → **Include PR builds**) or `scripts/install.sh --url '…/releases/download/…'`. No GitHub login required for those assets.
 
 ### Pre-1.0
 

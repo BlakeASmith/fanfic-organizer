@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,9 @@ from calibre_dev.plugin_install import (
 from calibre_dev.release_urls import (
     GITHUB_REPO,
     RELEASE_ZIP_NAME,
+    actions_artifact_zip_api_url,
+    is_actions_artifact_url,
+    parse_actions_artifact_url,
     pick_zip_download_url,
     release_zip_url,
     release_zip_urls,
@@ -37,6 +41,28 @@ USER_AGENT = "Fanfic-Organizer-Installer"
 
 def _log(message: str) -> None:
     print(f"fanfic-organizer install: {message}")
+
+
+def github_auth_token() -> str | None:
+    """Token for Actions artifact downloads (``GITHUB_TOKEN``, ``GH_TOKEN``, or ``gh``)."""
+    for key in ("GITHUB_TOKEN", "GH_TOKEN"):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        completed = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    token = (completed.stdout or "").strip()
+    return token or None
 
 
 def latest_zip_candidates() -> list[str]:
@@ -72,6 +98,60 @@ def latest_zip_candidates() -> list[str]:
     return urls
 
 
+def download_actions_artifact_zip(url: str, dest: Path) -> str:
+    """Download a GitHub Actions artifact archive (auth required)."""
+    parsed = parse_actions_artifact_url(url)
+    if parsed is None:
+        raise RuntimeError(f"Not a GitHub Actions artifact URL: {url}")
+    owner, repo, artifact_id = parsed
+    token = github_auth_token()
+    if not token:
+        raise RuntimeError(
+            "GitHub Actions artifacts require authentication. "
+            "Set GITHUB_TOKEN or GH_TOKEN, or run `gh auth login`."
+        )
+    api_url = actions_artifact_zip_api_url(owner, repo, artifact_id)
+    # Authorization must not follow the redirect to Azure blob storage.
+    request = urllib.request.Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    request.add_unredirected_header("Authorization", f"Bearer {token}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError(
+                "GitHub refused the Actions artifact download "
+                f"(HTTP {exc.code}). Check that GITHUB_TOKEN / GH_TOKEN / "
+                "`gh auth login` can read artifacts for "
+                f"{owner}/{repo}."
+            ) from exc
+        if exc.code == 404:
+            raise RuntimeError(
+                f"Actions artifact {artifact_id} was not found "
+                f"(expired or wrong id) for {owner}/{repo}."
+            ) from exc
+        raise RuntimeError(
+            f"Could not download Actions artifact {artifact_id} "
+            f"(HTTP {exc.code})."
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Could not download Actions artifact {artifact_id}: {exc.reason}."
+        ) from exc
+    if not data:
+        raise RuntimeError(f"Download of Actions artifact {artifact_id} was empty.")
+    dest.write_bytes(data)
+    return api_url
+
+
 def download_release_zip(
     dest: Path,
     *,
@@ -79,6 +159,8 @@ def download_release_zip(
     url: str | None = None,
 ) -> str:
     """Download the plugin zip and return the URL used."""
+    if url and is_actions_artifact_url(url):
+        return download_actions_artifact_zip(url, dest)
     if url:
         candidates = [url]
     elif version:
@@ -180,7 +262,10 @@ def run_install(
             cleanup_dir = Path(tempfile.mkdtemp(prefix="fanfic-organizer-install-"))
             installed_from = cleanup_dir / RELEASE_ZIP_NAME
             if zip_url:
-                _log(f"Downloading {zip_url}")
+                if is_actions_artifact_url(zip_url):
+                    _log(f"Downloading Actions artifact {zip_url}")
+                else:
+                    _log(f"Downloading {zip_url}")
             elif version:
                 _log(f"Downloading {release_zip_url(version)}")
             else:
@@ -221,11 +306,12 @@ def run_install(
         return {"ok": False, "error": "not_found", "message": str(exc)}
     except RuntimeError as exc:
         msg = str(exc)
-        code = (
-            "download_failed"
-            if msg.startswith("Could not download")
-            else "calibre_install_failed"
-        )
+        if msg.startswith("Could not download") or "Actions artifact" in msg:
+            code = "download_failed"
+        elif "authentication" in msg.lower() or "refused the Actions" in msg:
+            code = "download_failed"
+        else:
+            code = "calibre_install_failed"
         return {"ok": False, "error": code, "message": msg}
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
@@ -241,12 +327,25 @@ def run_install(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Install Fanfic Organizer from the latest GitHub release.",
+        description=(
+            "Install Fanfic Organizer from the latest GitHub release, "
+            "a release tag, a local zip, or a PR Actions artifact URL."
+        ),
     )
     parser.add_argument(
         "--version",
         metavar="TAG",
         help="Install a specific release tag (for example 0.26.1 or v0.26.1).",
+    )
+    parser.add_argument(
+        "--url",
+        metavar="URL",
+        help=(
+            "Download from this URL: a release asset, or a GitHub Actions "
+            "artifact page "
+            "(…/actions/runs/<run>/artifacts/<id>; needs GITHUB_TOKEN, "
+            "GH_TOKEN, or `gh auth login`)."
+        ),
     )
     parser.add_argument(
         "--zip",
@@ -269,8 +368,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.zip is not None and args.url:
+        print("Use either --zip or --url, not both.", file=sys.stderr)
+        return 2
+    if args.version and args.url:
+        print("Use either --version or --url, not both.", file=sys.stderr)
+        return 2
     result = run_install(
         version=args.version,
+        zip_url=args.url,
         zip_path=args.zip,
         start_if_not_running=not args.no_start,
         install_calibre_if_missing=not args.no_install_calibre,

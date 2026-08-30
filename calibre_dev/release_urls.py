@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from urllib.parse import quote
+import re
+from urllib.parse import quote, urlparse
 
 GITHUB_REPO = "BlakeASmith/fanfic-organizer"
 RELEASE_ZIP_NAME = "fanfic-organizer.zip"
 VERSIONED_ZIP_PREFIX = "FanFicOrganizer"
 RAW_INSTALL_SH = (
     f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/scripts/install.sh"
+)
+
+# https://github.com/OWNER/REPO/actions/runs/RUN/artifacts/ID
+_ACTIONS_ARTIFACT_PAGE_RE = re.compile(
+    r"^/(?P<owner>[^/]+)/(?P<repo>[^/]+)/actions/runs/\d+/artifacts/(?P<id>\d+)/?$",
+    re.IGNORECASE,
+)
+# https://api.github.com/repos/OWNER/REPO/actions/artifacts/ID[/zip]
+_ACTIONS_ARTIFACT_API_RE = re.compile(
+    r"^/repos/(?P<owner>[^/]+)/(?P<repo>[^/]+)/actions/artifacts/(?P<id>\d+)(?:/zip)?/?$",
+    re.IGNORECASE,
 )
 
 
@@ -88,12 +100,54 @@ def release_zip_urls(version: str | None = None) -> list[str]:
     ]
 
 
+def parse_actions_artifact_url(url: str) -> tuple[str, str, int] | None:
+    """Parse a GitHub Actions artifact page or API URL.
+
+    Returns ``(owner, repo, artifact_id)`` or ``None`` when the URL is not an
+    Actions artifact link.
+    """
+    text = (url or "").strip()
+    if not text:
+        return None
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if host in {"github.com", "www.github.com"}:
+        match = _ACTIONS_ARTIFACT_PAGE_RE.match(path)
+    elif host == "api.github.com":
+        match = _ACTIONS_ARTIFACT_API_RE.match(path)
+    else:
+        return None
+    if match is None:
+        return None
+    try:
+        artifact_id = int(match.group("id"))
+    except ValueError:
+        return None
+    return match.group("owner"), match.group("repo"), artifact_id
+
+
+def actions_artifact_zip_api_url(owner: str, repo: str, artifact_id: int) -> str:
+    """API URL that returns the artifact archive (requires GitHub auth)."""
+    return (
+        f"https://api.github.com/repos/{owner}/{repo}/actions/artifacts/"
+        f"{int(artifact_id)}/zip"
+    )
+
+
+def is_actions_artifact_url(url: str) -> bool:
+    return parse_actions_artifact_url(url) is not None
+
+
 __all__ = [
     "GITHUB_REPO",
     "RAW_INSTALL_SH",
     "RELEASE_ZIP_NAME",
     "VERSIONED_ZIP_PREFIX",
+    "actions_artifact_zip_api_url",
     "github_asset_url",
+    "is_actions_artifact_url",
+    "parse_actions_artifact_url",
     "pick_zip_download_url",
     "release_tag",
     "release_zip_url",

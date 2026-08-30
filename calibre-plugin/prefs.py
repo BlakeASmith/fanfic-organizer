@@ -36,6 +36,7 @@ prefs.defaults = {
     'context_menu_placed': False,
     'koreader_path': '.adds/koreader',
     'include_prereleases': False,
+    'include_pr_builds': False,
 }
 
 
