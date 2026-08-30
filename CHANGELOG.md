@@ -17,6 +17,8 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Add selected-book actions to the Calibre library right-click menu (Complete, Download EPUB, covers, series, simplify, collections, Search similar).
+- Reorder the plugin menu (selected-book actions first) and move **Import JSONL or zip** under an **Import** submenu.
 - Show a **Changelog** pane on **Check for updates…** with GitHub release notes for the selected build (and every listed release between your installed version and an upgrade), plus **Open on GitHub…** for the full page.
 - Add a **Include preview pre-releases** checkbox on **Check for updates…** (off by default; remembered) so standard releases stay the default list and testers can opt in to main-branch builds.
 - Add preview GitHub pre-releases to **Check for updates…** so testers can install automated main-branch builds (`X.Y.Z-preview.<run>+<sha>`) from the plugin menu.

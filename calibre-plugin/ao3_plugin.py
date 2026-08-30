@@ -79,6 +79,38 @@ class FanficOrganizerPlugin(InterfaceAction):
         # Do not create columns or write the open library on startup.
         self.jobs()
         self._apply_popup_mode()
+        try:
+            from PyQt5.Qt import QTimer
+        except ImportError:
+            from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, self._ensure_context_menu_placement)
+
+    def _ensure_context_menu_placement(self):
+        """One-shot: append this plugin to library context-menu layouts."""
+        if prefs.get('context_menu_placed', False):
+            return
+        try:
+            from calibre.gui2 import gprefs
+            from calibre_plugins.fanfic_organizer.context_menu import (
+                CONTEXT_MENU_LAYOUT_KEYS,
+                layouts_needing_plugin,
+            )
+        except Exception:
+            prefs['context_menu_placed'] = True
+            return
+
+        current = {key: gprefs.get(key) for key in CONTEXT_MENU_LAYOUT_KEYS}
+        updates = layouts_needing_plugin(current, self.name)
+        for key, layout in updates.items():
+            gprefs[key] = tuple(layout)
+        prefs['context_menu_placed'] = True
+        if updates:
+            rebuild = getattr(self.gui, 'build_context_menus', None)
+            if callable(rebuild):
+                try:
+                    rebuild()
+                except Exception:
+                    pass
 
     def _selected_ids(self):
         try:
@@ -126,60 +158,52 @@ class FanficOrganizerPlugin(InterfaceAction):
         n = len(selected_ids)
         has_selection = n > 0
 
-        self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
+        # Selected-book actions first (library right-click and toolbar).
+        complete = self.menu.addAction(
+            'Complete selected', self.complete_selected_books
+        )
+        complete.setEnabled(has_selection)
+        complete.setStatusTip(
+            'Fill series, import missing parts, download EPUBs, and simplify tags'
+        )
+        fill = self.menu.addAction('Fill from AO3', self.fill_selected_from_ao3)
+        fill.setEnabled(has_selection)
+        fill.setStatusTip(
+            'Identify from URL, EPUB, or title+author, then fill missing metadata'
+        )
+        for label, slot in (
+            ('Download EPUB', self.download_selected_epubs),
+            ('Generate covers', self.generate_covers_for_selected),
+            ('Import rest of series', self.import_series_for_selected),
+            ('Fill series', self.fill_series_for_selected),
+        ):
+            action = self.menu.addAction(label, slot)
+            action.setEnabled(has_selection)
+        self.menu.addSeparator()
+        simplify = self.menu.addAction(
+            'Simplify tags, fandoms & relationships',
+            self.simplify_selected_books,
+        )
+        simplify.setEnabled(has_selection)
+        self.menu.addSeparator()
+        for label, slot in (
+            ('Edit collections...', self.edit_collections_of_selected),
+            ('Recompute collections', self.recompute_collections_for_selected),
+            ('Add to a collection...', self.add_selected_books_to_collection),
+        ):
+            action = self.menu.addAction(label, slot)
+            action.setEnabled(has_selection)
         similar = self.menu.addAction(
             'Search similar...', self.show_similar_dialog
         )
         similar.setEnabled(has_selection)
         similar.setStatusTip('Build an AO3 search from the selected books')
-        self.menu.addAction('Import JSONL or zip...', self.show_import_dialog)
-        self.menu.addAction('Process library...', self.show_process_library_dialog)
 
         self.menu.addSeparator()
-        if n == 0:
-            selected_label = 'Selected books'
-        elif n == 1:
-            selected_label = 'Selected book'
-        else:
-            selected_label = f'Selected books ({n})'
-        selected = self.menu.addMenu(selected_label)
-        selected.setEnabled(has_selection)
-        complete = selected.addAction(
-            'Complete selected', self.complete_selected_books
+        self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
+        self.menu.addAction(
+            'Process library...', self.show_process_library_dialog
         )
-        complete.setStatusTip(
-            'Fill series, import missing parts, download EPUBs, and simplify tags'
-        )
-        fill = selected.addAction('Fill from AO3', self.fill_selected_from_ao3)
-        fill.setStatusTip(
-            'Identify from URL, EPUB, or title+author, then fill missing metadata'
-        )
-        selected.addSeparator()
-        selected.addAction('Download EPUB', self.download_selected_epubs)
-        selected.addAction('Generate covers', self.generate_covers_for_selected)
-        selected.addAction(
-            'Import rest of series', self.import_series_for_selected
-        )
-        selected.addAction('Fill series', self.fill_series_for_selected)
-        selected.addSeparator()
-        selected.addAction(
-            'Simplify tags, fandoms & relationships',
-            self.simplify_selected_books,
-        )
-        selected.addSeparator()
-        selected.addAction(
-            'Edit collections...', self.edit_collections_of_selected
-        )
-        selected.addAction(
-            'Recompute collections',
-            self.recompute_collections_for_selected,
-        )
-        selected.addAction(
-            'Add to a collection...',
-            self.add_selected_books_to_collection,
-        )
-
-        self.menu.addSeparator()
         self.menu.addAction('Running jobs...', self.show_running_jobs)
 
         self.menu.addSeparator()
@@ -193,6 +217,10 @@ class FanficOrganizerPlugin(InterfaceAction):
         tags.addAction('Warm tag cache', self.warm_tag_cache)
         tags.addAction('Tag cache log...', self.show_tag_cache_log)
         tags.addAction('Stop tag cache', self.stop_tag_cache_warm)
+
+        self.menu.addSeparator()
+        more = self.menu.addMenu('Import')
+        more.addAction('JSONL or zip...', self.show_import_dialog)
 
         self.menu.addSeparator()
         self.menu.addAction('Check for updates...', self.check_for_updates)
