@@ -265,6 +265,70 @@ def category_for_collection_match(match: str):
     return None
 
 
+def category_for_collection_field(field_name: str):
+    """Cache category for a collection condition field, or False to disable."""
+    kind = str(field_name or '')
+    if kind in {
+        'work_id',
+        'calibre_uuid',
+        'words',
+        'complete',
+        'title',
+        'summary',
+        'series',
+    }:
+        return False
+    if kind == 'fandom':
+        return 'Fandom'
+    if kind == 'author':
+        return 'Author'
+    if kind == 'relationship':
+        return 'Relationship'
+    if kind == 'character':
+        return 'Character'
+    return None
+
+
+def extras_for_collection_field(
+    field_name: str, vocab: dict[str, list[str]] | None = None
+) -> list[str]:
+    kind = str(field_name or '')
+    vocab = vocab or {}
+    if kind == 'author':
+        return list(vocab.get('authors') or [])
+    if kind == 'fandom':
+        return list(vocab.get('fandoms') or [])
+    if kind == 'relationship':
+        return list(vocab.get('relationships') or [])
+    if kind in {'tag', 'character'}:
+        return extras_for_collection_match('mentions', vocab)
+    return []
+
+
+def attach_collection_field_completer(values_edit, field_combo, parent=None):
+    """Wire autocomplete from a collection condition field combo."""
+    vocab = library_vocab(find_calibre_db(parent or values_edit))
+
+    def extras_for(field_name: str) -> list[str]:
+        return extras_for_collection_field(field_name, vocab)
+
+    field_name = str(field_combo.currentData() or 'tag')
+    attach_tag_completer(
+        values_edit,
+        category=category_for_collection_field(field_name),
+        extra=extras_for(field_name),
+        csv=True,
+    )
+
+    def _sync(*_args) -> None:
+        kind = str(field_combo.currentData() or 'tag')
+        set_completer_category(values_edit, category_for_collection_field(kind))
+        set_completer_extra(values_edit, extras_for(kind))
+
+    field_combo.currentIndexChanged.connect(_sync)
+    return getattr(values_edit, _ATTR, None)
+
+
 def _id_map_names(db, lookup: str) -> list[str]:
     api = getattr(db, 'new_api', db)
     getter = getattr(api, 'get_id_map', None)

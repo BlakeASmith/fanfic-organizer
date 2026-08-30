@@ -43,7 +43,6 @@ from calibre_plugins.fanfic_organizer.scrape_run import (
     scrape_search_is_usable,
 )
 from calibre_plugins.fanfic_organizer.tag_complete import (
-    attach_collection_match_completer,
     attach_tag_completer,
     combined_tag_extras,
 )
@@ -1361,8 +1360,8 @@ class CollectionRulesPage(QWidget):
         layout.addWidget(intro)
 
         self.empty = QLabel(
-            'No collection rules yet. Add a tag, fandom, author, or a single '
-            'work, then recompute the selected books.'
+            'No collection rules yet. Add conditions (tag, fandom, title, '
+            'word count, …), then recompute the selected books.'
         )
         self.empty.setWordWrap(True)
         layout.addWidget(self.empty)
@@ -1410,23 +1409,17 @@ class CollectionRulesPage(QWidget):
         self.collections = QLineEdit()
         self.collections.setPlaceholderText('River Song')
         self.collections.setToolTip(
-            'Calibre collection name. Leave blank on a tag/fandom/author rule '
-            'to use the match text.'
+            'Calibre collection name. Leave blank on a single tag/fandom/author '
+            'rule to use the match text.'
         )
         form.addRow('Collection', self.collections)
 
-        if_row = QWidget()
-        if_layout = QHBoxLayout(if_row)
-        if_layout.setContentsMargins(0, 0, 0, 0)
-        self.match = QComboBox()
-        for value, label in _collection_mod().MATCH_CHOICES:
-            self.match.addItem(label, value)
-        self.match.currentIndexChanged.connect(self._sync_match_fields)
-        self.values = QLineEdit()
-        attach_collection_match_completer(self.values, self.match, self._dialog)
-        if_layout.addWidget(self.match)
-        if_layout.addWidget(self.values, 1)
-        form.addRow('When', if_row)
+        from calibre_plugins.fanfic_organizer.collection_edit import (
+            CollectionConditionsEditor,
+        )
+
+        self.conditions = CollectionConditionsEditor(self)
+        form.addRow('When', self.conditions)
 
         self.mode = QComboBox()
         for value, label in _collection_mod().MODE_CHOICES:
@@ -1468,7 +1461,6 @@ class CollectionRulesPage(QWidget):
         action_row.addStretch(1)
         layout.addLayout(action_row)
 
-        self._sync_match_fields()
         self._reload()
 
     def _selected_id(self) -> str:
@@ -1510,24 +1502,6 @@ class CollectionRulesPage(QWidget):
         has_row = self._selected_row() is not None
         for btn in (self.up_btn, self.down_btn, self.edit_btn, self.delete_btn):
             btn.setEnabled(has_row)
-
-    def _sync_match_fields(self) -> None:
-        match = str(self.match.currentData() or 'mentions')
-        placeholders = {
-            'mentions': 'River Song',
-            'is_ci': 'exact tag name',
-            'fandom_mentions': 'The Pitt',
-            'author_ci': 'author name',
-            'work_id': 'AO3 work id',
-            'calibre_uuid': 'Calibre book UUID',
-        }
-        self.values.setPlaceholderText(placeholders.get(match, ''))
-        if match in {'work_id', 'calibre_uuid'}:
-            self.collections.setPlaceholderText('collection name (required)')
-        else:
-            self.collections.setPlaceholderText(
-                'leave blank to use the match text'
-            )
 
     def _reload(self) -> None:
         from calibre_plugins.fanfic_organizer.collection_rules import (
@@ -1578,27 +1552,44 @@ class CollectionRulesPage(QWidget):
             self._loading = False
         self._sync_row_buttons()
 
-    def _form_values(self) -> dict:
-        match = str(self.match.currentData() or 'mentions')
+    def _form_values(self) -> dict | None:
+        conditions = self.conditions.conditions()
+        if not conditions:
+            error_dialog(
+                self, 'Fanfic Organizer', 'Add at least one condition.', show=True
+            )
+            return None
+        collection = self.collections.text().strip()
+        if not collection:
+            first = conditions[0]
+            values = first.get('values') or []
+            if first.get('field') in {
+                'tag',
+                'fandom',
+                'relationship',
+                'character',
+                'author',
+            } and values:
+                collection = str(values[0]).strip()
+        if not collection:
+            error_dialog(
+                self, 'Fanfic Organizer', 'Type a collection name first.', show=True
+            )
+            return None
+        pin = (
+            len(conditions) == 1
+            and str(conditions[0].get('field') or '') in {'work_id', 'calibre_uuid'}
+        )
         return {
-            'match': match,
-            'values': self.values.text().strip(),
-            'collections': self.collections.text().strip(),
+            'collections': collection,
             'mode': str(self.mode.currentData() or 'include'),
-            'pin': match in {'work_id', 'calibre_uuid'},
+            'pin': pin,
+            'conditions': conditions,
         }
 
     def _save_form(self) -> None:
         fields = self._form_values()
-        if not fields['values']:
-            error_dialog(
-                self, 'Fanfic Organizer', 'Type something to match first.', show=True
-            )
-            return
-        if fields['match'] in {'work_id', 'calibre_uuid'} and not fields['collections']:
-            error_dialog(
-                self, 'Fanfic Organizer', 'Type a collection name first.', show=True
-            )
+        if fields is None:
             return
         mod = _collection_mod()
         if self._edit_id:
@@ -1621,16 +1612,18 @@ class CollectionRulesPage(QWidget):
 
     def _clear_form(self) -> None:
         self._edit_id = ''
-        self.values.clear()
         self.collections.clear()
-        self.match.setCurrentIndex(0)
+        self.conditions.clear()
         self.mode.setCurrentIndex(0)
         self.save_btn.setText('Add rule')
         self.form_box.setTitle('New collection rule')
         self.cancel_edit_btn.setVisible(False)
-        self._sync_match_fields()
 
     def _edit_selected(self) -> None:
+        from calibre_plugins.fanfic_organizer.collection_rules import (
+            conditions_from_row,
+        )
+
         rule_id = self._selected_id()
         if not rule_id:
             error_dialog(self, 'Fanfic Organizer', 'Select a rule to edit.', show=True)
@@ -1639,21 +1632,14 @@ class CollectionRulesPage(QWidget):
         if row is None:
             return
         self._edit_id = rule_id
-        idx = self.match.findData(str(row.get('match') or 'mentions'))
-        if idx >= 0:
-            self.match.setCurrentIndex(idx)
         idx = self.mode.findData(str(row.get('mode') or 'include'))
         if idx >= 0:
             self.mode.setCurrentIndex(idx)
-        values = row.get('values') or []
-        self.values.setText(
-            values if isinstance(values, str) else ', '.join(str(item) for item in values)
-        )
+        self.conditions.set_conditions(conditions_from_row(row))
         self.collections.setText(_collection_mod().format_collection(row))
         self.save_btn.setText('Save rule')
         self.form_box.setTitle('Edit collection rule')
         self.cancel_edit_btn.setVisible(True)
-        self._sync_match_fields()
 
     def _delete_selected(self) -> None:
         from calibre_plugins.fanfic_organizer.collection_rules import format_rule_summary
