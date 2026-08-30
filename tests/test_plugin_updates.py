@@ -226,7 +226,7 @@ def test_fetch_releases_sorts_newest_first(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
-def test_filter_releases_omits_previews_and_pr_builds_by_default():
+def test_filter_releases_separates_previews_and_pr_builds():
     updates = load_updates()
     stable = updates.release_from_api(_sample_release(tag="v0.31.0"))
     preview = updates.release_from_api(
@@ -236,15 +236,56 @@ def test_filter_releases_omits_previews_and_pr_builds_by_default():
         _sample_release(tag="v0.32.0-pr.9+abcdef1", prerelease=True)
     )
     assert stable is not None and preview is not None and pr_build is not None
-    filtered = updates.filter_releases([pr_build, preview, stable])
-    assert [item.version_text for item in filtered] == ["0.31.0"]
-    with_pre = updates.filter_releases(
-        [pr_build, preview, stable], include_prereleases=True
+    items = [pr_build, preview, stable]
+    assert [item.version_text for item in updates.filter_releases(items)] == [
+        "0.31.0"
+    ]
+    only_preview = updates.filter_releases(items, include_previews=True)
+    assert [item.version_text for item in only_preview] == [
+        "0.32.0-preview.1+abc1234",
+        "0.31.0",
+    ]
+    only_pr = updates.filter_releases(items, include_pr_builds=True)
+    assert [item.version_text for item in only_pr] == [
+        "0.32.0-pr.9+abcdef1",
+        "0.31.0",
+    ]
+    both = updates.filter_releases(
+        items, include_previews=True, include_pr_builds=True
     )
-    assert [item.version_text for item in with_pre] == [
+    assert [item.version_text for item in both] == [
         "0.32.0-pr.9+abcdef1",
         "0.32.0-preview.1+abc1234",
         "0.31.0",
+    ]
+    # Deprecated combined flag still enables both.
+    legacy = updates.filter_releases(items, include_prereleases=True)
+    assert [item.version_text for item in legacy] == [
+        "0.32.0-pr.9+abcdef1",
+        "0.32.0-preview.1+abc1234",
+        "0.31.0",
+    ]
+
+
+def test_release_list_sort_puts_pr_above_preview_at_same_base():
+    updates = load_updates()
+    stable = updates.release_from_api(_sample_release(tag="v0.32.0"))
+    preview = updates.release_from_api(
+        _sample_release(tag="v0.32.0-preview.1+abc1234", prerelease=True)
+    )
+    pr_build = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.9+abcdef1", prerelease=True)
+    )
+    assert stable is not None and preview is not None and pr_build is not None
+    ordered = sorted(
+        [preview, pr_build, stable],
+        key=updates.release_list_sort_key,
+        reverse=True,
+    )
+    assert [item.version_text for item in ordered] == [
+        "0.32.0",
+        "0.32.0-pr.9+abcdef1",
+        "0.32.0-preview.1+abc1234",
     ]
 
 

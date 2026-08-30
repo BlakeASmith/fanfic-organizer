@@ -55,7 +55,7 @@ One version string: `ao3kit.__version__`. The plugin tuple in `calibre-plugin/__
 
 **Preview pre-releases** are created automatically on every push to `main`. They use `X.Y.Z-preview.<GitHub run number>+<short SHA>` (next 0.x minor as `X.Y.Z`), tag `v` plus that string, and are marked GitHub pre-releases. The pipeline only *reads* `[Unreleased]` for notes; it never writes `CHANGELOG.md`. Prefer a standard release for daily use.
 
-**PR pre-releases** are created automatically for each pull request. They use `X.Y.Z-pr.<PR number>+<short SHA>`, tag `v` plus that string, attach `FanFicOrganizer-X.Y.Z-pr.<n>+<sha>.zip`, and comment a download link on the PR. Marked GitHub pre-releases (same channel as main-branch previews in **Check for updates…**). Prefer a standard release for daily use.
+**PR pre-releases** are created automatically for each pull request. They use `X.Y.Z-pr.<PR number>+<short SHA>`, tag `v` plus that string, attach `FanFicOrganizer-X.Y.Z-pr.<n>+<sha>.zip`, and comment a download link on the PR. Marked GitHub pre-releases; in **Check for updates…** enable **Include PR pre-releases** (separate from main-branch previews). Prefer a standard release for daily use.
 
 ### Pre-1.0
 
