@@ -96,6 +96,19 @@ def pending_epub_attachments(
     return pending
 
 
+def import_fingerprint(record: dict[str, Any]) -> tuple:
+    """Stable metadata snapshot so stub → scraped upgrades re-enter Calibre."""
+    meta = record.get('metadata') if isinstance(record.get('metadata'), dict) else {}
+    return (
+        str(record.get('title') or ''),
+        tuple(str(x) for x in (record.get('fandoms') or [])),
+        tuple(str(x) for x in (record.get('tags') or [])),
+        tuple(str(x) for x in (record.get('relationships') or [])),
+        str(meta.get('words') or record.get('words') or ''),
+        str(record.get('summary') or ''),
+    )
+
+
 def pending_incremental_imports(
     records: list[dict[str, Any]],
     imported: dict[str, dict[str, Any]],
@@ -104,9 +117,11 @@ def pending_incremental_imports(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Split JSONL rows into new works vs works whose EPUB is now ready.
 
-    ``imported`` maps work id → ``{book_id, has_epub}`` for rows already
-    written to Calibre this job. New rows may already list ``epub_file``;
-    the caller attaches that file on the first import.
+    ``imported`` maps work id → ``{book_id, has_epub, fingerprint?}`` for rows
+    already written to Calibre this job. New rows may already list ``epub_file``;
+    the caller attaches that file on the first import. When a later JSONL row
+    has a different metadata fingerprint (Fill from AO3 seed → scraped page),
+    the row is returned again so Calibre gets the real metadata.
     """
     new_records: list[dict[str, Any]] = []
     epub_records: list[dict[str, Any]] = []
@@ -115,7 +130,12 @@ def pending_incremental_imports(
         if not work_id:
             continue
         state = imported.get(work_id)
+        fp = import_fingerprint(record)
         if state is None:
+            new_records.append(record)
+            continue
+        prev_fp = state.get('fingerprint')
+        if prev_fp is not None and prev_fp != fp:
             new_records.append(record)
             continue
         if str(record.get('epub_file') or '').strip() and not state.get('has_epub'):

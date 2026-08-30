@@ -160,6 +160,31 @@ def test_pending_incremental_imports_metadata_then_epub():
     assert [row["work_id"] for row in epubs] == ["11"]
 
 
+
+def test_pending_incremental_imports_reimports_metadata_upgrade():
+    mod = load_epub_plan()
+    records = [{"work_id": "11", "title": "stub"}]
+    imported = {
+        "11": {
+            "book_id": 1,
+            "has_epub": False,
+            "fingerprint": mod.import_fingerprint(records[0]),
+        }
+    }
+    records[0] = {
+        "work_id": "11",
+        "title": "Full Title",
+        "fandoms": ["Doctor Who"],
+        "tags": ["Fluff"],
+        "metadata": {"words": 100},
+    }
+    new, epubs = mod.pending_incremental_imports(
+        records, imported, work_id_of=lambda rec: rec.get("work_id")
+    )
+    assert [row["work_id"] for row in new] == ["11"]
+    assert epubs == []
+
+
 def test_summarize_epub_download_cancelled():
     mod = load_epub_plan()
     assert (

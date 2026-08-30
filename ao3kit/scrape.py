@@ -1502,7 +1502,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"Fetching {len(seed_records)} work page(s).",
                 file=sys.stderr,
             )
-        writer.replace_all(seed_records)
+        # Do not pre-write seeds: Calibre incremental import would ingest stubs
+        # and then skip the real metadata when on_record upserts the fetched row.
 
         def on_record(record: dict[str, Any]) -> None:
             writer.upsert(record)
@@ -1576,7 +1577,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Expanding {len(seed_records)} seed work(s) into full series.",
                 file=sys.stderr,
             )
-        writer.replace_all(seed_records)
+        # Seeds are incomplete; write via on_work / final replace_all only.
         records = expand_record_dicts(
             seed_records,
             session=session,

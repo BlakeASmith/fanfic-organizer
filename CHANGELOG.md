@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Make **Fill from AO3** update library books as each work page is fetched (and attach EPUBs as they download), instead of waiting for the whole fill job to finish. Avoids ingesting incomplete seed rows that blocked later metadata.
 - Support installing a **PR build** from **Check for updates…** (enable **Include PR builds**, pick a PR number). PR CI publishes a public GitHub pre-release zip — no login required. Paste URL / curl `--url` still work.
 - Add selected-book actions to the Calibre library right-click menu (Complete, Download EPUB, covers, series, simplify, collections, Search similar).
 - Reorder the plugin menu (selected-book actions first) and move **Import JSONL or zip** under an **Import** submenu.

@@ -17,6 +17,7 @@ from calibre_plugins.fanfic_organizer.enrich import run_ao3kit
 from calibre_plugins.fanfic_organizer.epub_plan import (
     merge_download_manifest,
     pending_epub_attachments,
+    import_fingerprint,
     pending_incremental_imports,
     summarize_epub_download,
 )
@@ -651,6 +652,7 @@ class JobSupervisor:
                         and book_id is not None
                         and book_has_epub(db, book_id)
                     ),
+                    'fingerprint': import_fingerprint(record),
                 }
                 if book_id is not None:
                     book_ids.append(book_id)

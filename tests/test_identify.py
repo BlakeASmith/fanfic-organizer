@@ -298,6 +298,46 @@ def test_scrape_works_from(tmp_path: Path, monkeypatch):
     assert record["metadata"]["words"] == 12345
 
 
+
+def test_scrape_works_from_does_not_prewrite_seeds(tmp_path: Path, monkeypatch):
+    """Output JSONL stays empty until each work page is fetched (Calibre poll)."""
+    out = tmp_path / "out.jsonl"
+    seed = tmp_path / "seed.jsonl"
+    seed.write_text(
+        json.dumps(
+            {
+                "work_id": "90876776",
+                "url": "https://archiveofourown.org/works/90876776",
+                "book_id": 4,
+                "title": "old",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("ao3kit.scrape.create_session", lambda *a, **k: object())
+
+    def fake_scrape(records, **kwargs):
+        assert out.is_file()
+        assert out.read_text(encoding="utf-8").strip() == ""
+        on_record = kwargs.get("on_record")
+        row = {
+            **records[0],
+            "title": "Time Storm",
+            "fandoms": ["Doctor Who (2005)"],
+        }
+        if on_record:
+            on_record(row)
+        return [row]
+
+    monkeypatch.setattr("ao3kit.scrape.scrape_known_works", fake_scrape)
+    rc = scrape_main(["-o", str(out), "--works-from", str(seed), "--verbose"])
+    assert rc == 0
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Time Storm"
+
+
 def test_scrape_known_works_continues_after_fetch_error(monkeypatch):
     from ao3kit.scrape import scrape_known_works
 
