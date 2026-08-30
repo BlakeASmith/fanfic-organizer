@@ -151,9 +151,49 @@ class FanficOrganizerPlugin(InterfaceAction):
 
     def _begin_context_menu_mode(self):
         self._menu_for_context = True
+        menu = self.sender()
+        if menu is not None:
+            self._place_open_in_ao3_on_context_menu(menu)
 
     def _end_context_menu_mode(self):
         self._menu_for_context = False
+
+    def _open_in_ao3_context_action(self):
+        action = getattr(self, '_open_in_ao3_action', None)
+        if action is not None:
+            return action
+        try:
+            from PyQt5.Qt import QAction
+        except ImportError:
+            from PyQt5.QtWidgets import QAction
+        from calibre_plugins.fanfic_organizer.context_menu import OPEN_IN_AO3_LABEL
+
+        action = QAction(OPEN_IN_AO3_LABEL, self.gui)
+        action.setStatusTip('Open the selected book(s) on archiveofourown.org')
+        action.triggered.connect(self.open_selected_in_ao3)
+        self._open_in_ao3_action = action
+        return action
+
+    def _place_open_in_ao3_on_context_menu(self, menu):
+        """Insert Open in AO3 as a top-level item before Fanfic Organizer."""
+        from calibre_plugins.fanfic_organizer.context_menu import OPEN_IN_AO3_LABEL
+
+        action = self._open_in_ao3_context_action()
+        for other in self._iter_book_context_menus():
+            if action in other.actions():
+                other.removeAction(action)
+        plugin_action = None
+        for existing in menu.actions():
+            text = existing.text().replace('&', '')
+            if text == self.name:
+                plugin_action = existing
+                break
+        if plugin_action is not None:
+            menu.insertAction(plugin_action, action)
+        else:
+            menu.addAction(action)
+        action.setEnabled(bool(self._selected_ids()))
+        action.setText(OPEN_IN_AO3_LABEL)
 
     def _selected_ids(self):
         try:
@@ -204,11 +244,19 @@ class FanficOrganizerPlugin(InterfaceAction):
         self.menu.clear()
         selected_ids = self._selected_ids()
         has_selection = len(selected_ids) > 0
-        self._populate_selection_actions(has_selection)
+        self._populate_selection_actions(has_selection, for_context=for_context)
         if not for_context:
             self._populate_global_actions()
 
-    def _populate_selection_actions(self, has_selection: bool):
+    def _populate_selection_actions(self, has_selection: bool, *, for_context: bool = False):
+        if not for_context:
+            open_ao3 = self.menu.addAction(
+                'Open in AO3', self.open_selected_in_ao3
+            )
+            open_ao3.setEnabled(has_selection)
+            open_ao3.setStatusTip(
+                'Open the selected book(s) on archiveofourown.org'
+            )
         complete = self.menu.addAction(
             'Complete selected', self.complete_selected_books
         )
@@ -662,6 +710,57 @@ class FanficOrganizerPlugin(InterfaceAction):
             ),
         )
         self.jobs().start_prepared(job_dir)
+
+    def open_selected_in_ao3(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        from calibre_plugins.fanfic_organizer.cleaned import ao3_work_url_from_book_fields
+
+        try:
+            from PyQt5.Qt import QDesktopServices, QUrl
+        except ImportError:
+            from PyQt5.QtGui import QDesktopServices, QUrl
+
+        db = self.gui.current_db
+        urls: list[str] = []
+        seen: set[str] = set()
+        for book_id in book_ids:
+            identifiers = {}
+            comments = ''
+            try:
+                mi = db.get_metadata(book_id, index_is_id=True)
+                identifiers = mi.get_identifiers() or {}
+                comments = str(getattr(mi, 'comments', None) or '')
+            except Exception:
+                continue
+            url = ao3_work_url_from_book_fields(identifiers, comments)
+            if not url:
+                continue
+            key = url.rstrip('/')
+            if key in seen:
+                continue
+            seen.add(key)
+            urls.append(url)
+
+        if not urls:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'None of the selected books have an AO3 work id or URL.',
+                show=True,
+            )
+            return
+
+        for url in urls:
+            QDesktopServices.openUrl(QUrl(url))
 
     def complete_selected_books(self):
         book_ids = list(self.gui.library_view.get_selected_ids())

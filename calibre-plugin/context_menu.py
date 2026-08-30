@@ -12,8 +12,12 @@ CONTEXT_MENU_LAYOUT_KEYS = (
     'action-layout-context-menu-cover-browser',
 )
 
+# Opens in the browser; also injected as a top-level Calibre context-menu item.
+OPEN_IN_AO3_LABEL = 'Open in AO3'
+
 # Top-level labels for actions that need a book selection.
 SELECTION_ACTION_LABELS = (
+    OPEN_IN_AO3_LABEL,
     'Complete selected',
     'Fill from AO3',
     'Download EPUB',
@@ -68,7 +72,35 @@ def layouts_needing_plugin(
 
 
 def menu_action_labels(*, for_context: bool) -> tuple[str, ...]:
-    """Labels shown on the plugin menu for toolbar vs library right-click."""
+    """Labels shown on the plugin menu for toolbar vs library right-click.
+
+    Library right-click injects Open in AO3 at the Calibre context-menu root,
+    so the Fanfic Organizer submenu omits it there to avoid a duplicate.
+    """
     if for_context:
-        return SELECTION_ACTION_LABELS
+        return tuple(
+            label
+            for label in SELECTION_ACTION_LABELS
+            if label != OPEN_IN_AO3_LABEL
+        )
     return SELECTION_ACTION_LABELS + GLOBAL_ACTION_LABELS
+
+
+def insert_before_plugin_action(
+    action_texts: Sequence[str | None],
+    plugin_name: str,
+    open_label: str = OPEN_IN_AO3_LABEL,
+) -> list[str | None]:
+    """Return menu labels with *open_label* placed just before *plugin_name*.
+
+    Used to decide where the top-level Open in AO3 action sits relative to the
+    Fanfic Organizer submenu on the Calibre library context menu.
+    """
+    items: list[str | None] = [text for text in action_texts if text != open_label]
+    try:
+        idx = items.index(plugin_name)
+    except ValueError:
+        items.append(open_label)
+        return items
+    items.insert(idx, open_label)
+    return items
