@@ -47,12 +47,62 @@ def _strip_collections(raw: Any) -> list[str]:
     return out
 
 
+def library_book_id(book: Any) -> int | None:
+    """Return the open-library book id Calibre matched onto a device book.
+
+    After connect, ``gui.set_books_in_library`` stores that id on
+    ``application_id`` (Kobo and most drivers). ``db_id`` is only set by a
+    few drivers (e.g. Sony). Prefer ``application_id``.
+    """
+    for attr in ("application_id", "db_id"):
+        raw = getattr(book, attr, None)
+        if raw is None or raw is False:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value:
+            return value
+    return None
+
+
+def _dedupe_books(books: Iterable[Any], *, seen: set[str] | None = None) -> Iterable[Any]:
+    if seen is None:
+        seen = set()
+    for book in books:
+        if not book:
+            continue
+        lpath = getattr(book, "lpath", None)
+        key = str(lpath).replace("\\", "/") if lpath else ""
+        if key:
+            if key in seen:
+                continue
+            seen.add(key)
+        yield book
+
+
+def _iter_booklists(booklists: Iterable[Any] | None) -> Iterable[Any]:
+    """Yield books from GUI ``booklists()`` (main, card a, card b)."""
+    if not booklists:
+        return
+    seen: set[str] = set()
+    for booklist in booklists:
+        if not booklist:
+            continue
+        yield from _dedupe_books(booklist, seen=seen)
+
+
 def _iter_device_books(device: Any) -> Iterable[Any]:
     """Yield books from main memory and cards via Calibre's ``books(oncard=…)``.
 
     Stock Calibre device drivers (including KOBOTOUCH) take ``oncard`` /
     ``end_session`` — never ``main_memory``. Match ``gui2.device``: scan
     main, carda, and cardb.
+
+    Prefer ``gui.booklists()`` when available: those lists already have
+    ``application_id`` from library matching. A fresh ``device.books()``
+    call does not.
     """
     books_method = getattr(device, "books", None)
     if not callable(books_method):
@@ -72,25 +122,32 @@ def _iter_device_books(device: Any) -> Iterable[Any]:
                 return
         if not booklist:
             continue
-        for book in booklist:
-            lpath = getattr(book, "lpath", None)
-            key = str(lpath).replace("\\", "/") if lpath else ""
-            if key:
-                if key in seen:
-                    continue
-                seen.add(key)
-            yield book
+        yield from _dedupe_books(booklist, seen=seen)
 
 
-def build_collections_index(db: Any, device: Any) -> list[dict[str, Any]]:
-    """Build the collections-only JSON from books on the connected device."""
+def build_collections_index(
+    db: Any,
+    device: Any,
+    *,
+    booklists: Iterable[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the collections-only JSON from books on the connected device.
+
+    Pass Calibre ``gui.booklists()`` when calling from the plugin so matched
+    ``application_id`` values are used. Falls back to ``device.books()``.
+    """
     entries: list[dict[str, Any]] = []
-    for book in _iter_device_books(device):
-        db_id = getattr(book, "db_id", None)
+    source = (
+        _iter_booklists(booklists)
+        if booklists is not None
+        else _iter_device_books(device)
+    )
+    for book in source:
+        db_id = library_book_id(book)
         lpath = getattr(book, "lpath", None)
         if not db_id or not lpath:
             continue
-        mi = db.get_metadata(db_id, get_user_categories=True)
+        mi = db.get_metadata(db_id, index_is_id=True, get_user_categories=True)
         collections = _strip_collections(mi.get(COLLECTIONS_COLUMN))
         if not collections:
             collections = _strip_collections(mi.get("collections"))
@@ -315,9 +372,10 @@ def deploy_to_device(
     plugin_source: Path | None = None,
     install_koplugin: bool = True,
     koreader_subdir: str = DEFAULT_KOREADER_SUBDIR,
+    booklists: Iterable[Any] | None = None,
 ) -> dict[str, Any]:
     """Install the KOReader plugin (optional) and write collections JSON on the device."""
-    entries = build_collections_index(db, device)
+    entries = build_collections_index(db, device, booklists=booklists)
     mounts = detect_koreader_mounts(device, koreader_subdir=koreader_subdir)
     written: list[str] = []
     installed: list[str] = []
