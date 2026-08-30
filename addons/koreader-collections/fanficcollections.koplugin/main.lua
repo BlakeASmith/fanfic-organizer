@@ -137,7 +137,7 @@ function FanficCollections:show_collection_picker()
         UIManager:show(ConfirmBox:new{
             text = _(
                 "No fanfic-organizer collections found.\n\n"
-                    .. "Connect your Kobo to Calibre, run Fanfic Organizer "
+                    .. "Connect your device to Calibre, run Fanfic Organizer "
                     .. "→ Deploy to KOReader… after sync."
             ) .. (load_debug and ("\n\n" .. load_debug) or ""),
         })

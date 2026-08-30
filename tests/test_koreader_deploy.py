@@ -125,6 +125,7 @@ def test_build_collections_index_from_device_books(tmp_path: Path):
     assert entries[0]["lpath"] == "Author A/Alpha.epub"
     assert entries[0]["collections"] == ["Harry Potter", "Fluff"]
     assert entries[0]["storage"] == "main"
+    assert entries[0]["filename"] == "Alpha.epub"
     assert entries[1]["collections"] == []
     assert [call[0] for call in device.books_calls] == [None, "carda", "cardb"]
     assert db.get_metadata_calls == [(1, True), (2, True)]

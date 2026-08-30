@@ -166,6 +166,7 @@ def build_collections_index(
             "lpath": str(lpath).replace("\\", "/"),
             "collections": collections,
             "storage": storage,
+            "filename": Path(str(lpath).replace("\\", "/")).name,
         }
         title = getattr(mi, "title", None)
         if title:
@@ -190,6 +191,11 @@ def build_collections_index_from_rows(rows: Iterable[dict[str, Any]]) -> list[di
         storage = row.get("storage")
         if storage:
             entry["storage"] = str(storage)
+        filename = row.get("filename")
+        if filename:
+            entry["filename"] = str(filename)
+        elif lpath:
+            entry["filename"] = Path(lpath).name
         title = row.get("title")
         if title:
             entry["title"] = str(title)
