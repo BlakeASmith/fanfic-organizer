@@ -21,6 +21,7 @@ def plan_wikipedia(options: dict[str, Any], job_dir: Path) -> dict[str, Any]:
     work = job_dir / 'work'
     work.mkdir(parents=True, exist_ok=True)
     argv, jsonl = prepare_wikipedia_command(options, work)
+    build_epub = bool(options.get('download_epubs'))
     spec: dict[str, Any] = {
         'id': job_dir.name,
         'title': describe_wikipedia(options)[:80],
@@ -41,5 +42,8 @@ def plan_wikipedia(options: dict[str, Any], job_dir: Path) -> dict[str, Any]:
             'label': 'article',
         },
     }
+    if build_epub:
+        # EPUBs land in work/epubs/{pageid}.epub via --epub-dir.
+        spec['plugin']['bundle_root'] = str(work)
     write_json(job_dir / 'spec.json', spec)
     return spec

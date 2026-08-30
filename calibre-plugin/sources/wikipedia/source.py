@@ -9,7 +9,8 @@ from typing import Any
 
 SOURCE_ID = 'wikipedia'
 PUBLISHER = 'Wikipedia'
-MENU_LABEL = 'Search Wikipedia and import...'
+MENU_LABEL = 'Wikipedia...'
+MENU_GROUP = 'import'
 ID_KEY = 'wikipedia'
 
 WIKIPEDIA_URL_RE = re.compile(
@@ -22,6 +23,7 @@ class WikipediaSource:
     id = SOURCE_ID
     publisher = PUBLISHER
     menu_label = MENU_LABEL
+    menu_group = MENU_GROUP
     include_series = False
     job_kind = 'wikipedia'
 
@@ -94,5 +96,6 @@ class WikipediaSource:
         prefs['last_wikipedia_url'] = values['url']
         prefs['last_wikipedia_lang'] = values['lang']
         prefs['last_wikipedia_max_results'] = values['max_results'] or '25'
+        prefs['wikipedia_build_epub'] = bool(values.get('download_epubs', True))
         prefs['update_existing'] = values['update_existing']
         return values

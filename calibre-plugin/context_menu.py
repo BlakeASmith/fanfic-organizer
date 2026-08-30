@@ -32,8 +32,7 @@ SELECTION_ACTION_LABELS = (
 )
 
 # Top-level labels / submenus that are library-wide (toolbar only).
-# Top-level labels / submenus that are library-wide (toolbar only).
-# Source search labels come from ``sources.source_menu_labels()``.
+# Toolbar source labels come from ``sources.source_menu_labels(group='toolbar')``.
 _FIXED_GLOBAL_ACTION_LABELS = (
     'Process library...',
     'Running jobs...',
@@ -59,7 +58,7 @@ def _global_action_labels() -> tuple[str, ...]:
             from sources import source_menu_labels
         except ImportError:
             return ('Search AO3 and import...',) + _FIXED_GLOBAL_ACTION_LABELS
-    return source_menu_labels() + _FIXED_GLOBAL_ACTION_LABELS
+    return source_menu_labels(group='toolbar') + _FIXED_GLOBAL_ACTION_LABELS
 
 
 GLOBAL_ACTION_LABELS = _global_action_labels()

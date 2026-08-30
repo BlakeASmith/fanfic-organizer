@@ -36,16 +36,17 @@ class WikipediaSearchDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Search Wikipedia and import')
+        self.setWindowTitle('Import from Wikipedia')
         self.setMinimumWidth(480)
-        self.resize(520, 420)
+        self.resize(520, 440)
 
         layout = QVBoxLayout(self)
         intro = QLabel(
             'Search Wikipedia or paste an article URL, then import matches '
             'into the <b>currently open</b> Calibre library. Articles get a '
             'Wikipedia identifier and publisher; categories become Tags. '
-            'No EPUB download — Wikipedia has no native ebook format here.'
+            'With Build EPUB on, each article is rendered to an EPUB '
+            '(MediaWiki HTML) and stamped with a generated cover.'
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -72,10 +73,19 @@ class WikipediaSearchDialog(QDialog):
 
         import_box = QGroupBox('Import options')
         import_form = QFormLayout(import_box)
+        self.build_epub = QCheckBox('Build EPUB from article HTML')
+        self.build_epub.setChecked(
+            bool(prefs.get('wikipedia_build_epub', True))
+        )
+        self.build_epub.setToolTip(
+            'Fetches the rendered article and packs it into an EPUB under '
+            'the job folder, then attaches it in Calibre.'
+        )
         self.update_existing = QCheckBox(
             'Update existing books (same Wikipedia id)'
         )
         self.update_existing.setChecked(bool(prefs.get('update_existing', True)))
+        import_form.addRow(self.build_epub)
         import_form.addRow(self.update_existing)
         layout.addWidget(import_box)
 
@@ -108,7 +118,7 @@ class WikipediaSearchDialog(QDialog):
             'lang': self.lang.text().strip() or 'en',
             'max_results': self.max_results.text().strip(),
             'update_existing': self.update_existing.isChecked(),
-            'download_epubs': False,
+            'download_epubs': self.build_epub.isChecked(),
             'simplify_tags': False,
             'drop_unmarked': False,
         }

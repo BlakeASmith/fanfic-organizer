@@ -15,6 +15,7 @@ AO3_WORK_ID_RE = re.compile(
 SOURCE_ID = 'ao3'
 PUBLISHER = 'Archive of Our Own'
 MENU_LABEL = 'Search AO3 and import...'
+MENU_GROUP = 'toolbar'
 
 
 def work_id_from_url(url: Any) -> str | None:
@@ -35,6 +36,7 @@ class Ao3Source:
     id = SOURCE_ID
     publisher = PUBLISHER
     menu_label = MENU_LABEL
+    menu_group = MENU_GROUP
     include_series = True
     job_kind = 'scrape'
 

@@ -316,6 +316,9 @@ class FanficOrganizerPlugin(InterfaceAction):
             label = getattr(source, 'menu_label', '') or ''
             if not label:
                 continue
+            group = str(getattr(source, 'menu_group', 'toolbar') or 'toolbar')
+            if group != 'toolbar':
+                continue
             self.menu.addAction(
                 label,
                 lambda checked=False, src=source: self.run_source_import(src),
@@ -339,6 +342,17 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         self.menu.addSeparator()
         more = self.menu.addMenu('Import')
+        for source in all_sources():
+            label = getattr(source, 'menu_label', '') or ''
+            if not label:
+                continue
+            group = str(getattr(source, 'menu_group', 'toolbar') or 'toolbar')
+            if group != 'import':
+                continue
+            more.addAction(
+                label,
+                lambda checked=False, src=source: self.run_source_import(src),
+            )
         more.addAction('JSONL or zip...', self.show_import_dialog)
 
         self.menu.addSeparator()

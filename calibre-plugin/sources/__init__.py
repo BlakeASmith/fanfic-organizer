@@ -69,10 +69,17 @@ def all_sources() -> list[Any]:
     return list(_ADAPTERS)
 
 
-def source_menu_labels() -> tuple[str, ...]:
-    return tuple(
-        adapter.menu_label for adapter in all_sources() if adapter.menu_label
-    )
+def source_menu_labels(*, group: str = 'toolbar') -> tuple[str, ...]:
+    wanted = str(group or 'toolbar').strip().casefold() or 'toolbar'
+    labels: list[str] = []
+    for adapter in all_sources():
+        label = getattr(adapter, 'menu_label', '') or ''
+        if not label:
+            continue
+        g = str(getattr(adapter, 'menu_group', 'toolbar') or 'toolbar').casefold()
+        if g == wanted:
+            labels.append(label)
+    return tuple(labels)
 
 
 def get_source(source_id: str) -> Any | None:

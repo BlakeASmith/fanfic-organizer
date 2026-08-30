@@ -27,9 +27,8 @@ def test_source_registry_lists_ao3_and_wikipedia():
 
     ids = [s.id for s in all_sources()]
     assert ids == ["wikipedia", "ao3"]
-    labels = source_menu_labels()
-    assert "Search AO3 and import..." in labels
-    assert "Search Wikipedia and import..." in labels
+    assert source_menu_labels(group="toolbar") == ("Search AO3 and import...",)
+    assert source_menu_labels(group="import") == ("Wikipedia...",)
 
 
 def test_wikipedia_calibre_fields_use_wikipedia_identifier():
@@ -94,13 +93,42 @@ def test_prepare_wikipedia_command(tmp_path: Path):
     from sources.wikipedia.run import prepare_wikipedia_command
 
     argv, jsonl = prepare_wikipedia_command(
-        {"query": "Doctor Who", "lang": "en", "max_results": "5"},
+        {
+            "query": "Doctor Who",
+            "lang": "en",
+            "max_results": "5",
+            "download_epubs": True,
+        },
         tmp_path,
     )
     assert argv[:1] == ["wikipedia"]
     assert "--query" in argv
     assert argv[argv.index("--query") + 1] == "Doctor Who"
+    assert "--epub" in argv
+    assert "--epub-dir" in argv
     assert jsonl == tmp_path / "results.jsonl"
+
+
+def test_write_article_epub(tmp_path: Path):
+    from ao3kit.sources.wikipedia_epub import write_article_epub
+
+    path = tmp_path / "epubs" / "99.epub"
+    write_article_epub(
+        path,
+        title="TARDIS",
+        html_body="<p>A time machine and spacecraft.</p>",
+        url="https://en.wikipedia.org/wiki/TARDIS",
+        work_id="99",
+    )
+    assert path.is_file()
+    assert path.stat().st_size > 100
+    import zipfile
+
+    with zipfile.ZipFile(path) as zf:
+        names = set(zf.namelist())
+        assert "mimetype" in names
+        assert "OEBPS/chapter.xhtml" in names
+        assert zf.read("mimetype") == b"application/epub+zip"
 
 
 def test_plan_wikipedia(tmp_path: Path):

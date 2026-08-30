@@ -288,6 +288,90 @@ def fetch_pages(
     return records
 
 
+def fetch_article_html(
+    *,
+    pageid: int | None = None,
+    title: str | None = None,
+    lang: str = DEFAULT_LANG,
+    session: requests.Session | None = None,
+    on_status: StatusCallback | None = None,
+) -> str:
+    """Return rendered article HTML from MediaWiki ``action=parse``."""
+    if pageid is None and not str(title or "").strip():
+        raise WikipediaError("pageid or title required for article HTML")
+    own = session is None
+    sess = session or _session()
+    try:
+        params: dict[str, Any] = {
+            "action": "parse",
+            "prop": "text",
+            "disableeditsection": "1",
+            "format": "json",
+            "formatversion": "2",
+        }
+        if pageid is not None:
+            params["pageid"] = int(pageid)
+        else:
+            params["page"] = str(title).strip()
+        data = _api_get(sess, wiki_api_base(lang), params, on_status=on_status)
+        parsed = data.get("parse") or {}
+        text = parsed.get("text")
+        if isinstance(text, dict):
+            html = str(text.get("*") or "")
+        else:
+            html = str(text or "")
+        if not html.strip():
+            raise WikipediaError("MediaWiki parse returned empty HTML")
+        return html
+    finally:
+        if own:
+            sess.close()
+
+
+def build_epubs_for_records(
+    records: list[dict[str, Any]],
+    dest_dir: str | Path,
+    *,
+    session: requests.Session | None = None,
+    on_status: StatusCallback | None = None,
+    cover: bool = True,
+) -> list[dict[str, Any]]:
+    """Fetch article HTML and write EPUB files; returns updated records."""
+    from ao3kit.sources.wikipedia_epub import attach_epub_to_record
+
+    own = session is None
+    sess = session or _session()
+    out: list[dict[str, Any]] = []
+    try:
+        for record in records:
+            lang = str((record.get("metadata") or {}).get("language") or DEFAULT_LANG)
+            work_id = str(record.get("work_id") or "").strip()
+            title = str(record.get("title") or "").strip()
+            try:
+                html_body = fetch_article_html(
+                    pageid=int(work_id) if work_id.isdigit() else None,
+                    title=None if work_id.isdigit() else title,
+                    lang=lang,
+                    session=sess,
+                    on_status=on_status,
+                )
+                updated = attach_epub_to_record(
+                    record, dest_dir, html_body, cover=cover
+                )
+                out.append(updated)
+            except (WikipediaError, requests.RequestException, OSError, ValueError) as exc:
+                failed = dict(record)
+                failed["epub_error"] = str(exc)
+                failed.pop("epub_file", None)
+                out.append(failed)
+                if on_status:
+                    on_status(f"EPUB failed for {title or work_id}: {exc}")
+    finally:
+        if own:
+            sess.close()
+    return out
+
+
 def search_records(
     query: str,
     *,
@@ -415,6 +499,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Progress messages on stderr",
     )
+    parser.add_argument(
+        "--epub",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Build an EPUB from each article's HTML (MediaWiki parse)",
+    )
+    parser.add_argument(
+        "--epub-dir",
+        help="Directory for epubs/ (default: same dir as --output, or cwd)",
+    )
+    parser.add_argument(
+        "--cover",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stamp a generated cover into built EPUBs (default: on)",
+    )
     return parser
 
 
@@ -453,6 +553,22 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             parser.error("Provide --query, --url, --title, and/or --page-id")
+
+        if args.epub and records:
+            if args.epub_dir:
+                epub_root = Path(args.epub_dir)
+            elif args.output:
+                epub_root = Path(args.output).resolve().parent
+            else:
+                epub_root = Path.cwd()
+            if args.verbose:
+                print(f"Building EPUBs under {epub_root / 'epubs'}…", file=sys.stderr)
+            records = build_epubs_for_records(
+                records,
+                epub_root,
+                on_status=on_status,
+                cover=bool(args.cover),
+            )
     except (WikipediaError, requests.RequestException, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -464,6 +580,9 @@ def main(argv: list[str] | None = None) -> int:
 
     noun = "article" if len(records) == 1 else "articles"
     print(f"Wrote {len(records)} Wikipedia {noun}", file=sys.stderr)
+    if args.epub:
+        ok = sum(1 for r in records if r.get("epub_file"))
+        print(f"Built {ok}/{len(records)} EPUB(s)", file=sys.stderr)
     return 0
 
 

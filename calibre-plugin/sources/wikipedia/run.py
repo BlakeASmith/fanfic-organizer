@@ -66,4 +66,9 @@ def prepare_wikipedia_command(
 
     if options.get('verbose'):
         argv.append('--verbose')
+    if options.get('download_epubs'):
+        argv.append('--epub')
+        argv.extend(['--epub-dir', str(work)])
+    else:
+        argv.append('--no-epub')
     return argv, jsonl
