@@ -15,10 +15,12 @@ from calibre_dev.versioning import (
     format_preview_version,
     github_download_path,
     included_in_release_notice,
+    is_pr_tag,
     is_preview_tag,
     is_stable_tag,
     parse_semver,
     plugin_zip_name,
+    pr_release_notes,
     pr_zip_name,
     prepend_included_notice,
     preview_release_notes,
@@ -65,18 +67,29 @@ def test_format_preview_version_rejects_bad_build_number():
 
 def test_pr_and_zip_names():
     assert format_pr_version("0.31.0", 12, "abcdef1") == "0.31.0-pr.12+abcdef1"
+    parsed = parse_semver("0.31.0-pr.12+abcdef1")
+    assert parsed.is_pr_build
+    assert not parsed.is_preview
     assert plugin_zip_name("0.31.0-preview.452+7a4f9b2") == (
         "FanFicOrganizer-0.31.0-preview.452+7a4f9b2.zip"
+    )
+    assert plugin_zip_name("0.31.0-pr.12+abcdef1") == (
+        "FanFicOrganizer-0.31.0-pr.12+abcdef1.zip"
     )
     assert plugin_zip_name("0.31.0") == "FanFicOrganizer-0.31.0.zip"
     assert pr_zip_name(12, "abcdef1xyz") == "FanFicOrganizer-PR-12-abcdef1.zip"
     assert release_tag_name("0.31.0-preview.1+abc1234") == "v0.31.0-preview.1+abc1234"
+    assert release_tag_name("0.31.0-pr.12+abcdef1") == "v0.31.0-pr.12+abcdef1"
 
 
 def test_preview_and_stable_tag_detection():
     assert is_preview_tag("v0.31.0-preview.12+7a4f9b2")
     assert is_preview_tag("0.31.0-preview.1")
     assert not is_preview_tag("v0.31.0")
+    assert is_pr_tag("v0.31.0-pr.12+abcdef1")
+    assert is_pr_tag("0.31.0-pr.1")
+    assert not is_pr_tag("v0.31.0-preview.1+abc")
+    assert not is_pr_tag("v0.31.0")
     assert is_stable_tag("v0.31.0")
     assert not is_stable_tag("v0.31.0-preview.1+abc")
 
@@ -138,6 +151,21 @@ def test_preview_release_notes_scrape_unreleased_without_writing():
     )
     assert "7a4f9b2" in empty
     assert PREVIEW_EMPTY_FALLBACK in empty
+
+
+def test_pr_release_notes_scrape_unreleased_without_writing():
+    before = CHANGELOG_PATH.read_text(encoding="utf-8")
+    notes = pr_release_notes(
+        SAMPLE,
+        pr_number=12,
+        git_hash="abcdef1",
+        pr_url="https://github.com/BlakeASmith/fanfic-organizer/pull/12",
+        latest_release_url="https://github.com/BlakeASmith/fanfic-organizer/releases/latest",
+    )
+    assert "automated **PR**" in notes
+    assert "#12" in notes
+    assert "New search filter." in notes
+    assert CHANGELOG_PATH.read_text(encoding="utf-8") == before
 
 
 def test_included_notice_is_idempotent():

@@ -41,6 +41,7 @@ SEMVER_RE = re.compile(
     r"(?:\+(?P<build>[0-9A-Za-z.-]+))?$"
 )
 PREVIEW_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-preview(?:\.|$|\+)")
+PR_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-pr(?:\.|$|\+)")
 USER_AGENT = "Fanfic-Organizer-Plugin-Updater"
 RESTART_DELAY_S = 2.0
 SHUTDOWN_WAIT_S = 20.0
@@ -68,6 +69,14 @@ class ParsedVersion:
         return bool(self.prerelease and self.prerelease.startswith("preview"))
 
     @property
+    def is_pr_build(self) -> bool:
+        return bool(self.prerelease and self.prerelease.startswith("pr."))
+
+    @property
+    def is_channel_prerelease(self) -> bool:
+        return self.is_preview or self.is_pr_build
+
+    @property
     def is_stable(self) -> bool:
         return not self.prerelease and not self.build
 
@@ -93,10 +102,15 @@ class ReleaseInfo:
     download_url: str
     parsed: ParsedVersion
     asset_size: int | None = None
+    is_pr_build: bool = False
 
     @property
     def version_text(self) -> str:
         return self.version_display
+
+    @property
+    def is_channel_prerelease(self) -> bool:
+        return self.is_preview or self.is_pr_build
 
 
 def _prerelease_sort_key(prerelease: str | None) -> tuple:
@@ -156,6 +170,20 @@ def is_preview_tag(tag: str) -> bool:
         return parse_semver(text).is_preview
     except UpdateError:
         return False
+
+
+def is_pr_tag(tag: str) -> bool:
+    text = (tag or "").strip()
+    if PR_TAG_RE.search(text):
+        return True
+    try:
+        return parse_semver(text).is_pr_build
+    except UpdateError:
+        return False
+
+
+def is_channel_prerelease_tag(tag: str) -> bool:
+    return is_preview_tag(tag) or is_pr_tag(tag)
 
 
 def installed_version_parsed() -> ParsedVersion:
@@ -242,7 +270,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
     if not tag:
         return None
     prerelease = bool(record.get("prerelease"))
-    if prerelease and not is_preview_tag(tag):
+    if prerelease and not is_channel_prerelease_tag(tag):
         return None
     try:
         parsed = parse_semver(tag)
@@ -259,6 +287,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
         version=parsed.base,
         version_display=parsed.text(),
         is_preview=parsed.is_preview,
+        is_pr_build=parsed.is_pr_build,
         tag=tag if tag.startswith("v") else f"v{tag.lstrip('v')}",
         name=str(record.get("name") or tag),
         published_at=str(record.get("published_at") or ""),
@@ -270,7 +299,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
     )
 
 
-def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
+def fetch_releases(*, per_page: int = 100) -> list[ReleaseInfo]:
     url = f"{github_releases_api()}?per_page={max(1, min(per_page, 100))}"
     payload = _github_request(url)
     if not isinstance(payload, list):
@@ -293,12 +322,13 @@ def filter_releases(
 ) -> list[ReleaseInfo]:
     """Return releases for the update picker.
 
-    When ``include_prereleases`` is false, preview GitHub pre-releases are omitted.
+    When ``include_prereleases`` is false, preview and PR GitHub pre-releases
+    are omitted.
     """
     items = list(releases)
     if include_prereleases:
         return items
-    return [item for item in items if not item.is_preview]
+    return [item for item in items if not item.is_channel_prerelease]
 
 
 def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
@@ -309,7 +339,7 @@ def latest_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
 
 
 def latest_stable_release(releases: Iterable[ReleaseInfo]) -> ReleaseInfo | None:
-    stable = [item for item in releases if not item.is_preview]
+    stable = [item for item in releases if not item.is_channel_prerelease]
     return latest_release(stable)
 
 
@@ -342,7 +372,9 @@ def format_release_changelog_entry(release: ReleaseInfo) -> str:
     """One release's notes with a version heading for the updater pane."""
     published = format_published_at(release.published_at)
     heading = release.version_text
-    if release.is_preview:
+    if release.is_pr_build:
+        heading += " (PR)"
+    elif release.is_preview:
         heading += " (preview)"
     if published:
         heading += f" — {published}"
@@ -621,8 +653,29 @@ def download_and_install(release: ReleaseInfo) -> Path:
         return dest
 
 
+def is_same_installed_build(release: ReleaseInfo) -> bool:
+    """True when the release is the exact installed build (including +sha)."""
+    return release.version_text == installed_version_text()
+
+
 def compare_to_installed(release: ReleaseInfo) -> int:
-    return compare_parsed_versions(release.parsed, installed_version_parsed())
+    """Compare release to the installed build for upgrade / downgrade UI.
+
+    SemVer ignores build metadata (``+sha``). Same PR / preview channel with a
+    different SHA must still be installable, so when precedence ties we compare
+    build strings for button direction only.
+    """
+    installed = installed_version_parsed()
+    cmp = compare_parsed_versions(release.parsed, installed)
+    if cmp != 0:
+        return cmp
+    left_build = release.parsed.build or ""
+    right_build = installed.build or ""
+    if left_build == right_build:
+        return 0
+    if left_build > right_build:
+        return 1
+    return -1
 
 
 def format_published_at(value: str) -> str:

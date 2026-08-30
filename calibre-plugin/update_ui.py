@@ -34,6 +34,7 @@ from calibre_plugins.fanfic_organizer.updates import (
     filter_releases,
     format_published_at,
     installed_version_text,
+    is_same_installed_build,
     latest_release,
     latest_stable_release,
     spawn_calibre_restart,
@@ -99,14 +100,15 @@ class UpdateCheckDialog(QDialog):
         layout.addLayout(form)
 
         self.include_prereleases = QCheckBox(
-            "Include preview pre-releases (main-branch builds)"
+            "Include preview / PR pre-releases"
         )
         self.include_prereleases.setChecked(
             bool(prefs.get("include_prereleases", False))
         )
         self.include_prereleases.setToolTip(
             "When checked, list automated GitHub pre-releases "
-            "(X.Y.Z-preview.<run>+<sha>) alongside standard releases. "
+            "(main-branch X.Y.Z-preview.<run>+<sha> and PR "
+            "X.Y.Z-pr.<n>+<sha>) alongside standard releases. "
             "Prefer standard releases for daily use."
         )
         self.include_prereleases.stateChanged.connect(self._on_prerelease_toggled)
@@ -211,14 +213,16 @@ class UpdateCheckDialog(QDialog):
         self.version_combo.clear()
         for release in self._releases:
             label = release.version_text
-            if release.is_preview:
+            if release.is_pr_build:
+                label += " (PR)"
+            elif release.is_preview:
                 label += " (preview)"
-            if compare_to_installed(release) > 0:
+            if is_same_installed_build(release):
+                label += " (installed)"
+            elif compare_to_installed(release) > 0:
                 label += " (newer)"
             elif compare_to_installed(release) < 0:
                 label += " (older)"
-            else:
-                label += " (installed)"
             published = format_published_at(release.published_at)
             if published:
                 label += f" — {published}"
@@ -231,8 +235,8 @@ class UpdateCheckDialog(QDialog):
             self.latest_label.setText("No releases found")
             if self._all_releases and not include:
                 self.status.setText(
-                    "No standard releases found. Enable preview pre-releases "
-                    "to see automated main-branch builds."
+                    "No standard releases found. Enable preview / PR "
+                    "pre-releases to see automated test builds."
                 )
             else:
                 self.status.setText(
@@ -242,22 +246,32 @@ class UpdateCheckDialog(QDialog):
             return
         if include and latest_stable is not None:
             latest_text = latest_stable.version_text
-            if latest.is_preview and latest.version_text != latest_text:
-                latest_text += f" (preview: {latest.version_text})"
+            if (
+                latest.is_channel_prerelease
+                and latest.version_text != latest_text
+            ):
+                kind = "PR" if latest.is_pr_build else "preview"
+                latest_text += f" ({kind}: {latest.version_text})"
             self.latest_label.setText(latest_text)
-        elif include and latest.is_preview:
-            self.latest_label.setText(f"{latest.version_text} (preview only)")
+        elif include and latest.is_channel_prerelease:
+            kind = "PR" if latest.is_pr_build else "preview"
+            self.latest_label.setText(f"{latest.version_text} ({kind} only)")
         else:
             self.latest_label.setText(latest.version_text)
         current = installed_version_text()
-        if compare_to_installed(latest) > 0:
-            kind = "preview build" if latest.is_preview else "release"
+        if is_same_installed_build(latest):
+            self.status.setText("You are on the latest listed build.")
+        elif compare_to_installed(latest) > 0:
+            if latest.is_pr_build:
+                kind = "PR build"
+            elif latest.is_preview:
+                kind = "preview build"
+            else:
+                kind = "release"
             self.status.setText(
                 f"{kind.capitalize()} {latest.version_text} is available "
                 f"(you have {current})."
             )
-        elif compare_to_installed(latest) == 0:
-            self.status.setText("You are on the latest listed build.")
         else:
             self.status.setText(
                 "Your installed build is newer than the latest GitHub release."
@@ -282,13 +296,21 @@ class UpdateCheckDialog(QDialog):
         )
         self.notes.verticalScrollBar().setValue(0)
         self.open_github_btn.setEnabled(bool(release.html_url))
-        same = compare_to_installed(release) == 0
+        same = is_same_installed_build(release)
         self.install_btn.setEnabled(not same)
         if same:
             self.install_btn.setText("Already installed")
         else:
-            direction = "Upgrade" if compare_to_installed(release) > 0 else "Downgrade"
-            self.install_btn.setText(f"{direction} to {release.version_text} and restart Calibre…")
+            cmp = compare_to_installed(release)
+            if cmp > 0:
+                direction = "Upgrade"
+            elif cmp < 0:
+                direction = "Downgrade"
+            else:
+                direction = "Install"
+            self.install_btn.setText(
+                f"{direction} to {release.version_text} and restart Calibre…"
+            )
 
     def open_selected_on_github(self):
         release = self._selected_release()
@@ -301,12 +323,26 @@ class UpdateCheckDialog(QDialog):
         if release is None:
             return
         current = installed_version_text()
-        direction = "upgrade" if compare_to_installed(release) > 0 else "downgrade"
+        if is_same_installed_build(release):
+            return
+        cmp = compare_to_installed(release)
+        if cmp > 0:
+            direction = "upgrade"
+        elif cmp < 0:
+            direction = "downgrade"
+        else:
+            direction = "install"
+        kind = ""
+        if release.is_pr_build:
+            kind = " PR build"
+        elif release.is_preview:
+            kind = " preview build"
         if not question_dialog(
             self,
             "Fanfic Organizer",
             (
-                f"{direction.capitalize()} from {current} to {release.version_text}?\n\n"
+                f"{direction.capitalize()} from {current} to{kind} "
+                f"{release.version_text}?\n\n"
                 "The plugin zip will be downloaded from GitHub, installed with "
                 "calibre-customize, and Calibre will restart."
             ),

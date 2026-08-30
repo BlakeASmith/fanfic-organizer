@@ -33,8 +33,10 @@ PLUGIN_DISPLAY_RE = re.compile(
     re.M,
 )
 PREVIEW_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-preview(?:\.|$|\+)")
+PR_TAG_RE = re.compile(r"(?:^|/)v?\d+\.\d+\.\d+-pr(?:\.|$|\+)")
 INCLUDED_NOTICE_MARK = "included in standard release"
 PREVIEW_EMPTY_FALLBACK = "See commit history for details."
+PR_EMPTY_FALLBACK = "See the pull request for details."
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,16 @@ def is_preview_tag(tag: str) -> bool:
         return False
 
 
+def is_pr_tag(tag: str) -> bool:
+    text = (tag or "").strip()
+    if PR_TAG_RE.search(text):
+        return True
+    try:
+        return parse_semver(text).is_pr_build
+    except ChangelogError:
+        return False
+
+
 def is_stable_tag(tag: str) -> bool:
     try:
         return parse_semver(tag).is_stable
@@ -255,6 +267,36 @@ def preview_release_notes(
     return banner + "\n\n" + notes.strip() + "\n"
 
 
+def pr_fallback_notes(pr_number: int | str, git_hash: str) -> str:
+    sha = short_sha(git_hash)
+    return (
+        f"Pull request #{int(pr_number)} test build for commit {sha}.\n\n"
+        f"{PR_EMPTY_FALLBACK}"
+    )
+
+
+def pr_release_notes(
+    text: str | None = None,
+    *,
+    pr_number: int | str,
+    git_hash: str,
+    pr_url: str,
+    latest_release_url: str,
+) -> str:
+    changelog = CHANGELOG_PATH.read_text(encoding="utf-8") if text is None else text
+    notes = unreleased_notes(
+        changelog,
+        fallback=pr_fallback_notes(pr_number, git_hash),
+        include_disclaimer=True,
+    )
+    banner = (
+        f"This is an automated **PR** test build for "
+        f"[#{int(pr_number)}]({pr_url}) (commit {short_sha(git_hash)}). "
+        f"Prefer the [latest standard release]({latest_release_url}) for daily use."
+    )
+    return banner + "\n\n" + notes.strip() + "\n"
+
+
 def included_in_release_notice(version: str, repo: str) -> str:
     tag = release_tag_name(version)
     url = f"https://github.com/{repo}/releases/tag/{quote(tag, safe='v./-')}"
@@ -277,6 +319,7 @@ def prepend_included_notice(body: str, notice: str) -> str:
 __all__ = [
     "INCLUDED_NOTICE_MARK",
     "PREVIEW_EMPTY_FALLBACK",
+    "PR_EMPTY_FALLBACK",
     "ParsedVersion",
     "STABLE_ZIP_NAME",
     "VERSIONED_ZIP_PREFIX",
@@ -286,9 +329,12 @@ __all__ = [
     "format_preview_version",
     "github_download_path",
     "included_in_release_notice",
+    "is_pr_tag",
     "is_preview_tag",
     "is_stable_tag",
     "plugin_zip_name",
+    "pr_fallback_notes",
+    "pr_release_notes",
     "pr_zip_name",
     "prepend_included_notice",
     "preview_fallback_notes",
