@@ -7,6 +7,7 @@ from PyQt5.Qt import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDesktopServices,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -15,6 +16,7 @@ from PyQt5.Qt import (
     QPlainTextEdit,
     QPushButton,
     QThread,
+    QUrl,
     QVBoxLayout,
     Qt,
 )
@@ -25,6 +27,7 @@ from calibre_plugins.fanfic_organizer.prefs import prefs
 from calibre_plugins.fanfic_organizer.updates import (
     ReleaseInfo,
     UpdateError,
+    changelog_for_selection,
     compare_to_installed,
     download_and_install,
     fetch_releases,
@@ -34,7 +37,6 @@ from calibre_plugins.fanfic_organizer.updates import (
     latest_release,
     latest_stable_release,
     spawn_calibre_restart,
-    summarize_release_notes,
 )
 
 
@@ -83,8 +85,8 @@ class UpdateCheckDialog(QDialog):
 
         intro = QLabel(
             "Compare the installed plugin with GitHub Releases. Choose a "
-            "release to install a newer build or roll back to an older tag. "
-            "Calibre must restart to load the new zip."
+            "release to read its changelog, install a newer build, or roll "
+            "back to an older tag. Calibre must restart to load the new zip."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -124,10 +126,29 @@ class UpdateCheckDialog(QDialog):
         version_row.addWidget(self.refresh_btn)
         layout.addLayout(version_row)
 
+        notes_header = QHBoxLayout()
+        notes_label = QLabel("Changelog")
+        notes_label.setToolTip(
+            "Release notes from GitHub. When upgrading, every listed release "
+            "between your installed build and the selection is shown."
+        )
+        notes_header.addWidget(notes_label)
+        notes_header.addStretch(1)
+        self.open_github_btn = QPushButton("Open on GitHub…")
+        self.open_github_btn.setEnabled(False)
+        self.open_github_btn.setToolTip(
+            "Open this release page in your browser (full notes and assets)."
+        )
+        self.open_github_btn.clicked.connect(self.open_selected_on_github)
+        notes_header.addWidget(self.open_github_btn)
+        layout.addLayout(notes_header)
+
         self.notes = QPlainTextEdit()
         self.notes.setReadOnly(True)
-        self.notes.setPlaceholderText("Release notes will appear here.")
-        self.notes.setMinimumHeight(180)
+        self.notes.setPlaceholderText(
+            "Changelog for the selected release will appear here."
+        )
+        self.notes.setMinimumHeight(220)
         layout.addWidget(self.notes)
 
         self.buttons = QDialogButtonBox()
@@ -254,8 +275,13 @@ class UpdateCheckDialog(QDialog):
         if release is None:
             self.notes.clear()
             self.install_btn.setEnabled(False)
+            self.open_github_btn.setEnabled(False)
             return
-        self.notes.setPlainText(summarize_release_notes(release.body))
+        self.notes.setPlainText(
+            changelog_for_selection(self._releases, release)
+        )
+        self.notes.verticalScrollBar().setValue(0)
+        self.open_github_btn.setEnabled(bool(release.html_url))
         same = compare_to_installed(release) == 0
         self.install_btn.setEnabled(not same)
         if same:
@@ -263,6 +289,12 @@ class UpdateCheckDialog(QDialog):
         else:
             direction = "Upgrade" if compare_to_installed(release) > 0 else "Downgrade"
             self.install_btn.setText(f"{direction} to {release.version_text} and restart Calibre…")
+
+    def open_selected_on_github(self):
+        release = self._selected_release()
+        if release is None or not release.html_url:
+            return
+        QDesktopServices.openUrl(QUrl(release.html_url))
 
     def install_selected(self):
         release = self._selected_release()
