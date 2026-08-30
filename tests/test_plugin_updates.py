@@ -255,6 +255,7 @@ def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
         "installed_version_parsed",
         lambda: updates.ParsedVersion(0, 26, 1),
     )
+    monkeypatch.setattr(updates, "installed_version_text", lambda: "0.26.1")
     release = updates.release_from_api(_sample_release(tag="v0.27.0"))
     assert release is not None
     assert updates.compare_to_installed(release) == 1
@@ -264,6 +265,7 @@ def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
     same = updates.release_from_api(_sample_release(tag="v0.26.1"))
     assert same is not None
     assert updates.compare_to_installed(same) == 0
+    assert updates.is_same_installed_build(same)
     preview_newer = updates.release_from_api(
         _sample_release(tag="v0.27.0-preview.3+abc1234", prerelease=True)
     )
@@ -274,6 +276,30 @@ def test_compare_to_installed(monkeypatch: pytest.MonkeyPatch):
     )
     assert preview_older is not None
     assert updates.compare_to_installed(preview_older) == -1
+
+
+def test_same_pr_different_sha_is_installable(monkeypatch: pytest.MonkeyPatch):
+    """SemVer ignores +build; PR pushes must still be selectable to install."""
+    updates = load_updates()
+    monkeypatch.setattr(
+        updates,
+        "installed_version_parsed",
+        lambda: updates.parse_semver("0.32.0-pr.46+1a47a9f"),
+    )
+    monkeypatch.setattr(
+        updates, "installed_version_text", lambda: "0.32.0-pr.46+1a47a9f"
+    )
+    older = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.46+1a47a9f", prerelease=True)
+    )
+    newer = updates.release_from_api(
+        _sample_release(tag="v0.32.0-pr.46+94ce2ba", prerelease=True)
+    )
+    assert older is not None and newer is not None
+    assert updates.is_same_installed_build(older)
+    assert not updates.is_same_installed_build(newer)
+    assert updates.compare_to_installed(older) == 0
+    assert updates.compare_to_installed(newer) != 0
 
 
 def test_stable_release_beats_preview_at_same_base():

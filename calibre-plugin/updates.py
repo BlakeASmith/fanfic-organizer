@@ -299,7 +299,7 @@ def release_from_api(record: dict[str, Any]) -> ReleaseInfo | None:
     )
 
 
-def fetch_releases(*, per_page: int = 30) -> list[ReleaseInfo]:
+def fetch_releases(*, per_page: int = 100) -> list[ReleaseInfo]:
     url = f"{github_releases_api()}?per_page={max(1, min(per_page, 100))}"
     payload = _github_request(url)
     if not isinstance(payload, list):
@@ -653,8 +653,29 @@ def download_and_install(release: ReleaseInfo) -> Path:
         return dest
 
 
+def is_same_installed_build(release: ReleaseInfo) -> bool:
+    """True when the release is the exact installed build (including +sha)."""
+    return release.version_text == installed_version_text()
+
+
 def compare_to_installed(release: ReleaseInfo) -> int:
-    return compare_parsed_versions(release.parsed, installed_version_parsed())
+    """Compare release to the installed build for upgrade / downgrade UI.
+
+    SemVer ignores build metadata (``+sha``). Same PR / preview channel with a
+    different SHA must still be installable, so when precedence ties we compare
+    build strings for button direction only.
+    """
+    installed = installed_version_parsed()
+    cmp = compare_parsed_versions(release.parsed, installed)
+    if cmp != 0:
+        return cmp
+    left_build = release.parsed.build or ""
+    right_build = installed.build or ""
+    if left_build == right_build:
+        return 0
+    if left_build > right_build:
+        return 1
+    return -1
 
 
 def format_published_at(value: str) -> str:
