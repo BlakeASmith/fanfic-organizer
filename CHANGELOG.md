@@ -20,6 +20,7 @@ Release command: `just release` (next 0.x minor; add `patch` and/or `publish`).
 
 ### Features
 
+- Add selected-book actions to the Calibre library right-click menu (Complete, Download EPUB, covers, series, simplify, collections, Search similar).
 - Reorder the plugin menu (search and selected-book actions first) and move **Import JSONL or zip** under an **Import** submenu.
 
 ### Documentation

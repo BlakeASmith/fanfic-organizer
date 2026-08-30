@@ -23,6 +23,7 @@ prefs.defaults = {
     'ao3_password': '',
     'generate_covers': True,
     'set_calibre_cover': True,
+    'context_menu_placed': False,
 }
 
 
