@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_root ON entries(root);
+CREATE INDEX IF NOT EXISTS idx_entries_canonical ON entries(canonical);
 CREATE INDEX IF NOT EXISTS idx_entries_fetched_at ON entries(fetched_at);
 """
 
@@ -170,6 +171,7 @@ class TagCache:
         cache = cls(path=path, ttl_days=ttl_days)
         cache._open()
         cache._maybe_migrate_legacy_json()
+        cache._maybe_import_bundled_seed()
         cache.purge_expired()
         return cache
 
@@ -204,6 +206,9 @@ class TagCache:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)").fetchall()}
         if "metatags" not in cols:
             conn.execute("ALTER TABLE entries ADD COLUMN metatags TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_canonical ON entries(canonical)"
+        )
         version_row = conn.execute(
             "SELECT value FROM meta WHERE key = 'version'"
         ).fetchone()
@@ -248,6 +253,30 @@ class TagCache:
             )
             self._conn.commit()
             return
+
+    def _maybe_import_bundled_seed(self) -> None:
+        """Merge the shipped seed into the user's default XDG tag cache."""
+        if self.path is None:
+            return
+        if self.path.resolve() != default_tag_cache_path().resolve():
+            return
+        try:
+            from ao3kit.tags.seed import bundled_seed_path, import_seed_file
+        except ImportError:
+            return
+        seed_path = bundled_seed_path()
+        if seed_path is None:
+            return
+        conn = self._open()
+        count = conn.execute("SELECT COUNT(*) AS n FROM entries").fetchone()
+        merge = bool(count and int(count["n"]) > 0)
+        result = import_seed_file(self, seed_path, merge=merge)
+        if result.get("inserted", 0) > 0:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('seed_merged_from', ?)",
+                (str(seed_path),),
+            )
+            conn.commit()
 
     def _import_json_payload(self, data: dict[str, Any]) -> None:
         conn = self._open()
@@ -417,19 +446,27 @@ class TagCache:
             return {}
         conn = self._open()
         found: dict[str, CacheRow] = {}
+        expired = False
         for start in range(0, len(wanted), _LOOKUP_CHUNK):
             chunk = wanted[start : start + _LOOKUP_CHUNK]
             placeholders = ",".join("?" * len(chunk))
             for row in conn.execute(
                 f"""
-                SELECT name, canonical, status, category, metatags
+                SELECT name, canonical, status, category, metatags, fetched_at, root
                 FROM entries
                 WHERE name IN ({placeholders})
                 """,
                 chunk,
             ):
+                if self._row_expired(conn, row):
+                    conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                    self.expired_trees += 1
+                    expired = True
+                    continue
                 parsed = _row_to_cache_row(row)
                 found[parsed.name] = parsed
+        if expired:
+            conn.commit()
         return found
 
     def rows_for_canonical(self, canonical: str) -> list[CacheRow]:
@@ -438,31 +475,47 @@ class TagCache:
         if not text:
             return []
         conn = self._open()
-        return [
-            _row_to_cache_row(row)
-            for row in conn.execute(
-                """
-                SELECT name, canonical, status, category, metatags
-                FROM entries
-                WHERE canonical = ?
-                ORDER BY name
-                """,
-                (text,),
-            )
-        ]
+        rows: list[CacheRow] = []
+        expired = False
+        for row in conn.execute(
+            """
+            SELECT name, canonical, status, category, metatags, fetched_at, root
+            FROM entries
+            WHERE canonical = ?
+            ORDER BY name
+            """,
+            (text,),
+        ):
+            if self._row_expired(conn, row):
+                conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                self.expired_trees += 1
+                expired = True
+                continue
+            rows.append(_row_to_cache_row(row))
+        if expired:
+            conn.commit()
+        return rows
 
     def iter_root_rows(self) -> Iterator[CacheRow]:
         """Canonical and unmarked rows (one per synonym tree)."""
         conn = self._open()
+        expired = False
         for row in conn.execute(
             """
-            SELECT name, canonical, status, category, metatags
+            SELECT name, canonical, status, category, metatags, fetched_at, root
             FROM entries
             WHERE status != 'synonym'
             ORDER BY name
             """
         ):
+            if self._row_expired(conn, row):
+                conn.execute("DELETE FROM entries WHERE root = ?", (row["root"],))
+                self.expired_trees += 1
+                expired = True
+                continue
             yield _row_to_cache_row(row)
+        if expired:
+            conn.commit()
 
     def _row_expired(self, conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
         if self.ttl_days is None or self.ttl_days <= 0:
@@ -638,6 +691,25 @@ class TagCache:
         )
         conn.commit()
         self.dirty = True
+
+    def suggest_names(
+        self,
+        query: str,
+        *,
+        category: str | None = None,
+        extra: Iterable[str] | None = None,
+        limit: int = 25,
+    ) -> list[str]:
+        """Rank cached tag names that contain ``query`` (no AO3 fetch)."""
+        from ao3kit.tags.suggest import suggest_from_connection
+
+        return suggest_from_connection(
+            self._open(),
+            query,
+            category=category,
+            extra=extra,
+            limit=limit,
+        )
 
     def stats_snapshot(self) -> dict[str, Any]:
         if self.path is None or self._conn is None:

@@ -23,14 +23,24 @@ from calibre_plugins.fanfic_organizer.epub_plan import (
 from calibre_plugins.fanfic_organizer.importer import (
     attach_downloaded_epubs,
     import_record,
+    iter_identifier_maps,
     refresh_library_ui,
 )
-from calibre_plugins.fanfic_organizer.job_plans import merge_ready_with_jsonl
+from calibre_plugins.fanfic_organizer.job_plans import (
+    apply_identify_choices,
+    load_identify_jsonl,
+    merge_identify_ready,
+    merge_ready_with_jsonl,
+    plan_fill_from_ao3,
+    split_identify_records,
+)
+from calibre_plugins.fanfic_organizer.scrape_run import scrape_record_failed
 from calibre_plugins.fanfic_organizer.job_ui import JobLogDialog, JobNotifyDialog
 from calibre_plugins.fanfic_organizer.jobs import (
     first_line,
     job_is_retryable,
     job_paths,
+    job_pid_alive,
     job_was_notified,
     jobs_root,
     new_job_id,
@@ -60,6 +70,8 @@ from calibre_plugins.fanfic_organizer.selected import (
     apply_cover_records,
     apply_series_records,
     book_has_epub,
+    copy_book_epub,
+    stamp_ao3_identifiers,
 )
 
 
@@ -104,18 +116,7 @@ class JobSupervisor:
         return str(root) if root is not None else None
 
     def list_jobs(self) -> list[dict[str, Any]]:
-        code, stdout, _stderr = run_ao3kit(
-            build_job_list_argv(jobs_dir=self._jobs_dir_arg())
-        )
-        if code != 0:
-            return self._list_jobs_from_disk()
-        parsed = parse_job_list_json(stdout)
-        jobs = list(parsed) if parsed else self._list_jobs_from_disk()
-        if not any(str(item.get('id') or '') == 'warm' for item in jobs):
-            warm = self._warm_status()
-            if warm is not None:
-                jobs.append(warm)
-        return jobs
+        return self._list_jobs_from_disk()
 
     def _list_jobs_from_disk(self) -> list[dict[str, Any]]:
         root = self.jobs_dir()
@@ -130,6 +131,7 @@ class JobSupervisor:
                 row.setdefault('id', child.name)
                 row.setdefault('title', spec.get('title') or child.name)
                 row.setdefault('kind', spec.get('kind') or '')
+                row['running'] = job_pid_alive(child)
                 jobs.append(row)
         warm = self._warm_status()
         if warm is not None:
@@ -180,11 +182,17 @@ class JobSupervisor:
         (job_dir / 'work').mkdir(parents=True, exist_ok=True)
         return job_dir
 
+    def _qt_poll(self):
+        from qt.core import QApplication
+
+        QApplication.processEvents()
+
     def start_prepared(
         self, job_dir: Path, *, attach: bool = True, quiet: bool = False
     ) -> str | None:
         code, stdout, stderr = run_ao3kit(
-            build_job_start_argv(str(job_dir), jobs_dir=self._jobs_dir_arg())
+            build_job_start_argv(str(job_dir), jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
         )
         status = parse_job_status_json(stdout) or {}
         job_id = str(status.get('id') or job_dir.name)
@@ -204,7 +212,7 @@ class JobSupervisor:
 
     def ensure_graph_server(self) -> str | None:
         """Start the live tag-graph job if needed. Returns the viewer URL."""
-        import time
+        from qt.core import QEventLoop, QTimer
 
         from calibre_plugins.fanfic_organizer.graph_live import (
             GRAPH_JOB_ID,
@@ -225,12 +233,28 @@ class JobSupervisor:
         (job_dir / 'work').mkdir(parents=True, exist_ok=True)
         plan_graph_serve(job_dir)
         self.start_prepared(job_dir, attach=False, quiet=True)
-        for _ in range(24):
-            url = read_serve_url(project)
-            if url:
-                return url
-            time.sleep(0.25)
-        return read_serve_url(project)
+        result: list[str | None] = [None]
+        attempts = [0]
+        loop = QEventLoop()
+
+        def check() -> None:
+            found = read_serve_url(project)
+            if found:
+                result[0] = found
+                loop.quit()
+                return
+            attempts[0] += 1
+            if attempts[0] >= 24:
+                result[0] = read_serve_url(project)
+                loop.quit()
+
+        timer = QTimer()
+        timer.timeout.connect(check)
+        timer.start(250)
+        check()
+        loop.exec()
+        timer.stop()
+        return result[0]
 
     def _drain_graph_commands(self) -> None:
         project = self._project()
@@ -312,7 +336,18 @@ class JobSupervisor:
                 pass
 
     def cancel(self, job_id: str) -> None:
-        run_ao3kit(build_job_stop_argv(job_id, jobs_dir=self._jobs_dir_arg()))
+        code, stdout, stderr = run_ao3kit(
+            build_job_stop_argv(job_id, jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
+        )
+        if code != 0:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Could not stop job.',
+                det_msg=(stderr or stdout or f'exit {code}').strip(),
+                show=True,
+            )
 
     def retry(self, job_id: str, *, attach: bool = True) -> str | None:
         if job_id == 'warm':
@@ -328,7 +363,8 @@ class JobSupervisor:
         self._import_seen.pop(job_id, None)
         self._ingesting.discard(job_id)
         code, stdout, stderr = run_ao3kit(
-            build_job_retry_argv(job_id, jobs_dir=self._jobs_dir_arg())
+            build_job_retry_argv(job_id, jobs_dir=self._jobs_dir_arg()),
+            on_poll=self._qt_poll,
         )
         status = parse_job_status_json(stdout) or {}
         if code != 0 and not status.get('running'):
@@ -578,6 +614,7 @@ class JobSupervisor:
             records = load_jsonl_records(jsonl)
         except (OSError, ValueError):
             return
+        records = [record for record in records if not scrape_record_failed(record)]
         imported = self._import_seen.setdefault(job_id, {})
         new_records, epub_records = pending_incremental_imports(
             records, imported, work_id_of=canonical_work_id
@@ -588,7 +625,9 @@ class JobSupervisor:
             db = apply_layout_columns(self.gui)
             update_existing = bool(plugin.get('update_existing', True))
             skip_existing_epub = bool(plugin.get('skip_existing_epub', True))
+            catalog = iter_identifier_maps(db)
             book_ids: list[Any] = []
+            added_count = 0
             dialog = self._dialogs.get(job_id)
             for record in new_records:
                 work_id = canonical_work_id(record)
@@ -600,15 +639,23 @@ class JobSupervisor:
                     update_existing=update_existing,
                     bundle_root=bundle,
                     skip_existing_epub=skip_existing_epub,
+                    catalog=catalog,
                 )
                 book_id = outcome.get('book_id')
                 action = outcome.get('action')
                 imported[work_id] = {
                     'book_id': book_id,
-                    'has_epub': bool(outcome.get('epub')) or action == 'skipped',
+                    'has_epub': bool(outcome.get('epub'))
+                    or (
+                        action == 'skipped'
+                        and book_id is not None
+                        and book_has_epub(db, book_id)
+                    ),
                 }
                 if book_id is not None:
                     book_ids.append(book_id)
+                if action == 'added':
+                    added_count += 1
                 title = record.get('title') or work_id
                 if dialog is not None and action in ('added', 'updated'):
                     try:
@@ -647,7 +694,7 @@ class JobSupervisor:
                         except RuntimeError:
                             dialog = None
             if book_ids:
-                refresh_library_ui(self.gui, book_ids)
+                refresh_library_ui(self.gui, book_ids, added_count=added_count)
             if new_records:
                 project = self._project()
                 if project is not None:
@@ -658,6 +705,13 @@ class JobSupervisor:
 
                     upsert_graph_jsonl(graph_jsonl_path(project), new_records)
         except Exception:
+            detail = traceback.format_exc()
+            dialog = self._dialogs.get(job_id)
+            if dialog is not None:
+                try:
+                    dialog._append('Incremental import error:\n' + detail)
+                except RuntimeError:
+                    pass
             return
 
     def _run_ingest(
@@ -667,11 +721,15 @@ class JobSupervisor:
         plugin: dict[str, Any],
         status: dict[str, Any],
     ) -> None:
-        action = str(plugin.get('action') or 'none')
+        raw_actions = plugin.get('actions')
+        if isinstance(raw_actions, list) and raw_actions:
+            actions = [str(item or '').strip() or 'none' for item in raw_actions]
+        else:
+            actions = [str(plugin.get('action') or 'none')]
         root = self.jobs_dir()
         job_dir = root / job_id if root is not None else None
         dialog = self._dialogs.get(job_id)
-        if action in ('', 'none'):
+        if all(action in ('', 'none') for action in actions):
             if job_dir is not None:
                 self._mark_ingest(job_dir, 'none')
             self._notify(job_id, status.get('message') or 'Finished.', ok=True)
@@ -681,20 +739,18 @@ class JobSupervisor:
                 dialog.mark_working('Writing into Calibre library…')
             except RuntimeError:
                 pass
-        if action == 'import_records':
-            summary, detail = self._ingest_import(plugin)
-        elif action == 'attach_epubs':
-            summary, detail = self._ingest_epubs(job_id, plugin)
-        elif action == 'apply_cleaned':
-            summary, detail = self._ingest_apply(plugin, collections=False)
-        elif action == 'apply_collections':
-            summary, detail = self._ingest_apply(plugin, collections=True)
-        elif action == 'apply_series':
-            summary, detail = self._ingest_series(plugin)
-        elif action == 'apply_covers':
-            summary, detail = self._ingest_covers(plugin)
-        else:
-            summary, detail = f'Unknown ingest action {action!r}.', ''
+        summaries: list[str] = []
+        details: list[str] = []
+        for action in actions:
+            if action in ('', 'none'):
+                continue
+            summary, detail = self._ingest_action(job_id, plugin, action)
+            if summary:
+                summaries.append(summary)
+            if detail:
+                details.append(detail)
+        summary = ' '.join(summaries) if summaries else 'Finished.'
+        detail = '\n\n'.join(details)
         if job_dir is not None:
             self._mark_ingest(job_dir, 'done')
         cleanup = plugin.get('cleanup_dir')
@@ -702,21 +758,75 @@ class JobSupervisor:
             import shutil
 
             shutil.rmtree(cleanup, ignore_errors=True)
-        self._notify(job_id, summary, ok=True, detail=detail)
+        ok = True
+        exit_code = status.get('exit_code')
+        if exit_code not in (None, 0) and not any(
+            token in summary.lower()
+            for token in ('imported', 'updated', 'added', 'simplified', 'recomputed')
+        ):
+            ok = False
+        elif exit_code not in (None, 0):
+            summary = f'Finished with errors. {summary}'
+        self._notify(job_id, summary, ok=ok, detail=detail)
 
-    def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
+    def _ingest_action(
+        self, job_id: str, plugin: dict[str, Any], action: str
+    ) -> tuple[str, str]:
+        if action == 'import_records':
+            return self._ingest_import(plugin)
+        if action == 'attach_epubs':
+            return self._ingest_epubs(job_id, plugin)
+        if action == 'apply_cleaned':
+            return self._ingest_apply(plugin, collections=False)
+        if action == 'apply_collections':
+            return self._ingest_apply(plugin, collections=True)
+        if action == 'apply_series':
+            return self._ingest_series(plugin)
+        if action == 'apply_covers':
+            return self._ingest_covers(plugin)
+        if action == 'resolve_identify':
+            return self._ingest_identify(plugin)
+        return f'Unknown ingest action {action!r}.', ''
+
+    def _import_records_for_plugin(
+        self, plugin: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         jsonl = plugin.get('jsonl')
         if not jsonl or not Path(jsonl).is_file():
-            return 'No works matched that search and those filters.', ''
+            return [], []
         try:
             records = load_jsonl_records(jsonl)
-        except (OSError, ValueError) as exc:
-            return f'Could not read results: {exc}', ''
+        except (OSError, ValueError):
+            return [], []
+        failed = [record for record in records if scrape_record_failed(record)]
+        records = [record for record in records if not scrape_record_failed(record)]
+        items_path = plugin.get('items_json')
+        if items_path and Path(items_path).is_file():
+            payload = read_json(Path(items_path)) or {}
+            ready = payload.get('ready') or []
+            if ready:
+                items = merge_ready_with_jsonl(
+                    ready, records, work_id_of=canonical_work_id
+                )
+                records = [
+                    item['record']
+                    for item in items
+                    if item.get('record') and not scrape_record_failed(item['record'])
+                ]
+        return records, failed
+
+    def _ingest_import(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        records, failed = self._import_records_for_plugin(plugin)
+        if not records and not failed:
+            return 'No works matched that search and those filters.', ''
         if not records:
+            lines = [
+                f"{item.get('title') or item.get('work_id')}: {item.get('scrape_error')}"
+                for item in failed[:20]
+            ]
             return (
-                'No works matched that search and those filters. '
-                'Try lowering min score / kudos / words, or raising max results.',
-                '',
+                f'Could not fetch metadata for {len(failed)} book(s) from AO3.',
+                '\n'.join(lines),
             )
         project = self._project()
         if project is not None:
@@ -738,13 +848,35 @@ class JobSupervisor:
             skip_existing_epub=bool(plugin.get('skip_existing_epub', True)),
         )
         refresh_library_ui(self.gui, book_ids)
+        if failed:
+            lines = [
+                f"{item.get('title') or item.get('work_id')}: {item.get('scrape_error')}"
+                for item in failed[:20]
+            ]
+            extra = f'; {len(failed)} book(s) could not be fetched from AO3'
+            summary = summary.rstrip('.') + extra + '.'
+            if remap_text:
+                remap_text = remap_text + '\n\n' + '\n'.join(lines)
+            else:
+                remap_text = '\n'.join(lines)
+        skipped = plugin.get('skipped') or []
+        if skipped:
+            skip_lines = [
+                f"{item.get('title') or item.get('book_id')}: {item.get('reason')}"
+                for item in skipped[:20]
+            ]
+            summary = summary.rstrip('.') + f'; skipped {len(skipped)} earlier.'
+            if remap_text:
+                remap_text = remap_text + '\n\n' + '\n'.join(skip_lines)
+            else:
+                remap_text = '\n'.join(skip_lines)
         return summary, remap_text
 
     def _ingest_epubs(self, job_id: str, plugin: dict[str, Any]) -> tuple[str, str]:
         payload = read_json(Path(plugin.get('items_json') or '')) or {}
         ready = payload.get('ready') or []
         skipped = payload.get('skipped') or []
-        jsonl = plugin.get('jsonl')
+        jsonl = plugin.get('results_jsonl') or plugin.get('jsonl')
         bundle = plugin.get('bundle_root')
         downloaded: list[dict[str, Any]] = []
         if jsonl and Path(jsonl).is_file():
@@ -753,7 +885,7 @@ class JobSupervisor:
             except (OSError, ValueError):
                 downloaded = []
         items = merge_download_manifest(ready, downloaded) if ready else []
-        seen = self._epub_seen.get(job_id) or set()
+        seen = self._epub_seen.setdefault(job_id, set())
         db = self.gui.current_db
         outcomes: list[dict[str, Any]] = []
         for item in items:
@@ -885,6 +1017,128 @@ class JobSupervisor:
             self.gui,
             [item['book_id'] for item in outcomes if item.get('book_id') is not None],
         )
+        return summary, '\n'.join(detail_lines)
+
+    def _ingest_identify(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        from calibre_plugins.fanfic_organizer.dialogs import IdentifyWorksDialog
+        from calibre_plugins.fanfic_organizer.scrape_run import merge_plugin_settings
+        from calibre_plugins.fanfic_organizer.prefs import plugin_runtime_settings
+
+        payload = read_json(Path(plugin.get('items_json') or '')) or {}
+        ready = payload.get('ready') or []
+        skipped = list(payload.get('skipped') or [])
+        jsonl = plugin.get('jsonl')
+        records = load_identify_jsonl(jsonl) if jsonl else []
+        if not records:
+            records = [item.get('record') or {} for item in ready]
+        identified, ambiguous, failed = split_identify_records(records)
+        if ambiguous:
+            titles = {
+                item.get('book_id'): item.get('title')
+                for item in ready
+                if item.get('book_id') is not None
+            }
+            dialog = IdentifyWorksDialog(self.gui, ambiguous, titles=titles)
+            if dialog.exec_():
+                picked = apply_identify_choices(
+                    identified + ambiguous, dialog.choices()
+                )
+                kept = {
+                    str(item.get('book_id') or item.get('calibre_book_id') or '')
+                    for item in picked
+                }
+                for item in ambiguous:
+                    book_id = str(item.get('book_id') or item.get('calibre_book_id') or '')
+                    if book_id and book_id not in kept:
+                        skipped.append(
+                            {
+                                'book_id': item.get('book_id'),
+                                'title': item.get('title'),
+                                'reason': 'skipped in the picker',
+                            }
+                        )
+                identified = picked
+            else:
+                skipped.extend(
+                    {
+                        'book_id': item.get('book_id'),
+                        'title': item.get('title'),
+                        'reason': 'skipped in the picker',
+                    }
+                    for item in ambiguous
+                )
+                ambiguous = []
+        skipped.extend(
+            {
+                'book_id': item.get('book_id'),
+                'title': item.get('title'),
+                'reason': item.get('reason') or item.get('status') or 'not identified',
+            }
+            for item in failed
+        )
+        fill_ready = merge_identify_ready(ready, identified)
+        db = apply_layout_columns(self.gui)
+        stamped = 0
+        for item in fill_ready:
+            record = item.get('record') or {}
+            work_id = str(record.get('work_id') or '').strip()
+            book_id = item.get('book_id')
+            if book_id is None or not work_id:
+                continue
+            if stamp_ao3_identifiers(
+                db, int(book_id), work_id, str(record.get('url') or '')
+            ):
+                stamped += 1
+        if stamped:
+            refresh_library_ui(
+                self.gui,
+                [item['book_id'] for item in fill_ready if item.get('book_id') is not None],
+            )
+        if not fill_ready:
+            n_fail = len(skipped)
+            noun = 'book' if n_fail == 1 else 'books'
+            return (
+                f'Could not identify any of the selected {noun}.',
+                '\n'.join(
+                    f'{item.get("title")}: {item.get("reason")}'
+                    for item in skipped[:20]
+                ),
+            )
+        job_dir = self.prepare_job_dir('fill')
+        if job_dir is None:
+            return (
+                f'Identified {len(fill_ready)} book(s) but could not start the fill job.',
+                '',
+            )
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        epub_dir.mkdir(parents=True, exist_ok=True)
+        for item in fill_ready:
+            record = item.get('record') or {}
+            work_id = str(record.get('work_id') or '').strip()
+            book_id = item.get('book_id')
+            if work_id and book_id is not None:
+                copy_book_epub(db, int(book_id), epub_dir / f'{work_id}.epub')
+        options = merge_plugin_settings(
+            dict(plugin.get('fill_options') or {}),
+            plugin_runtime_settings(),
+        )
+        options['update_existing'] = True
+        plan_fill_from_ao3(fill_ready, skipped, job_dir, options)
+        started = self.start_prepared(job_dir, attach=True)
+        n = len(fill_ready)
+        noun = 'book' if n == 1 else 'books'
+        summary = f'Identified {n} {noun}'
+        if skipped:
+            summary += f'; skipped {len(skipped)}'
+        if started:
+            summary += '. Filling metadata from AO3…'
+        else:
+            summary += ' but the fill job did not start.'
+        detail_lines = [
+            f"{item.get('title') or item.get('book_id')}: "
+            f"AO3 {(item.get('record') or {}).get('work_id')}"
+            for item in fill_ready
+        ]
         return summary, '\n'.join(detail_lines)
 
     def _mark_ingest(self, job_dir: Path, ingest: str, error: str | None = None) -> None:

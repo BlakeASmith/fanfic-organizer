@@ -15,8 +15,18 @@ prefs.defaults = {
     'last_max_results': '25',
     'download_epubs': True,
     'simplify_tags': False,
+    'drop_unmarked': True,
     'update_existing': True,
     'import_full_series': False,
+    'library_simplify_tags': True,
+    'library_drop_unmarked': True,
+    'library_fill_series': False,
+    'library_import_series': False,
+    'library_download_epubs': False,
+    'library_generate_covers': False,
+    'library_recompute_collections': False,
+    'library_cover_on_download': True,
+    'library_update_existing': True,
     'ao3kit_project': '',
     'ao3kit_python': '',
     'ao3_username': '',
@@ -24,6 +34,8 @@ prefs.defaults = {
     'generate_covers': True,
     'set_calibre_cover': True,
     'context_menu_placed': False,
+    'koreader_path': '.adds/koreader',
+    'include_prereleases': False,
 }
 
 
@@ -60,4 +72,5 @@ def plugin_runtime_settings() -> dict:
         'ao3_username': prefs.get('ao3_username') or '',
         'ao3_password': prefs.get('ao3_password') or '',
         'include_series': bool(prefs.get('import_full_series', False)),
+        'drop_unmarked': bool(prefs.get('drop_unmarked', True)),
     }

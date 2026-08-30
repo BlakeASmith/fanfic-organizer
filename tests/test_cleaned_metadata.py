@@ -138,6 +138,36 @@ def test_work_id_from_url_and_book_match():
     assert not mod.book_matches_work({"url": "https://example.com/1"}, work_id="9")
 
 
+def test_existing_book_id_from_identifiers_matches_ao3_and_url():
+    mod = load_cleaned()
+    books = [
+        (1, {"ao3": "10", "url": "https://archiveofourown.org/works/10"}),
+        (2, {"url": "https://www.archiveofourown.org/works/20"}),
+        (3, {"isbn": "x"}),
+    ]
+    assert (
+        mod.existing_book_id_from_identifiers(
+            books, {"work_id": "10"}
+        )
+        == 1
+    )
+    assert (
+        mod.existing_book_id_from_identifiers(
+            books, {"url": "https://archiveofourown.org/works/20"}
+        )
+        == 2
+    )
+    assert (
+        mod.existing_book_id_from_identifiers(books, {"work_id": "99"}) is None
+    )
+
+
+def test_existing_book_id_skips_empty_record():
+    mod = load_cleaned()
+    books = [(1, {"ao3": "10"})]
+    assert mod.existing_book_id_from_identifiers(books, {}) is None
+
+
 def test_calibre_fields_split_relationships_and_completed():
     mod = load_cleaned()
     record = {
@@ -238,6 +268,7 @@ def test_calibre_fields_heuristic_without_category_detail():
         "work_id": "1",
         "tags": ["Fluff", "Frank Langdon/Mel King"],
         "fandoms": ["The Pitt (TV)"],
+        "relationships": ["Frank Langdon/Mel King"],
         "cleaned": {
             "simplified": ["Fluff", "Frank Langdon/Mel King"],
             "fandoms": ["The Pitt (TV)"],
@@ -251,6 +282,49 @@ def test_calibre_fields_heuristic_without_category_detail():
     assert fields["collections"] == ["The Pitt (Frank/Mel)"]
     assert fields["tags"] == ["Fluff"]
     assert fields["original_tags"] == ["Fluff", "Frank Langdon/Mel King"]
+
+
+def test_calibre_fields_do_not_treat_slash_freeforms_as_relationships():
+    mod = load_cleaned()
+    record = {
+        "work_id": "1",
+        "tags": [
+            "Hurt/Comfort",
+            "Angst",
+            "James 'Bucky' Barnes/Steve Rogers",
+        ],
+        "fandoms": ["Marvel Cinematic Universe"],
+        "relationships": ["James 'Bucky' Barnes/Steve Rogers"],
+        "cleaned": {
+            "simplified": ["Hurt/Comfort", "Angst"],
+            "fandoms": ["Marvel Cinematic Universe"],
+            "relationships": ["James 'Bucky' Barnes/Steve Rogers"],
+            "tags": [
+                {
+                    "original": "Hurt/Comfort",
+                    "mapped": "Hurt/Comfort",
+                    "category": "Additional Tags",
+                    "dropped": False,
+                },
+                {
+                    "original": "Angst",
+                    "mapped": "Angst",
+                    "category": "Additional Tags",
+                    "dropped": False,
+                },
+                {
+                    "original": "James 'Bucky' Barnes/Steve Rogers",
+                    "mapped": "James 'Bucky' Barnes/Steve Rogers",
+                    "category": "Relationship",
+                    "dropped": False,
+                },
+            ],
+            "source": "rules",
+        },
+    }
+    fields = mod.calibre_fields_for_record(record)
+    assert fields["relationships"] == ["James 'Bucky' Barnes/Steve Rogers"]
+    assert fields["tags"] == ["Hurt/Comfort", "Angst"]
 
 
 def test_calibre_fields_prefer_cleaned_relationships():
@@ -353,6 +427,41 @@ def test_record_from_library_fields_prefers_raw_json():
     assert "cleaned" not in record
 
 
+def test_record_from_library_fields_uses_comments_for_summary():
+    mod = load_cleaned()
+    record = mod.record_from_library_fields(
+        title="A Work",
+        identifiers={"url": "https://archiveofourown.org/works/9"},
+        comments="<p>They were roommates.</p>",
+    )
+    assert record is not None
+    assert record["summary"] == "They were roommates."
+
+
+def test_record_from_library_fields_prefers_summary_column_over_comments():
+    mod = load_cleaned()
+    record = mod.record_from_library_fields(
+        title="A Work",
+        identifiers={"url": "https://archiveofourown.org/works/9"},
+        summary="Column synopsis.",
+        comments="Comments synopsis.",
+    )
+    assert record is not None
+    assert record["summary"] == "Column synopsis."
+
+
+def test_calibre_fields_for_record_includes_summary():
+    mod = load_cleaned()
+    fields = mod.calibre_fields_for_record(
+        {
+            "work_id": "9",
+            "title": "A Work",
+            "summary": "They were roommates.",
+        }
+    )
+    assert fields["summary"] == "They were roommates."
+
+
 def test_layout_column_specs_match_fanfic_library():
     cols = load_columns()
     by_role = {spec["role"]: spec for spec in cols.LAYOUT_COLUMN_SPECS}
@@ -364,6 +473,9 @@ def test_layout_column_specs_match_fanfic_library():
     assert by_role["originaltags"]["label"] == "originaltags"
     assert by_role["originaltags"]["name"] == "Original Tags"
     assert by_role["originaltags"]["is_multiple"] is True
+    assert by_role["summary"]["label"] == "summary"
+    assert by_role["summary"]["name"] == "Summary"
+    assert by_role["summary"]["datatype"] == cols.COMMENTS_DATATYPE
     assert by_role["wordcount"]["label"] == "wordcount"
     assert by_role["wordcount"]["name"] == "word count"
     assert by_role["wordcount"]["datatype"] == "int"
@@ -413,6 +525,7 @@ def test_ensure_layout_columns_returns_pending_when_not_live():
         'relationships',
         'collections',
         'originaltags',
+        'summary',
         'wordcount',
     ]
     assert db.created == pending
@@ -431,7 +544,7 @@ def test_apply_layout_columns_reopens_library_when_columns_were_created():
 
 def test_apply_layout_columns_skips_reopen_when_already_live():
     cols = load_columns()
-    db = _FakeDB(live=('fandom', 'relationships', 'collections', 'originaltags', 'wordcount'))
+    db = _FakeDB(live=('fandom', 'relationships', 'collections', 'originaltags', 'summary', 'wordcount'))
     gui = _FakeGUI(db)
     cols.apply_layout_columns(gui)
     assert gui.moved == []

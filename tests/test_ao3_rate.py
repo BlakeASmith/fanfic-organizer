@@ -12,6 +12,7 @@ from ao3kit import rate as ao3_rate
 from ao3kit.rate import (
     DEFAULT_MIN_INTERVAL,
     configure_min_interval,
+    ensure_rate_limits,
     interval_for_url,
     load_robots_text,
     note_retry_after,
@@ -43,15 +44,43 @@ def test_path_is_robots_disallow_matches_ao3_star_rules():
     assert not path_is_robots_disallow("https://archiveofourown.org/works/90860171")
 
 
+AO3_THROTTLED_URLS = (
+    "https://archiveofourown.org/works/1",
+    "https://archiveofourown.org/works?commit=Search",
+    "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo",
+    "https://archiveofourown.org/tags/Fluff/works",
+    "https://archiveofourown.org/series/123",
+    "https://archiveofourown.org/collections/anonymous/works",
+    "https://archiveofourown.org/users/x/works",
+    "https://archiveofourown.org/downloads/1/x.epub",
+    "https://archiveofourown.org/robots.txt",
+    "https://archiveofourown.org/comments/1",
+    "https://archiveofourown.org/tags/Fluff",
+)
+
+
 def test_interval_for_url_search_and_download_match_work_lane():
     work = interval_for_url("https://archiveofourown.org/works/1")
     tag = interval_for_url("https://archiveofourown.org/tags/Fluff")
     listing = interval_for_url("https://archiveofourown.org/works?commit=Search")
+    search = interval_for_url(
+        "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo"
+    )
     download = interval_for_url("https://archiveofourown.org/downloads/1/x.epub")
+    series = interval_for_url("https://archiveofourown.org/series/99")
+    tag_works = interval_for_url("https://archiveofourown.org/tags/Fluff/works")
     assert work == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert listing == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert search == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert download == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert series == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert tag_works == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert tag == pytest.approx(ao3_rate.TAG_SOFT_INTERVAL)
+
+
+@pytest.mark.parametrize("url", AO3_THROTTLED_URLS)
+def test_every_ao3_url_has_a_throttle_floor(url: str):
+    assert interval_for_url(url) >= ao3_rate.ABSOLUTE_MIN_INTERVAL
 
 
 def test_crawl_delay_raises_floor():
@@ -63,7 +92,7 @@ def test_crawl_delay_raises_floor():
 
 def test_configure_min_interval_respects_absolute_floor():
     assert configure_min_interval(0.1) >= ao3_rate.ABSOLUTE_MIN_INTERVAL
-    assert configure_min_interval(1.0) == pytest.approx(1.0)
+    assert configure_min_interval(1.0) == pytest.approx(DEFAULT_MIN_INTERVAL)
     assert configure_min_interval(20.0) >= 20.0
 
 
@@ -72,31 +101,50 @@ def test_configure_min_interval_can_lower_previous_value():
     assert configure_min_interval(2.0) == pytest.approx(2.0)
 
 
-def test_work_search_and_download_share_request_delay():
-    configure_min_interval(1.5)
+def test_work_search_and_download_share_engine_floor():
+    ao3_rate.ensure_rate_limits()
     work = interval_for_url("https://archiveofourown.org/works/1")
     listing = interval_for_url("https://archiveofourown.org/works?commit=Search")
     download = interval_for_url("https://archiveofourown.org/downloads/1/x.epub")
-    assert work == pytest.approx(1.5)
-    assert listing == pytest.approx(1.5)
-    assert download == pytest.approx(1.5)
+    assert work == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert listing == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert download == pytest.approx(DEFAULT_MIN_INTERVAL)
 
 
-def test_apply_request_delay_none_uses_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_ensure_rate_limits_uses_engine_floor():
+    ao3_rate._STATE.base_interval = 0.4
+    ensure_rate_limits()
+    assert interval_for_url("https://archiveofourown.org/works/1") >= DEFAULT_MIN_INTERVAL
+    assert interval_for_url(
+        "https://archiveofourown.org/downloads/1/x.epub"
+    ) >= DEFAULT_MIN_INTERVAL
+
+
+def test_ensure_rate_limits_reads_config_min_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
     from ao3kit.config import init_user_config
-    from ao3kit.rate import apply_request_delay
 
     home = tmp_path / "home"
     monkeypatch.setenv("AO3KIT_HOME", str(home))
     cfg = init_user_config(home=home)
-    cfg.update_settings(request_delay=2.5)
-    apply_request_delay(None)
-    assert interval_for_url("https://archiveofourown.org/works/1") == pytest.approx(2.5)
-    assert interval_for_url(
-        "https://archiveofourown.org/downloads/1/x.epub"
-    ) == pytest.approx(2.5)
+    cfg.update_settings(min_request_interval=2.25)
+    ao3_rate._STATE.base_interval = 0.4
+    ensure_rate_limits()
+    assert ao3_rate._STATE.base_interval == pytest.approx(2.25)
+    assert interval_for_url("https://archiveofourown.org/works/1") >= 2.25
+
+
+def test_configure_min_interval_raises_tag_lane_with_scrape_delay():
+    ao3_rate._STATE.tag_interval = 0.4
+    configure_min_interval(1.5)
+    assert ao3_rate._STATE.tag_interval >= ao3_rate.TAG_SOFT_INTERVAL
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.TAG_SOFT_INTERVAL
+
+
+def test_interval_for_url_clamps_persisted_subfloor_tag():
+    ao3_rate._STATE.tag_interval = 0.1
+    assert interval_for_url("https://archiveofourown.org/tags/Fluff") >= ao3_rate.ABSOLUTE_MIN_INTERVAL
 
 
 def test_note_request_success_speeds_tag_lane():
@@ -104,6 +152,32 @@ def test_note_request_success_speeds_tag_lane():
     ao3_rate._STATE.success_streak = ao3_rate.SUCCESS_STREAK_TO_SPEED_UP - 1
     ao3_rate.note_request_success("https://archiveofourown.org/tags/Fluff")
     assert ao3_rate._STATE.tag_interval < 2.0
+
+
+def test_note_request_pressure_uses_config_multipliers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    from ao3kit.config import init_user_config
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AO3KIT_HOME", str(home))
+    cfg = init_user_config(home=home)
+    cfg.update_settings(
+        min_request_interval=2.0,
+        rate={
+            "pressure_base_multiplier": 2.0,
+            "pressure_tag_multiplier": 3.0,
+            "pressure_floor": 2.0,
+            "max_interval": 90.0,
+            "tag_max_interval": 12.0,
+        },
+    )
+    ao3_rate.refresh_rate_settings_from_config()
+    ao3_rate._STATE.base_interval = 2.0
+    ao3_rate._STATE.tag_interval = 2.0
+    ao3_rate.note_request_pressure(status_code=503)
+    assert ao3_rate._STATE.base_interval == pytest.approx(4.0)
+    assert ao3_rate._STATE.tag_interval == pytest.approx(6.0)
 
 
 def test_wait_for_request_spaces_calls(monkeypatch: pytest.MonkeyPatch):
@@ -252,6 +326,29 @@ def test_wait_for_request_honors_retry_after_cooldown(
     assert sleeps == pytest.approx([178.0])
 
 
+def test_wait_for_request_honors_long_retry_after_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Live Retry-After > stale-lock threshold must not be shortened."""
+    ao3_rate._STATE.skip_wait = False
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
+    clock = [1000.0]
+    sleeps: list[float] = []
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
+    reset_rate_limit_state(memory=True)
+    ao3_rate.note_retry_after(420.0)
+    waited = wait_for_request("https://archiveofourown.org/works/1")
+    assert waited == pytest.approx(420.0)
+    assert sleeps == pytest.approx([420.0])
+
+
 def test_shared_store_coordinates_two_connections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db = tmp_path / "rate.sqlite"
     store_a = SharedRateStore(db)
@@ -290,11 +387,20 @@ def test_url_kind_classifies_common_paths():
         == "search"
     )
     assert (
+        url_kind(
+            "https://archiveofourown.org/works/search?work_search%5Bquery%5D=foo"
+        )
+        == "search"
+    )
+    assert (
         url_kind("https://archiveofourown.org/downloads/1/Title.epub")
         == "download"
     )
     assert url_kind("https://archiveofourown.org/users/login") == "login"
     assert url_kind("https://archiveofourown.org/tags/search?query=x") == "search"
+    assert url_kind("https://archiveofourown.org/tags/Fluff/works") == "search"
+    assert url_kind("https://archiveofourown.org/series/12345") == "search"
+    assert url_kind("https://archiveofourown.org/robots.txt") == "other"
 
 
 def test_request_log_records_and_summarizes():
@@ -465,6 +571,183 @@ def test_suggestions_flag_high_429_rate():
     assert raise_hints
     retry_hints = [h for h in hints if h["kind"] == "retry_after"]
     assert retry_hints
+
+
+def test_ensure_rate_limits_does_not_reset_pressure_backoff():
+    ao3_rate._STATE.base_interval = 4.0
+    ao3_rate._STATE.tag_interval = 6.0
+    ensure_rate_limits()
+    assert ao3_rate._STATE.base_interval == pytest.approx(4.0)
+    assert ao3_rate._STATE.tag_interval == pytest.approx(6.0)
+
+
+def test_claim_slot_does_not_rewind_after_lock_delay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A job that blocked on SQLite must not write a past next_allowed_at."""
+    db = tmp_path / "rate.sqlite"
+    clock = [1000.0]
+    monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
+    store = SharedRateStore(db)
+    wait_a, snap_a = store.claim_slot(2.0)
+    assert wait_a == pytest.approx(0.0)
+    assert snap_a.next_allowed_at == pytest.approx(1002.0)
+
+    original_update = store.update
+
+    def delayed_update(mutator):
+        clock[0] = 1005.0
+        return original_update(mutator)
+
+    store.update = delayed_update  # type: ignore[method-assign]
+    wait_b, snap_b = store.claim_slot(2.0)
+    assert wait_b == pytest.approx(0.0)
+    assert snap_b.next_allowed_at == pytest.approx(1007.0)
+    store.close()
+
+
+def test_concurrent_job_claims_do_not_overlap(tmp_path: Path):
+    import threading
+
+    db = tmp_path / "rate.sqlite"
+    bootstrap = SharedRateStore(db)
+    bootstrap.read()
+    bootstrap.close()
+    barrier = threading.Barrier(8)
+    next_ats: list[float] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        store = SharedRateStore(db)
+        barrier.wait()
+        _wait, snap = store.claim_slot(1.0)
+        with lock:
+            next_ats.append(snap.next_allowed_at)
+        store.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    ordered = sorted(next_ats)
+    assert len(ordered) == 8
+    for earlier, later in zip(ordered, ordered[1:]):
+        assert later - earlier >= 0.99
+
+
+def test_robots_fetch_uses_host_slot(monkeypatch: pytest.MonkeyPatch):
+    ao3_rate._STATE.skip_wait = False
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
+    clock = [1000.0]
+    sleeps: list[float] = []
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
+    ao3_rate._STATE.store.update(
+        lambda snap: type(snap)(
+            next_allowed_at=clock[0],
+            base_interval=snap.base_interval,
+            tag_interval=snap.tag_interval,
+            success_streak=snap.success_streak,
+            crawl_delay=snap.crawl_delay,
+        )
+    )
+
+    class _Resp:
+        text = "User-agent: *\nDisallow:\n"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr("requests.get", lambda *_a, **_k: _Resp())
+    ao3_rate._fetch_robots_text(None)
+    waited = wait_for_request("https://archiveofourown.org/works/1")
+    assert waited == pytest.approx(DEFAULT_MIN_INTERVAL)
+    assert sleeps == pytest.approx([DEFAULT_MIN_INTERVAL])
+
+
+def test_empty_search_pages_use_the_same_host_interval(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Listing pages with no matching works still reserve the global slot."""
+    from ao3kit.scrape import SearchCriteria
+    from ao3kit.work_lists import WorkListTarget, scrape_work_list
+
+    ao3_rate._STATE.skip_wait = False
+    monkeypatch.setattr("ao3kit.rate.random.uniform", lambda _a, _b: 1.0)
+    clock = [1000.0]
+    sleeps: list[float] = []
+    monkeypatch.setattr("ao3kit.rate.time.time", lambda: clock[0])
+    monkeypatch.setattr("ao3kit.rate_store.time.time", lambda: clock[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr("ao3kit.rate.time.sleep", fake_sleep)
+    load_robots_text(
+        "User-agent: *\nDisallow: /works?\nDisallow: /downloads/\n"
+    )
+    ao3_rate._STATE.store.update(
+        lambda snap: type(snap)(
+            next_allowed_at=clock[0],
+            base_interval=snap.base_interval,
+            tag_interval=snap.tag_interval,
+            success_streak=snap.success_streak,
+            crawl_delay=snap.crawl_delay,
+        )
+    )
+
+    fixture = (
+        Path(__file__).parent / "fixtures" / "collection_works_page.html"
+    ).read_text(encoding="utf-8")
+    page1 = fixture.replace("1 - 2 of 2 Works", "1 - 2 of 100 Works")
+    page2 = (
+        '<div id="main"><h2 class="heading">0 Found</h2>'
+        "<p>No works found.</p></div>"
+    )
+    pages = [page1, page2]
+
+    class _Resp:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.status_code = 200
+            self.headers = {"Content-Type": "text/html"}
+
+        def close(self) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Session:
+        def request(self, method, url, data=None, timeout=None, stream=False):
+            del method, url, data, timeout, stream
+            if not pages:
+                raise AssertionError("unexpected extra listing fetch")
+            return _Resp(pages.pop(0))
+
+    target = WorkListTarget(
+        kind="collection",
+        list_path="/collections/anonymous/works",
+        criteria=SearchCriteria(),
+        start_page=1,
+    )
+    works = scrape_work_list(
+        target,
+        min_kudos=10**9,
+        session=_Session(),  # type: ignore[arg-type]
+    )
+    assert works == []
+    assert sleeps == pytest.approx([DEFAULT_MIN_INTERVAL])
+    assert not pages
 
 
 

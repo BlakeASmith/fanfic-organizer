@@ -256,7 +256,7 @@ def test_tag_resolver_simplifies_synonyms_and_dedupes():
     from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         _profile(
@@ -307,7 +307,7 @@ def test_tag_resolver_drop_unmarked():
     from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(_profile("Kissing", canonical=True))
     resolver.warm(_profile("custom freeform", canonical=False))
@@ -326,7 +326,6 @@ def test_tag_cache_persists_and_fans_out_synonyms(tmp_path: Path):
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -353,7 +352,6 @@ def test_tag_cache_persists_and_fans_out_synonyms(tmp_path: Path):
 
     resolver2 = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -376,7 +374,6 @@ def test_tag_cache_expires_whole_tree(tmp_path: Path):
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -402,6 +399,40 @@ def test_tag_cache_expires_whole_tree(tmp_path: Path):
     assert expired.lookup("Kissing") is None
     assert expired.expired_trees >= 1
     expired.close()
+
+
+def test_tag_cache_get_rows_skips_expired(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+
+    from ao3kit.tags.cache import TagCache
+    from ao3kit.tags.metadata import TagResolver
+
+    path = tmp_path / "tags.sqlite"
+    resolver = TagResolver(
+        session=object(),
+        owns_session=False,
+        cache_path=path,
+        persist=True,
+        ttl_days=30,
+    )
+    resolver.warm(
+        _profile("Kissing", canonical=True, synonyms=["Kisses", "smooching"])
+    )
+    resolver.close()
+
+    cache = TagCache.load(path, ttl_days=30)
+    conn = cache._open()
+    old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    conn.execute(
+        "UPDATE entries SET fetched_at = ? WHERE root = ?",
+        (old, "Kissing"),
+    )
+    conn.commit()
+    cache.close()
+
+    reloaded = TagCache.load(path, ttl_days=30)
+    assert reloaded.get_rows(["Kisses", "Kissing"]) == {}
+    reloaded.close()
 
 
 def test_tag_cache_migrates_legacy_json(tmp_path: Path):
@@ -456,7 +487,6 @@ def test_warm_persist_failure_does_not_leave_memory_hit(tmp_path: Path):
 
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=tmp_path / "tags.sqlite",
         persist=True,
@@ -485,7 +515,6 @@ def test_tag_resolver_follow_canonical_keeps_unlisted_synonym(tmp_path: Path):
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -536,7 +565,6 @@ def test_follow_canonical_skips_fetch_when_canonical_already_cached(tmp_path: Pa
     path = tmp_path / "tags.sqlite"
     seeded = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -551,7 +579,6 @@ def test_follow_canonical_skips_fetch_when_canonical_already_cached(tmp_path: Pa
     fetches: list[str] = []
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -589,7 +616,6 @@ def test_tag_resolver_follow_canonical_indexes_siblings():
 
     resolver = TagResolver(
         session=FakeSession(),
-        delay=0,
         owns_session=False,
         cache_path=None,
         persist=False,
@@ -642,7 +668,6 @@ def test_tag_resolver_skips_session_and_login_on_cache_hit(
     path = tmp_path / "tags.sqlite"
     seeder = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -655,7 +680,6 @@ def test_tag_resolver_skips_session_and_login_on_cache_hit(
     resolver = TagResolver(
         username="emily",
         password="secret",
-        delay=0,
         cache_path=path,
         persist=True,
         ttl_days=90,
@@ -698,7 +722,6 @@ def test_tag_resolver_logs_in_only_when_tag_page_is_locked(monkeypatch):
     resolver = TagResolver(
         username="emily",
         password="secret",
-        delay=0,
         cache_path=None,
         persist=False,
     )
@@ -731,7 +754,6 @@ def test_tag_resolver_does_not_login_for_public_tag_fetch(monkeypatch):
     resolver = TagResolver(
         username="emily",
         password="secret",
-        delay=0,
         cache_path=None,
         persist=False,
     )
@@ -745,7 +767,7 @@ def test_simplify_appends_metatags_without_duplicates():
     from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         _profile(
@@ -787,7 +809,7 @@ def test_simplify_skips_metatags_for_non_fandom_tags():
     from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         _profile(
@@ -806,7 +828,7 @@ def test_simplify_uses_canonical_metatags_for_synonyms():
     from ao3kit.tags.metadata import TagResolver
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         _profile("spiderman", synonym_of="Spider-Man - All Media Types", category="Fandom")
@@ -832,7 +854,6 @@ def test_tag_cache_persists_metatags(tmp_path: Path):
     path = tmp_path / "tags.sqlite"
     resolver = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -857,7 +878,6 @@ def test_tag_cache_persists_metatags(tmp_path: Path):
 
     resolver2 = TagResolver(
         session=object(),
-        delay=0,
         owns_session=False,
         cache_path=path,
         persist=True,
@@ -927,7 +947,7 @@ def test_simplify_appends_nested_metatags_from_profile_page():
         html, url="https://archiveofourown.org/tags/Doctor%20Who%20(2005)"
     )
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(profile)
     result = resolver.simplify(["Doctor Who (2005)"])

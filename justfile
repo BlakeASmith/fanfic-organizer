@@ -9,7 +9,7 @@ python := env_var_or_default("PYTHON", "python")
 default:
     @just --list
 
-# Build fanfic-organizer.zip (GitHub Release artifact)
+# Build fanfic-organizer.zip (local default; CI uses FanFicOrganizer-<version>.zip)
 build:
     {{ python }} makeplugin.py zip
 

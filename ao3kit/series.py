@@ -8,7 +8,7 @@ import requests
 from ao3kit.htmlsoup import parse_html
 
 from ao3kit.http import AO3_BASE, create_session, is_login_wall
-from ao3kit.rate import apply_request_delay
+from ao3kit.rate import ensure_rate_limits
 from ao3kit.scrape import (
     SeriesMembership,
     WorkRecord,
@@ -34,6 +34,9 @@ _PRESERVE_RECORD_KEYS = (
     "epub_file",
     "epub_error",
     "download_status",
+    "calibre_uuid",
+    "calibre_book_id",
+    "current_collections",
 )
 
 
@@ -53,13 +56,12 @@ def scrape_series(
     *,
     session: requests.Session | None = None,
     start_page: int = 1,
-    request_delay: float | None = None,
     on_page: PageCallback | None = None,
     on_work: WorkCallback | None = None,
 ) -> list[WorkRecord]:
     """Fetch every work listed on an AO3 series page (same blurbs as search)."""
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     series_id = str(series_id).strip()
     if not series_id.isdigit():
         raise ValueError(f"Invalid AO3 series id: {series_id!r}")
@@ -168,21 +170,21 @@ def fill_record_dicts(
     records: list[dict[str, Any]],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     force: bool = False,
     on_status: StatusCallback | None = None,
     score_config=None,
 ) -> list[dict[str, Any]]:
     """Fill ``series`` on existing JSONL records without adding series-mates."""
     session = session or create_session()
-    apply_request_delay(request_delay)
-    paired: list[tuple[dict[str, Any], WorkRecord]] = []
+    ensure_rate_limits()
+    slots: list[tuple[str, Any]] = []
     works: list[WorkRecord] = []
     for record in records:
         work = WorkRecord.from_dict(record)
         if work is None:
+            slots.append(("keep", record))
             continue
-        paired.append((record, work))
+        slots.append(("work", (record, work)))
         works.append(work)
     looked_up = fill_series_from_work_pages(
         works,
@@ -196,7 +198,11 @@ def fill_record_dicts(
             f"Series lookup finished ({in_series}/{len(works)} in a series)."
         )
     out: list[dict[str, Any]] = []
-    for record, work in paired:
+    for kind, payload in slots:
+        if kind == "keep":
+            out.append(payload)
+            continue
+        record, work = payload
         merged = dict(record)
         data = work.to_dict(score_config=score_config)
         for key in _PRESERVE_RECORD_KEYS:
@@ -233,7 +239,6 @@ def expand_with_series(
     works: list[WorkRecord],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     fetch_missing: bool = True,
     on_status: StatusCallback | None = None,
     on_work: WorkCallback | None = None,
@@ -245,7 +250,7 @@ def expand_with_series(
     their place at the front; new series-mates are appended in series order.
     """
     session = session or create_session()
-    apply_request_delay(request_delay)
+    ensure_rate_limits()
     works = [work for work in works if work.work_id]
     if fetch_missing:
         fill_series_from_work_pages(works, session, on_status=on_status)
@@ -268,7 +273,6 @@ def expand_with_series(
             series_works = scrape_series(
                 series_id,
                 session=session,
-                request_delay=request_delay,
                 on_page=on_page,
             )
         except ValueError as exc:
@@ -305,7 +309,6 @@ def expand_record_dicts(
     records: list[dict[str, Any]],
     *,
     session: requests.Session | None = None,
-    request_delay: float | None = None,
     fetch_missing: bool = True,
     on_status: StatusCallback | None = None,
     on_work: WorkCallback | None = None,
@@ -315,16 +318,17 @@ def expand_record_dicts(
     """Expand JSONL-shaped records with series-mates. Preserves ``cleaned`` / EPUB fields."""
     originals: dict[str, dict[str, Any]] = {}
     works: list[WorkRecord] = []
+    passthrough: list[dict[str, Any]] = []
     for record in records:
         work = WorkRecord.from_dict(record)
         if work is None:
+            passthrough.append(record)
             continue
         originals[work.work_id] = record
         works.append(work)
     expanded = expand_with_series(
         works,
         session=session,
-        request_delay=request_delay,
         fetch_missing=fetch_missing,
         on_status=on_status,
         on_work=on_work,
@@ -338,4 +342,5 @@ def expand_record_dicts(
             if key in src:
                 data[key] = src[key]
         out.append(data)
+    out.extend(passthrough)
     return out

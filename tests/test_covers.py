@@ -13,15 +13,25 @@ from ao3kit.covers import (
     CoverInfo,
     apply_cover_to_epub,
     choose_colours,
+    contrast_ratio,
     cover_info_from_epub,
     cover_info_from_record,
+    ensure_contrast,
     epub_has_cover,
     extract_cover_bytes,
     inject_cover,
     main as cover_main,
     merge_cover_info,
+    parse_color,
+    plan_cover_layout,
     render_cover_image,
+    resolve_font,
+    wrap_title,
     _format_footer,
+    _normalize_cover_text,
+    _scratch_draw,
+    resolve_record_summary,
+    summary_text_from_comments,
 )
 
 pytest.importorskip("PIL")
@@ -98,11 +108,20 @@ def test_same_fandom_gets_same_colour():
 
 def test_fandom_color_override_and_solid_mode():
     info = CoverInfo(title="A", author="B", fandom="Harry Potter - J. K. Rowling")
-    mapped = CoverSettings(fandom_colors={"Harry Potter": "#740001"}, gradient=False)
+    mapped = CoverSettings(
+        fandom_colors={"Harry Potter": "#740001"},
+        gradient=False,
+        auto_contrast=False,
+    )
     top, bottom = choose_colours(info, mapped)
     assert top.lower() == "#740001"
     assert bottom.lower() == "#740001"
-    solid = CoverSettings(color_mode="solid", solid_color="#112233", gradient=False)
+    solid = CoverSettings(
+        color_mode="solid",
+        solid_color="#112233",
+        gradient=False,
+        auto_contrast=False,
+    )
     assert choose_colours(info, solid) == ("#112233", "#112233")
 
 
@@ -119,6 +138,7 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
             "kudos": 1321,
             "hits": 53450,
             "quality_score": 62,
+            "quality_score_raw": 13.6,
         },
         "series": [{"series_id": "9", "name": "A Series", "url": "", "position": 2}],
         "tags": ["Teen And Up Audiences"],
@@ -141,8 +161,7 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
     assert from_file.author == "alexwlchan"
     assert "Operation Mincemeat" in from_file.fandom
     assert from_file.wordcount == 12000
-    assert from_file.score is not None
-    assert from_file.score > 0
+    assert from_file.score == 100
     merged = merge_cover_info(info, from_file)
     assert merged.title == "Record Title"
     assert merged.fandom == "Doctor Who (2005)"
@@ -255,10 +274,123 @@ def test_cover_settings_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_user_settings_cover_defaults_when_absent():
-    settings = UserSettings.from_dict({"request_delay": 3, "nope": 1})
-    assert settings.request_delay == 3.0
+    settings = UserSettings.from_dict({"nope": 1})
     assert settings.cover.enabled is True
     assert settings.cover.fields == ["title", "author", "wordcount", "score"]
+
+
+def test_cover_info_from_record_includes_summary():
+    record = {
+        "title": "A Work",
+        "summary": "  They were roommates.  Oh&nbsp;my god. ",
+        "author": "Writer",
+    }
+    info = cover_info_from_record(record)
+    assert info.summary == "They were roommates. Oh my god."
+
+
+def test_cover_info_from_record_uses_comments_when_summary_missing():
+    record = {
+        "title": "A Work",
+        "comments": "<p>They were <b>roommates</b>.</p>",
+        "author": "Writer",
+    }
+    info = cover_info_from_record(record)
+    assert info.summary == "They were roommates."
+
+
+def test_summary_text_from_comments_skips_json_metadata():
+    blob = '{"work_id": "9", "tags": ["Fluff"]}'
+    assert summary_text_from_comments(blob) == ""
+    assert summary_text_from_comments("Plain synopsis text.") == "Plain synopsis text."
+
+
+def test_resolve_record_summary_prefers_column_over_comments():
+    record = {"title": "A"}
+    assert (
+        resolve_record_summary(
+            record,
+            summary_column="Column blurb.",
+            comments="Comments blurb.",
+        )
+        == "Column blurb."
+    )
+    assert resolve_record_summary(record, comments="Comments blurb.") == "Comments blurb."
+    assert (
+        resolve_record_summary({"summary": "Record blurb."}, comments="Comments blurb.")
+        == "Record blurb."
+    )
+
+
+def test_summary_on_cover_when_enabled():
+    info = CoverInfo(
+        title="Short Title",
+        summary=(
+            "A slow-burn coffee shop AU where everyone talks too much and "
+            "saves the galaxy anyway, with several extra clauses so the "
+            "summary has to wrap and shrink like the title does."
+        ),
+        author="Jane AUs-ten",
+        fandom="Star Wars",
+    )
+    settings = CoverSettings(fields=["title", "summary", "author"])
+    title, summary, author, _footer, _headers = plan_cover_layout(info, settings)
+    assert title is not None
+    assert summary is not None
+    assert author is not None
+    assert summary.y > title.bottom
+    assert summary.bottom <= author.y - 8
+    assert summary.size <= settings.summary_size
+    assert "…" not in " ".join(summary.lines)
+
+
+def test_apply_cover_to_epub_uses_record_summary(tmp_path: Path):
+    epub = tmp_path / "work.epub"
+    epub.write_bytes(ao3_epub_bytes())
+    outcome = apply_cover_to_epub(
+        epub,
+        record={
+            "title": "Operation Cameo",
+            "comments": "A spy romp in wartime London.",
+        },
+        settings=CoverSettings(fields=["title", "summary", "author"]),
+    )
+    assert outcome.status == "updated"
+    assert outcome.info is not None
+    assert outcome.info.summary == "A spy romp in wartime London."
+    image = extract_cover_bytes(epub)
+    assert image is not None
+
+
+def test_summary_hidden_when_field_disabled():
+    info = CoverInfo(title="A", summary="Blurb text", author="B")
+    title, summary, _author, _footer, _headers = plan_cover_layout(
+        info, CoverSettings(fields=["title", "author"])
+    )
+    assert title is not None
+    assert summary is None
+
+
+def test_title_and_summary_use_separate_font_sizes():
+    info = CoverInfo(title="Title", summary="Summary line", author="Author")
+    settings = CoverSettings(
+        fields=["title", "summary", "author"],
+        title_size=80,
+        summary_size=30,
+        auto_fit_title=False,
+        auto_fit_summary=False,
+        title_max_lines=2,
+        summary_max_lines=2,
+    )
+    title, summary, _author, _footer, _headers = plan_cover_layout(info, settings)
+    assert title is not None and summary is not None
+    assert title.size == 80
+    assert summary.size == 30
+
+
+def test_normalize_cover_text_collapses_whitespace_and_entities():
+    assert _normalize_cover_text("  hello   world  ") == "hello world"
+    assert _normalize_cover_text("oh&nbsp;my god") == "oh my god"
 
 
 def test_cover_footer_includes_wordcount():
@@ -266,5 +398,137 @@ def test_cover_footer_includes_wordcount():
     assert _format_footer(info, CoverSettings()) == ["344,429 words", "Score 62"]
     hidden = CoverSettings(fields=["title", "author"])
     assert _format_footer(info, hidden) == []
-    raw = CoverInfo(score=13.4)
-    assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 13.4"]
+    raw = CoverInfo(score=62)
+    assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 62"]
+
+
+def test_long_title_auto_fits_without_ellipsis():
+    info = CoverInfo(
+        title=(
+            "The One Where They All Get Together in a Coffee Shop "
+            "and Save the Galaxy (Again)"
+        ),
+        author="Jane AUs-ten",
+        fandom="Star Wars",
+        wordcount=125000,
+        score=72,
+    )
+    title, _summary, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert author is not None
+    joined = " ".join(title.lines)
+    assert "…" not in joined
+    assert "Galaxy" in joined
+    assert title.size < 88
+    assert title.line_height <= title.size * 1.2
+    assert title.bottom <= author.y - 8
+
+
+def test_short_title_keeps_large_type():
+    info = CoverInfo(title="Cameo", author="A", fandom="Star Wars")
+    title, _summary, _author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert title.size == 88
+    assert len(title.lines) == 1
+
+
+EXTREME_TITLE = (
+    "in which there is a coffee shop, a time loop, three (3) fake dating "
+    "contracts, one (1) accidental marriage, the inherent eroticism of sharing "
+    "a tiny apartment, found family, identity porn, amnesia, a missing prince, "
+    "a talking sword, five soulmate tropes in a trench coat, and they were "
+    "roommates (oh my god they were roommates), or: a treatise on why the "
+    "author should have stopped adding subtitles around chapter forty-seven "
+    "but absolutely did not"
+)
+
+
+def test_extreme_title_uses_the_cover_instead_of_ellipsis():
+    info = CoverInfo(
+        title=EXTREME_TITLE,
+        author="Jane AUs-ten",
+        fandom="Star Wars - All Media Types",
+        wordcount=344429,
+        score=62,
+    )
+    title, _summary, author, _footer, _headers = plan_cover_layout(info, CoverSettings())
+    assert title is not None
+    assert author is not None
+    joined = " ".join(title.lines)
+    assert "…" not in joined
+    assert "forty-seven" in joined
+    assert "did not" in joined
+    assert title.size <= 40
+    assert len(title.lines) > 8
+    assert title.bottom <= author.y - 8
+
+
+def test_title_max_lines_still_truncates_when_set():
+    info = CoverInfo(title=EXTREME_TITLE, author="A")
+    title, _summary, _author, _footer, _headers = plan_cover_layout(
+        info, CoverSettings(title_max_lines=5, auto_fit_title=True)
+    )
+    assert title is not None
+    assert len(title.lines) <= 5
+    assert title.lines[-1].endswith("…")
+
+
+def test_long_unbroken_word_wraps():
+    draw = _scratch_draw(600, 900)
+    font = resolve_font(CoverSettings(), 88)
+    lines = wrap_title(draw, font, "Supercalifragilisticexpialidocious", 180)
+    assert len(lines) > 1
+    assert all(line for line in lines)
+
+
+def test_auto_contrast_darkens_bright_mapped_color():
+    info = CoverInfo(title="Gold Hour", author="Sunny", fandom="Yellow Fandom")
+    settings = CoverSettings(
+        fandom_colors={"Yellow Fandom": "#e8c44a"},
+        gradient=False,
+        auto_contrast=True,
+        contrast_min_ratio=3.5,
+    )
+    top, _bottom = choose_colours(info, settings)
+    assert top.lower() != "#e8c44a"
+    rgb = parse_color(top)[:3]
+    assert contrast_ratio(rgb, (255, 255, 255)) >= 3.5
+
+
+def test_ensure_contrast_leaves_dark_colors_alone():
+    assert ensure_contrast("#740001", min_ratio=3.5).lower() == "#740001"
+
+
+def test_cover_settings_new_defaults():
+    settings = CoverSettings()
+    assert settings.auto_fit_title is True
+    assert settings.auto_contrast is True
+    assert settings.text_shadow is True
+    assert settings.text_stroke_px == 3
+    assert settings.title_leading == 1.08
+    assert settings.scrim == 0.22
+
+
+def test_settings_json_cli_overrides_preview(tmp_path: Path):
+    dest = tmp_path / "cover.png"
+    rc = cover_main(
+        [
+            "--preview",
+            "--title",
+            "Ship Happens",
+            "--author",
+            "Ann Thology",
+            "--fandom",
+            "Star Wars",
+            "--settings-json",
+            '{"width": 400, "height": 600, "scrim": 0.4, "text_stroke_px": 0}',
+            "-o",
+            str(dest),
+        ]
+    )
+    assert rc == 0
+    assert dest.is_file()
+    from PIL import Image
+
+    image = Image.open(dest)
+    assert image.size == (400, 600)

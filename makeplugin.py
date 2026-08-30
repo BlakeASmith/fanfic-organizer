@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Build, install, or release the Calibre plugin.
 
-``zip`` writes a self-contained ``fanfic-organizer.zip`` for GitHub Releases
+``zip`` writes a self-contained plugin zip for GitHub Releases
 (plugin UI + ao3kit + vendored pure-Python deps). ``install`` still uses
 ``calibre-customize -b`` from ``calibre-plugin/`` for fast UI iteration.
 ``release`` cuts ``CHANGELOG.md`` [Unreleased] into a versioned section,
 bumps ``ao3kit`` + plugin versions, and optionally publishes the GitHub release.
+CI preview builds pass ``--set-version`` so the zip and Calibre plugin version
+match ``X.Y.Z-preview.<run>+<sha>`` without committing those strings.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
+KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
 OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
@@ -41,6 +44,9 @@ RELEASE_PATHS = (
     "ao3kit/__init__.py",
     "calibre-plugin/__init__.py",
 )
+# Fixed entry timestamp so the zip is reproducible and never trips the ZIP
+# format's 1980 floor (fresh CI/snapshot checkouts can leave epoch mtimes).
+ZIP_ENTRY_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
 def _purge_native_extensions(root: Path) -> None:
@@ -172,6 +178,12 @@ def iter_zip_entries(
                 continue
             rel = path.relative_to(vendor_dir).as_posix()
             entries.append((path, f"vendor/{rel}"))
+    if KOREADER_ADDON_DIR.is_dir():
+        for path in sorted(KOREADER_ADDON_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(KOREADER_ADDON_DIR).as_posix()
+            entries.append((path, f"resources/koreader/{rel}"))
     return entries
 
 
@@ -180,20 +192,42 @@ def build_zip(
     *,
     vendor: bool = True,
     force_vendor: bool = False,
+    version: str | None = None,
 ) -> Path:
     dest = output or OUTPUT
     vendor_dir = ensure_vendor(force=force_vendor) if vendor else None
     entries = iter_zip_entries(vendor_dir=vendor_dir)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    from calibre_dev.versioning import rewrite_zip_entry
+
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         written: set[str] = set()
         for path, arcname in entries:
             if arcname in written:
                 continue
-            zf.write(path, arcname=arcname)
+            info = zipfile.ZipInfo(arcname, date_time=ZIP_ENTRY_DATE_TIME)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            payload = rewrite_zip_entry(arcname, path.read_bytes(), version)
+            zf.writestr(info, payload)
             written.add(arcname)
     print(f"Wrote {dest} ({dest.stat().st_size} bytes, {len(written)} files)")
     return dest
+
+
+def _cmd_zip(args: argparse.Namespace) -> Path:
+    from calibre_dev.versioning import plugin_zip_name
+
+    version = (args.set_version or "").strip() or None
+    output = Path(args.output) if args.output else None
+    if output is None and version:
+        output = ROOT / plugin_zip_name(version)
+    return build_zip(
+        output,
+        vendor=not args.no_vendor,
+        force_vendor=args.force_vendor,
+        version=version,
+    )
 
 
 def _print_result(result: dict) -> int:
@@ -262,11 +296,15 @@ def _cmd_changelog(version: str | None) -> int:
 
 
 def _publish_release(version: str, notes: str) -> None:
-    tag = f"v{version}"
+    from calibre_dev.preview import annotate_superseded_previews
+    from calibre_dev.versioning import plugin_zip_name, release_tag_name
+
+    tag = release_tag_name(version)
     _git(["add", *RELEASE_PATHS])
     _git(["commit", "-m", f"chore(release): {version}"])
     _git(["push", "origin", "HEAD"])
-    dest = build_zip()
+    dest = ROOT / plugin_zip_name(version)
+    build_zip(dest, version=version)
     from ao3kit.paths import cache_dir
 
     notes_path = cache_dir() / "release-notes.md"
@@ -288,6 +326,12 @@ def _publish_release(version: str, notes: str) -> None:
         check=True,
     )
     _git(["fetch", "origin", f"refs/tags/{tag}:refs/tags/{tag}"])
+    annotated = annotate_superseded_previews(version, cwd=ROOT)
+    if annotated:
+        print(
+            "Annotated preview releases: " + ", ".join(annotated),
+            file=sys.stderr,
+        )
 
 
 def _cmd_release(
@@ -296,6 +340,7 @@ def _cmd_release(
     publish: bool,
     dry_run: bool,
     patch: bool,
+    bump: str | None,
     release_date: str | None,
 ) -> int:
     from calibre_dev.changelog import (
@@ -307,15 +352,20 @@ def _cmd_release(
         read_plugin_version,
         require_0x,
     )
+    from calibre_dev.versioning import plugin_zip_name
 
-    if version and patch:
-        print("use either a version or --patch, not both", file=sys.stderr)
+    if version and (patch or bump):
+        print("use either a version or a bump (--patch / --bump), not both", file=sys.stderr)
+        return 2
+    if patch and bump and bump != "patch":
+        print("use either --patch or --bump, not both", file=sys.stderr)
         return 2
     try:
         if version:
             version = format_version(require_0x(parse_version(version)))
         else:
-            version = format_version(next_0x_version(read_plugin_version(), patch=patch))
+            kind = bump or ("patch" if patch else "minor")
+            version = format_version(next_0x_version(read_plugin_version(), bump=kind))
     except ChangelogError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -350,12 +400,16 @@ def _cmd_release(
     )
     if publish:
         _publish_release(version, notes)
-        print(f"Published GitHub release v{version} with fanfic-organizer.zip.", file=sys.stderr)
+        print(
+            f"Published GitHub release v{version} with {plugin_zip_name(version)}.",
+            file=sys.stderr,
+        )
     else:
         print(
             f"Commit those files and tag v{version} "
-            "(push the tag; CI attaches fanfic-organizer.zip). "
-            "To cut and publish in one step: python makeplugin.py release --publish",
+            f"(push the tag; CI attaches {plugin_zip_name(version)}). "
+            "To cut and publish in one step: python makeplugin.py release --publish. "
+            "Or run the Release plugin workflow from GitHub Actions.",
             file=sys.stderr,
         )
     return 0
@@ -419,9 +473,29 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-run pip install into the XDG plugin-vendor cache before zipping.",
     )
     parser.add_argument(
+        "--set-version",
+        default="",
+        help=(
+            "With zip: embed this version in the plugin and ao3kit (Calibre "
+            "shows the same string). Does not modify the working tree."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default="",
+        help="With zip: output path (default fanfic-organizer.zip, or FanFicOrganizer-<version>.zip with --set-version).",
+    )
+    parser.add_argument(
         "--patch",
         action="store_true",
         help="With release: bump 0.x patch instead of minor. Do not pass a version.",
+    )
+    parser.add_argument(
+        "--bump",
+        choices=("patch", "minor", "major"),
+        default="",
+        help="With release: version bump when no explicit version is given (default: minor).",
     )
     parser.add_argument(
         "--publish",
@@ -449,8 +523,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--dry-run requires release")
     if args.patch and command != "release":
         parser.error("--patch requires release")
-    if command in {"zip", "install", "restart", "status"} and args.version:
+    if args.bump and command != "release":
+        parser.error("--bump requires release")
+    if args.set_version and command not in {None, "zip"}:
+        parser.error("--set-version requires zip")
+    if args.output and command not in {None, "zip"}:
+        parser.error("--output requires zip")
+    if command in {"install", "restart", "status"} and args.version:
         parser.error(f"{command} does not take a version")
+    if command == "zip" and args.version:
+        parser.error("zip does not take a positional version; use --set-version")
     if command == "changelog":
         return _cmd_changelog(args.version)
     if command == "release":
@@ -459,15 +541,16 @@ def main(argv: list[str] | None = None) -> int:
             publish=args.publish,
             dry_run=args.dry_run,
             patch=args.patch,
+            bump=args.bump or None,
             release_date=args.date or None,
         )
     if command is None:
         if restart:
             parser.error("--restart requires install (or use: makeplugin.py restart)")
-        build_zip(vendor=not args.no_vendor, force_vendor=args.force_vendor)
+        _cmd_zip(args)
         return 0
     if command == "zip":
-        build_zip(vendor=not args.no_vendor, force_vendor=args.force_vendor)
+        _cmd_zip(args)
         return 0
     if command == "status":
         result = _ctl().status()

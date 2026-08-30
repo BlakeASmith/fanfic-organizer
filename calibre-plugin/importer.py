@@ -9,12 +9,9 @@ from typing import Any
 from calibre.ebooks.metadata import MetaInformation
 
 from calibre_plugins.fanfic_organizer.cleaned import (
-    book_matches_work,
     calibre_fields_for_record,
-    canonical_work_id,
-    canonical_work_url,
+    existing_book_id_from_identifiers,
     tags_for_calibre_library,
-    work_url,
 )
 from calibre_plugins.fanfic_organizer.columns import (
     custom_label_is_live,
@@ -54,40 +51,61 @@ def build_metadata(
         has_collections_column=bool(present.get('collections')),
     )
 
-    # Leave Comments alone (AO3 summaries live there; scrape records have no summary).
-    if existing_comments:
+    summary = str(record.get('summary') or '').strip()
+    if summary and not existing_comments:
+        mi.comments = summary
+    elif existing_comments:
         mi.comments = existing_comments
     return mi
 
 
-def find_existing_book(db, record: dict[str, Any]) -> int | None:
-    work_id = canonical_work_id(record)
-    url = canonical_work_url(record)
-    search = getattr(db, 'search_getting_ids', None)
-    queries: list[str] = []
-    if work_id:
-        queries.append(f'identifiers:ao3:{work_id}')
-        queries.append(f'identifiers:url:"{work_url(work_id)}"')
-        queries.append(
-            f'identifiers:url:"https://www.archiveofourown.org/works/{work_id}"'
-        )
-    if url:
-        queries.append(f'identifiers:url:"{url}"')
-
-    if search is not None:
-        for query in queries:
+def iter_identifier_maps(db) -> list[tuple[int, dict[str, Any]]]:
+    """In-memory identifier dicts for every book (no Calibre search)."""
+    api = getattr(db, 'new_api', None)
+    if api is not None:
+        all_book_ids = getattr(api, 'all_book_ids', None)
+        all_field_for = getattr(api, 'all_field_for', None)
+        if callable(all_book_ids) and callable(all_field_for):
             try:
-                ids = search(query, None, use_virtual_library=False)
+                mapping = all_field_for('identifiers', all_book_ids()) or {}
             except Exception:
-                continue
-            if ids:
-                return ids[0]
+                mapping = None
+            if mapping is not None:
+                rows: list[tuple[int, dict[str, Any]]] = []
+                for book_id, ids in mapping.items():
+                    rows.append((int(book_id), dict(ids or {})))
+                return rows
+    rows = []
+    all_ids = getattr(db, 'all_ids', None)
+    if not callable(all_ids):
+        return rows
+    getter = getattr(db, 'get_identifiers', None)
+    for book_id in all_ids():
+        ids: dict[str, Any] = {}
+        if callable(getter):
+            try:
+                ids = getter(book_id, index_is_id=True) or {}
+            except TypeError:
+                ids = getter(book_id) or {}
+        rows.append((int(book_id), dict(ids)))
+    return rows
 
-    for book_id in db.all_ids():
-        ids = db.get_identifiers(book_id, index_is_id=True) or {}
-        if book_matches_work(ids, work_id=work_id, url=url):
-            return book_id
-    return None
+
+def find_existing_book(
+    db,
+    record: dict[str, Any],
+    *,
+    catalog: list[tuple[int, dict[str, Any]]] | None = None,
+) -> int | None:
+    """Find a library book for this AO3 work using in-memory identifiers.
+
+    Calibre ``search_getting_ids('identifiers:…')`` walks every book for each
+    query and is too slow on the GUI thread during live import. Identifier
+    maps are already in memory; matching them is the same as ``book_matches_work``.
+    """
+    rows = catalog if catalog is not None else iter_identifier_maps(db)
+    found = existing_book_id_from_identifiers(rows, record)
+    return int(found) if found is not None else None
 
 
 def find_book_by_work_id(db, work_id: str) -> int | None:
@@ -271,6 +289,8 @@ def write_layout_fields(db, book_id: int, record: dict[str, Any]) -> None:
         _set_custom(
             db, book_id, 'originaltags', fields['original_tags'], commit=False
         )
+    if present.get('summary') and fields.get('summary'):
+        _set_custom(db, book_id, 'summary', fields['summary'], commit=False)
 
     commit = getattr(db, 'commit', None)
     if callable(commit):
@@ -289,8 +309,20 @@ def write_collections_field(db, book_id: int, names: list[str]) -> bool:
     return wrote
 
 
-def refresh_library_ui(gui, book_ids: list[int] | None = None) -> None:
-    """Refresh the book list, tag browser, and book details after library writes."""
+def refresh_library_ui(
+    gui,
+    book_ids: list[int] | None = None,
+    *,
+    added_count: int = 0,
+) -> None:
+    """Refresh the book list, tag browser, and book details after library writes.
+
+    ``added_count`` is how many new rows were just prepended on the library
+    view. Calibre's ``BooksModel.books_added`` notifies Qt of those inserts and
+    emits ``count_changed_signal``, which already rebuilds the tag browser.
+    Callers that only updated existing books should leave it at 0 so we still
+    ``recount()`` after tag/field changes.
+    """
     model = gui.library_view.model()
     current_row = -1
     try:
@@ -299,6 +331,18 @@ def refresh_library_ui(gui, book_ids: list[int] | None = None) -> None:
             current_row = index.row()
     except Exception:
         current_row = -1
+
+    inserted = False
+    added = int(added_count or 0)
+    if added > 0:
+        inserter = getattr(model, 'books_added', None)
+        if callable(inserter):
+            try:
+                inserter(added)
+                inserted = True
+            except Exception:
+                inserted = False
+
     if book_ids and hasattr(model, 'refresh_ids'):
         try:
             model.refresh_ids(list(book_ids), current_row=current_row)
@@ -306,11 +350,16 @@ def refresh_library_ui(gui, book_ids: list[int] | None = None) -> None:
             try:
                 model.refresh_ids(list(book_ids))
             except Exception:
-                model.refresh()
+                if not inserted:
+                    model.refresh()
         except Exception:
-            model.refresh()
-    else:
+            if not inserted:
+                model.refresh()
+    elif not inserted:
         model.refresh()
+
+    if inserted:
+        return
     tags_view = getattr(gui, 'tags_view', None)
     if tags_view is not None and hasattr(tags_view, 'recount'):
         tags_view.recount()
@@ -323,16 +372,34 @@ def import_record(
     update_existing: bool = True,
     bundle_root: str | Path | None = None,
     skip_existing_epub: bool = False,
+    catalog: list[tuple[int, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     layout = layout_columns_present(db)
-    existing_id = find_existing_book(db, record)
+    existing_id = find_existing_book(db, record, catalog=catalog)
 
     if existing_id is not None and not update_existing:
+        attached = False
+        if bundle_root is not None:
+            already_has_epub = False
+            if skip_existing_epub:
+                try:
+                    already_has_epub = bool(
+                        db.has_format(existing_id, 'EPUB', index_is_id=True)
+                    )
+                except Exception:
+                    already_has_epub = False
+            if not already_has_epub:
+                epub_path = resolve_epub_path(record, bundle_root)
+                if epub_path is not None:
+                    try:
+                        attached = add_epub_format(db, existing_id, epub_path)
+                    except Exception:
+                        attached = False
         return {
             'book_id': existing_id,
             'action': 'skipped',
             'title': record.get('title'),
-            'epub': False,
+            'epub': attached,
         }
 
     existing_identifiers = None
@@ -355,6 +422,12 @@ def import_record(
     if existing_id is None:
         book_id = db.create_book_entry(mi, add_duplicates=True)
         action = 'added'
+        if catalog is not None:
+            identifiers = {}
+            getter = getattr(mi, 'get_identifiers', None)
+            if callable(getter):
+                identifiers = getter() or {}
+            catalog.append((int(book_id), dict(identifiers)))
     else:
         book_id = existing_id
         try:
@@ -379,7 +452,10 @@ def import_record(
         if not already_has_epub:
             epub_path = resolve_epub_path(record, bundle_root)
             if epub_path is not None:
-                attached = add_epub_format(db, book_id, epub_path)
+                try:
+                    attached = add_epub_format(db, book_id, epub_path)
+                except Exception:
+                    attached = False
 
     return {
         'book_id': book_id,
@@ -397,6 +473,7 @@ def import_records(
     bundle_root: str | Path | None = None,
     skip_existing_epub: bool = False,
 ) -> list[dict[str, Any]]:
+    catalog = iter_identifier_maps(db)
     return [
         import_record(
             db,
@@ -404,6 +481,7 @@ def import_records(
             update_existing=update_existing,
             bundle_root=bundle_root,
             skip_existing_epub=skip_existing_epub,
+            catalog=catalog,
         )
         for record in records
     ]

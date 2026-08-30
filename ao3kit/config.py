@@ -69,7 +69,7 @@ class ExampleCollection(TagRule):
 
 RULES = TagRulesConfig(
     resolve_canonical=True,
-    drop_unmarked=False,
+    drop_unmarked=True,
     rules=[
         # KeepSeparateRule(
         #     id="keep-jegulus",
@@ -91,13 +91,12 @@ RULES = TagRulesConfig(
 '''
 
 
-DEFAULT_REQUEST_DELAY = 1.5
-
 COVER_COLOR_SEEDS = ("fandom", "relationship", "author", "title", "work_id")
 COVER_COLOR_MODES = ("hash", "palette", "solid")
 COVER_IMAGE_FORMATS = ("png", "jpeg")
 COVER_FIELDS = (
     "title",
+    "summary",
     "author",
     "fandom",
     "relationship",
@@ -184,16 +183,29 @@ class CoverSettings:
     font: str = "Georgia"
     font_path: str = ""
     title_size: int = 88
+    summary_size: int = 36
     author_size: int = 62
     header_size: int = 28
     footer_size: int = 24
-    title_max_lines: int = 5
-    author_max_lines: int = 2
+    min_title_size: int = 22
+    min_summary_size: int = 14
+    min_author_size: int = 24
+    title_max_lines: int = 0
+    summary_max_lines: int = 0
+    author_max_lines: int = 3
     header_max_lines: int = 2
+    title_leading: float = 1.08
+    summary_leading: float = 1.08
+    author_leading: float = 1.08
+    header_leading: float = 1.15
+    footer_leading: float = 1.15
+    auto_fit_title: bool = True
+    auto_fit_summary: bool = True
     title_color: str = "#ffffff"
-    author_color: str = "#ffffffcc"
-    header_color: str = "#ffffffcc"
-    footer_color: str = "#ffffffcc"
+    summary_color: str = "#ffffff"
+    author_color: str = "#ffffff"
+    header_color: str = "#f5f5f5"
+    footer_color: str = "#f5f5f5"
     fields: list[str] = field(default_factory=lambda: list(DEFAULT_COVER_FIELDS))
     color_seed: str = "fandom"
     color_mode: str = "hash"
@@ -203,8 +215,8 @@ class CoverSettings:
     fandom_colors: dict[str, str] = field(default_factory=dict)
     saturation_min: float = 0.7
     saturation_max: float = 1.0
-    lightness_top: float = 0.35
-    lightness_bottom: float = 0.2
+    lightness_top: float = 0.26
+    lightness_bottom: float = 0.11
     seed_words: int = 2
     image_format: str = "png"
     jpeg_quality: int = 90
@@ -213,8 +225,14 @@ class CoverSettings:
     author_y: float = 0.82
     header_y: float = 0.07
     footer_y: float = 0.93
+    block_gap: float = 0.035
     uppercase_title: bool = False
-    text_shadow: bool = False
+    text_shadow: bool = True
+    text_stroke_px: int = 3
+    text_stroke_color: str = "#000000"
+    scrim: float = 0.22
+    auto_contrast: bool = True
+    contrast_min_ratio: float = 3.5
     border_px: int = 0
     border_color: str = "#ffffff40"
     cover_href: str = "media/cover.png"
@@ -248,6 +266,40 @@ class CoverSettings:
             settings.image_format = "jpeg"
         elif fmt != "png":
             settings.image_format = "png"
+        settings.title_size = max(int(settings.title_size), 8)
+        settings.summary_size = max(int(settings.summary_size), 8)
+        settings.author_size = max(int(settings.author_size), 8)
+        settings.header_size = max(int(settings.header_size), 8)
+        settings.footer_size = max(int(settings.footer_size), 8)
+        settings.min_title_size = max(8, min(int(settings.min_title_size), settings.title_size))
+        settings.min_summary_size = max(
+            8, min(int(settings.min_summary_size), settings.summary_size)
+        )
+        settings.min_author_size = max(8, min(int(settings.min_author_size), settings.author_size))
+        settings.title_max_lines = max(int(settings.title_max_lines), 0)
+        settings.summary_max_lines = max(int(settings.summary_max_lines), 0)
+        settings.author_max_lines = max(int(settings.author_max_lines), 1)
+        settings.header_max_lines = max(int(settings.header_max_lines), 1)
+        settings.title_leading = min(max(float(settings.title_leading), 0.8), 2.0)
+        settings.summary_leading = min(max(float(settings.summary_leading), 0.8), 2.0)
+        settings.author_leading = min(max(float(settings.author_leading), 0.8), 2.0)
+        settings.header_leading = min(max(float(settings.header_leading), 0.8), 2.0)
+        settings.footer_leading = min(max(float(settings.footer_leading), 0.8), 2.0)
+        settings.padding = min(max(float(settings.padding), 0.04), 0.3)
+        settings.title_y = min(max(float(settings.title_y), 0.0), 1.0)
+        settings.author_y = min(max(float(settings.author_y), 0.0), 1.0)
+        settings.header_y = min(max(float(settings.header_y), 0.0), 1.0)
+        settings.footer_y = min(max(float(settings.footer_y), 0.0), 1.0)
+        settings.block_gap = min(max(float(settings.block_gap), 0.0), 0.2)
+        settings.scrim = min(max(float(settings.scrim), 0.0), 0.8)
+        settings.text_stroke_px = max(int(settings.text_stroke_px), 0)
+        settings.contrast_min_ratio = min(max(float(settings.contrast_min_ratio), 1.0), 8.0)
+        settings.lightness_top = min(max(float(settings.lightness_top), 0.04), 0.7)
+        settings.lightness_bottom = min(max(float(settings.lightness_bottom), 0.02), 0.7)
+        settings.auto_fit_title = bool(settings.auto_fit_title)
+        settings.auto_fit_summary = bool(settings.auto_fit_summary)
+        settings.auto_contrast = bool(settings.auto_contrast)
+        settings.text_shadow = bool(settings.text_shadow)
         return settings
 
     def to_dict(self) -> dict[str, Any]:
@@ -258,13 +310,65 @@ class CoverSettings:
 
 
 @dataclass
+class RateLimitSettings:
+    """Host-wide AO3 limiter backoff and scaling (nested under ``rate:`` in config.yaml)."""
+
+    tag_soft_interval: float = 1.5
+    tag_max_interval: float = 8.0
+    max_interval: float = 60.0
+    jitter: float = 0.08
+    retry_after_tag_multiplier: float = 2.0
+    retry_after_tag_floor: float = 2.0
+    default_retry_after: float = 2.0
+    pressure_base_multiplier: float = 1.2
+    pressure_tag_multiplier: float = 1.5
+    pressure_floor: float = 1.5
+    success_streak: int = 8
+    success_speed_factor: float = 0.85
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> RateLimitSettings:
+        data = data or {}
+        known = {item.name for item in fields(cls)}
+        kwargs: dict[str, Any] = {}
+        for key, value in data.items():
+            if key not in known:
+                continue
+            kwargs[key] = value
+        settings = cls(**kwargs)
+        settings.tag_soft_interval = max(float(settings.tag_soft_interval), 0.1)
+        settings.tag_max_interval = max(float(settings.tag_max_interval), 0.1)
+        settings.max_interval = max(float(settings.max_interval), 0.1)
+        settings.jitter = min(max(float(settings.jitter), 0.0), 0.5)
+        settings.retry_after_tag_multiplier = max(
+            float(settings.retry_after_tag_multiplier), 1.0
+        )
+        settings.retry_after_tag_floor = max(float(settings.retry_after_tag_floor), 0.1)
+        settings.default_retry_after = max(float(settings.default_retry_after), 0.1)
+        settings.pressure_base_multiplier = max(
+            float(settings.pressure_base_multiplier), 1.0
+        )
+        settings.pressure_tag_multiplier = max(
+            float(settings.pressure_tag_multiplier), 1.0
+        )
+        settings.pressure_floor = max(float(settings.pressure_floor), 0.1)
+        settings.success_streak = max(int(settings.success_streak), 1)
+        settings.success_speed_factor = min(
+            max(float(settings.success_speed_factor), 0.1), 1.0
+        )
+        return settings
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class UserSettings:
     """Serializable user preferences (config.yaml)."""
 
     version: int = 1
-    request_delay: float = DEFAULT_REQUEST_DELAY
     resolve_canonical: bool = True
-    drop_unmarked: bool = False
+    drop_unmarked: bool = True
     drop_errors: bool = False
     # Relative to the config home, or absolute.
     active_rules: str = f"{RULES_DIRNAME}/{DEFAULT_RULES_FILENAME}"
@@ -273,8 +377,11 @@ class UserSettings:
     tag_cache_ttl_days: float = 90.0
     follow_canonical: bool = True
     include_metatags: bool = True
+    # Minimum seconds between AO3 work/search/download requests (host-wide floor).
+    min_request_interval: float = 1.5
     # Extra seconds the background tag warmer waits after each fetch.
     tag_warm_interval: float = 10.0
+    rate: RateLimitSettings = field(default_factory=RateLimitSettings)
     # On recompute, collections added by hand on a book become a pin rule.
     collections_remember_manual_adds: bool = True
     # Optional UI / scrape defaults
@@ -293,6 +400,13 @@ class UserSettings:
         else:
             kwargs["cover"] = CoverSettings.from_dict(
                 cover if isinstance(cover, dict) else None
+            )
+        rate = kwargs.get("rate")
+        if isinstance(rate, RateLimitSettings):
+            kwargs["rate"] = rate
+        else:
+            kwargs["rate"] = RateLimitSettings.from_dict(
+                rate if isinstance(rate, dict) else None
             )
         return cls(**kwargs)
 
@@ -490,21 +604,15 @@ def _read_settings(path: Path) -> UserSettings:
     return UserSettings.from_dict(data)
 
 
-def default_request_delay() -> float:
-    """Work-page / search / download interval from ``config.yaml``."""
-    return float(load_user_config().settings.request_delay)
-
-
-def resolve_request_delay(requested: float | None) -> float:
-    """``None`` means use :func:`default_request_delay`; ``0`` is kept as-is."""
-    if requested is not None:
-        return float(requested)
-    return default_request_delay()
-
-
 def load_cover_settings(home: Path | None = None) -> CoverSettings:
     """Cover style from ``config.yaml`` (defaults if unset)."""
     return load_user_config(home=home).settings.cover
+
+
+def load_rate_limit_settings(home: Path | None = None) -> tuple[float, RateLimitSettings]:
+    """Minimum scrape interval and backoff/scaling knobs from ``config.yaml``."""
+    settings = load_user_config(home=home).settings
+    return float(settings.min_request_interval), settings.rate
 
 
 def merge_cover_settings(

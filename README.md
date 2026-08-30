@@ -17,14 +17,16 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 - Search AO3 from Calibre: paste a works-search URL or an AO3 series URL, or fill the form
 - **Search similar…** from selected library books (pick fandoms, ships, characters, extra tags)
 - Import `results.jsonl` or `ao3-import.zip` produced outside Calibre
+- **Process library…** — simplify tags, fill Series, import series-mates, download missing EPUBs, generate covers, and/or recompute collections for the whole open library without selecting every row; shows a local work estimate (uncached tags, missing EPUBs, incomplete series) before starting ([demo](demos/README.md#process-library))
 - Works appear in the library as they scrape; native EPUBs attach as each file finishes
 - Optional: download native AO3 EPUBs, simplify tags on import, update existing books, always import the rest of each series
 
 **Selected books**
 
 - **Complete selected** — fill Series, import missing series parts, download missing EPUBs, simplify tags, recompute collections
+- **Fill from AO3** — identify selected books from a work URL, the EPUB, or title + author (picker when several works match), then fill missing metadata and EPUBs ([demo](demos/README.md))
 - Download missing native EPUBs (existing files are never replaced)
-- Generate covers (title, author, word count, quality score on a fandom-coloured field)
+- Generate covers (title, author, word count, quality score on a dark fandom-coloured field; long titles shrink to fit)
 - Import the rest of an AO3 series, or fill Calibre Series on books already in the library
 - Simplify tags, fandoms, and relationships (AO3 synonym collapse + keep/rename/drop rules; fandom metatags)
 - Edit, recompute, or add collections (shared rules plus per-work always/never pins)
@@ -45,17 +47,27 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 
 **Library layout**
 
-On first import into an empty library (or via plugin settings), creates and fills fanfic columns: **Fandom**, **Relationships**, **Collections**, **Original Tags**, **word count**, plus Calibre’s built-in **Series**. Identifiers store the work URL, AO3 work id, and first series id.
+On first import into an empty library (or via plugin settings), creates and fills fanfic columns: **Fandom**, **Relationships**, **Collections**, **Original Tags**, **Summary**, **word count**, plus Calibre’s built-in **Series**. Identifiers store the work URL, AO3 work id, and first series id. AO3 summaries are also written to Calibre **Comments** when Comments is empty (FanFicFare compatibility).
 
 ## Install
 
-Download **fanfic-organizer.zip** from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`.
+**One-line install** (downloads Calibre when it is not already installed, then grabs the latest GitHub release, installs the plugin, and starts Calibre if it is not already running):
 
-1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose `fanfic-organizer.zip`.
+```bash
+curl -fsSL https://raw.githubusercontent.com/BlakeASmith/fanfic-organizer/main/scripts/install.sh | bash
+```
+
+Linux installs Calibre without `sudo` into `~/.local/opt/calibre`. macOS needs [Homebrew](https://brew.sh/); Windows needs [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/). Pass `--no-install-calibre` to skip that step if you manage Calibre yourself.
+
+If Calibre is already open, quit it completely and reopen so the plugin loads.
+
+**Manual install:** download the latest **standard** release from [Releases](https://github.com/BlakeASmith/fanfic-organizer/releases) (`FanFicOrganizer-X.Y.Z.zip`). That zip is the whole plugin: UI, ao3kit, and Python libraries. You do not need a git checkout or `pip install`. GitHub **pre-releases** are automated preview builds for testers; skip them unless you want an unreleased main snapshot.
+
+1. In Calibre: **Preferences → Plugins → Load plugin from file** → choose the zip.
 2. Restart Calibre.
 3. Open a **new** fanfic library (or one you are happy to write). Plugin settings → optional AO3 login.
 
-Search, import, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not in that library.
+Search, import, process library, complete, and tag purge write whichever library is currently open. Config, cache, jobs, and the AO3 session live under XDG (`~/.config/fanfic-organizer`, `~/.cache/fanfic-organizer`, `~/.local/state/fanfic-organizer`), not in that library.
 
 Checkout development (install from this repo, cut a release) is in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
@@ -80,3 +92,11 @@ Runtime libraries (Beautiful Soup, lxml, requests, PyYAML, Pillow, and others) a
 - **[CHANGELOG.md](CHANGELOG.md)** — user-facing history; [Unreleased] plus the pre-1.0 disclaimer become the next GitHub release notes
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — clone, pytest, plugin install, changelog/release rules
 - **[AGENTS.md](AGENTS.md)** — layout and plugin behavior
+
+## Support
+
+Fanfic Organizer is maintained part-time. If it saves you time, tips help fund more work on it.
+
+[![Buy Me A Coffee](https://img.buymeacoffee.com/button-api/?text=I%20can%20do%20more%20of%20this%20with%20%24&emoji=&slug=BlakeSmith&button_colour=BD5FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00)](https://www.buymeacoffee.com/BlakeSmith)
+
+[![Buy Me a Coffee QR code](docs/buy-me-a-coffee-qr.png)](https://www.buymeacoffee.com/BlakeSmith)

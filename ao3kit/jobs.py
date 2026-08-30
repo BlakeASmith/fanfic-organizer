@@ -791,8 +791,11 @@ def _plugin_ingest_state(spec: JobSpec, exit_code: int | None) -> str:
     if exit_code == 130:
         return "cancelled"
     if exit_code not in (0, None):
-        # Attach whatever EPUBs landed before the download step failed.
+        plugin = spec.plugin or {}
+        # Attach whatever EPUBs or metadata landed before the step failed.
         if action == "attach_epubs":
+            return "pending"
+        if action == "import_records" and plugin.get("incremental_import"):
             return "pending"
         return "skipped"
     return "pending"
@@ -967,7 +970,8 @@ def start_job(
     if error:
         return live_job_status(job_dir), error
     status = live_job_status(job_dir)
-    if not status.running:
+    finished = status.exit_code is not None or status.finished_at is not None
+    if not status.running and not finished:
         status.running = True
         status.pid = pid
         status.started_at = status.started_at or utc_now()

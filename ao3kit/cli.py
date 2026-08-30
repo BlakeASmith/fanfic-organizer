@@ -4,11 +4,13 @@ Usage:
   python -m ao3kit scrape ...
   python -m ao3kit tags ...
   python -m ao3kit download ...
+  python -m ao3kit identify ...
   python -m ao3kit cover ...
   python -m ao3kit job ...
   python -m ao3kit config ...
   python -m ao3kit login    # test AO3 username/password
   python -m ao3kit rate     # limiter snapshot + AO3 request log
+  python -m ao3kit library  # estimate unmatched tags / missing EPUBs from JSONL
 """
 
 from __future__ import annotations
@@ -32,9 +34,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser(
         "tags",
-        help="Tag profiles, search, resolve, tag sets, graph, background cache",
+        help="Tag profiles, search, resolve, suggest, tag sets, graph, background cache",
     )
     sub.add_parser("download", help="Download EPUBs from JSONL results")
+    sub.add_parser(
+        "identify",
+        help="Identify AO3 works from URLs, EPUBs, or title + author",
+    )
     sub.add_parser(
         "cover",
         help="Generate AO3-style covers and stamp them into EPUBs",
@@ -48,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "rate",
         help="Host-wide AO3 rate-limit snapshot and collected request log",
+    )
+    sub.add_parser(
+        "library",
+        help="Whole-library helpers (estimate unmatched tags / missing EPUBs from JSONL)",
+    )
+    sub.add_parser(
+        "koreader",
+        help="KOReader collections index helpers",
     )
 
     if not argv:
@@ -76,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return epubs_main(rest)
 
+    if command == "identify":
+        from ao3kit.identify import main as identify_main
+
+        return identify_main(rest)
+
     if command == "cover":
         from ao3kit.covers import main as cover_main
 
@@ -100,6 +119,16 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.rate import main as rate_main
 
         return rate_main(rest)
+
+    if command == "library":
+        from ao3kit.library import main as library_main
+
+        return library_main(rest)
+
+    if command == "koreader":
+        from ao3kit.koreader.cli import main as koreader_main
+
+        return koreader_main(rest)
 
     parser.error(f"Unknown command: {command}")
     return 2

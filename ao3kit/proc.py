@@ -187,6 +187,12 @@ def spawn_daemon(
         if live is not None:
             return live, None
         if proc.poll() is not None:
+            if proc.returncode == 0:
+                # A short job can finish (or a daemon can idle-exit) cleanly
+                # before its pid file is observed live. A successful exit is
+                # not a startup failure — callers read status.json for the
+                # outcome, so report the (now-finished) pid without an error.
+                return proc.pid, None
             return None, (
                 f"daemon exited immediately (code {proc.returncode}). "
                 f"See {log_path}"

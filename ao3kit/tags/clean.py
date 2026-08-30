@@ -215,11 +215,6 @@ def format_remapping_summary(records: list[dict[str, Any]]) -> str:
     )
 
 
-def looks_like_relationship(name: str) -> bool:
-    """AO3 romantic ships use ``/``. Platonic ``&`` is left to AO3 category."""
-    return "/" in (name or "")
-
-
 def collect_unique_tag_names(
     records: list[dict[str, Any]],
     *,
@@ -354,7 +349,9 @@ def enrich_record(
             rel_extra = engine.apply(extra_names, include_metatags=False)
         rel_items = list(rel_from_tags)
         if rel_extra is not None:
-            rel_items.extend(rel_extra.tags)
+            rel_items.extend(
+                item for item in rel_extra.tags if _is_relationship_item(item)
+            )
         rel_originals = [item.original for item in rel_from_tags] + extra_names
         if rel_items or raw_rels or rel_from_tags:
             rel_result = _ruled_result_from_items(
@@ -470,8 +467,8 @@ def enrich_records(
     resolver: TagResolver | None = None,
     include_fandoms: bool = True,
     include_relationships: bool = True,
+    drop_unmarked: bool | None = None,
     on_status: StatusCallback | None = None,
-    delay: float | None = None,
 ) -> list[dict[str, Any]]:
     """Run tag/fandom/relationship simplification using user rules + AO3 resolver.
 
@@ -486,16 +483,16 @@ def enrich_records(
         rules.drop_unmarked = user_cfg.settings.drop_unmarked
         rules.drop_errors = user_cfg.settings.drop_errors
         rules.include_metatags = user_cfg.settings.include_metatags
+    elif drop_unmarked is None:
+        rules.drop_unmarked = user_cfg.settings.drop_unmarked
+    if drop_unmarked is not None:
+        rules.drop_unmarked = bool(drop_unmarked)
 
     if resolver is None:
-        request_delay = (
-            delay if delay is not None else user_cfg.settings.request_delay
-        )
         from ao3kit.tags.cache import default_tag_cache_path
 
         use_cache = user_cfg.settings.tag_cache_enabled
         resolver = TagResolver(
-            delay=request_delay,
             on_status=on_status,
             cache_path=default_tag_cache_path() if use_cache else None,
             follow_canonical=user_cfg.settings.follow_canonical,

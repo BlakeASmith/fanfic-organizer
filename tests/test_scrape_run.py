@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
-from ao3kit.scrape import SORT_OPTIONS, SearchCriteria
+from ao3kit.scrape import SORT_OPTIONS, SearchCriteria, scrape_record_failed as lib_scrape_record_failed
 
 
 PLUGIN_SCRAPE_RUN = Path(__file__).resolve().parents[1] / "calibre-plugin" / "scrape_run.py"
@@ -20,6 +21,14 @@ def load_scrape_run():
 def test_sort_options_match_library():
     mod = load_scrape_run()
     assert list(mod.SORT_OPTIONS) == list(SORT_OPTIONS)
+
+
+def test_scrape_record_failed_matches_library():
+    mod = load_scrape_run()
+    ok = {"work_id": "1", "title": "T"}
+    bad = {"work_id": "2", "scrape_error": "timeout"}
+    assert mod.scrape_record_failed(ok) == lib_scrape_record_failed(ok)
+    assert mod.scrape_record_failed(bad) == lib_scrape_record_failed(bad)
 
 
 def test_criteria_from_options_round_trips_to_search_criteria():
@@ -147,6 +156,21 @@ def test_build_download_argv_skips_zip_and_auto_simplify():
     assert "--delay" not in argv
 
 
+def test_build_download_argv_cover_flag():
+    mod = load_scrape_run()
+    with_cover = mod.build_download_argv(
+        "/tmp/results.jsonl", "/tmp/bundle", {"cover": True}
+    )
+    without = mod.build_download_argv(
+        "/tmp/results.jsonl", "/tmp/bundle", {"cover": False}
+    )
+    default = mod.build_download_argv("/tmp/results.jsonl", "/tmp/bundle", {})
+    assert "--cover" in with_cover
+    assert "--no-cover" in without
+    assert "--cover" not in default
+    assert "--no-cover" not in default
+
+
 def test_build_cover_argv():
     mod = load_scrape_run()
     argv = mod.build_cover_argv(
@@ -189,6 +213,22 @@ def test_prepare_download_command_writes_jsonl(tmp_path: Path):
     assert "--no-simplify" in argv
     assert "--delay" not in argv
     assert argv[argv.index("--username") + 1] == "emily"
+
+
+def test_write_criteria_file_includes_list_path(tmp_path):
+    mod = load_scrape_run()
+    path = tmp_path / "criteria.json"
+    mod.write_criteria_file(
+        path,
+        {
+            "list_path": "/collections/anonymous/works",
+            "tag_id": "",
+            "sort_column": "hits",
+        },
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["list_path"] == "/collections/anonymous/works"
+    assert payload["sort_column"] == "hits"
 
 
 def test_scrape_search_is_usable():
@@ -288,6 +328,18 @@ def test_build_enrich_argv_includes_login():
     assert argv[argv.index("--password") + 1] == "secret"
     assert "--delay" not in argv
     assert "--verbose" in argv
+    assert "--drop-unmarked" in argv
+
+
+def test_build_enrich_argv_can_keep_noncanonical():
+    mod = load_scrape_run()
+    argv = mod.build_enrich_argv(
+        "/tmp/in.jsonl",
+        "/tmp/out.jsonl",
+        {"drop_unmarked": False},
+    )
+    assert "--no-drop-unmarked" in argv
+    assert "--drop-unmarked" not in argv
 
 
 def test_build_collections_argv_skips_login():

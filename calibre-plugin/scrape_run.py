@@ -25,6 +25,14 @@ SORT_OPTIONS = [
 ]
 
 
+def scrape_record_failed(record: dict[str, Any]) -> bool:
+    """True when a ``--works-from`` row did not fetch usable AO3 metadata.
+
+    Keep in sync with ``ao3kit.scrape.scrape_record_failed``.
+    """
+    return bool(str(record.get('scrape_error') or '').strip())
+
+
 def parse_id_list(value: str | None) -> list[int]:
     if not value or not str(value).strip():
         return []
@@ -78,7 +86,7 @@ def ids_to_csv(values: Any) -> str:
 def criteria_from_options(options: dict[str, Any]) -> dict[str, Any]:
     """JSON object accepted by ``SearchCriteria.from_dict`` / ``--criteria-file``."""
     language = _blank_none(options.get('language_id'))
-    return {
+    payload = {
         'tag_id': _blank_none(options.get('tag_id')),
         'sort_column': _blank_none(options.get('sort_column')) or 'kudos_count',
         'complete': complete_to_bool(options.get('complete')),
@@ -96,6 +104,10 @@ def criteria_from_options(options: dict[str, Any]) -> dict[str, Any]:
         'freeform_ids': parse_id_list(options.get('freeform_ids')),
         'character_ids': parse_id_list(options.get('character_ids')),
     }
+    list_path = _blank_none(options.get('list_path'))
+    if list_path:
+        payload['list_path'] = list_path
+    return payload
 
 
 def scrape_search_is_usable(options: dict[str, Any]) -> bool:
@@ -136,6 +148,17 @@ def _append_optional(argv: list[str], flag: str, value: Any) -> None:
     argv.extend([flag, text])
 
 
+def _append_cover_flag(argv: list[str], options: dict[str, Any] | None) -> None:
+    """Pass ``--cover`` / ``--no-cover`` when the caller set an explicit value."""
+    if not options:
+        return
+    value = options.get('cover')
+    if value is True:
+        argv.append('--cover')
+    elif value is False:
+        argv.append('--no-cover')
+
+
 def merge_plugin_settings(
     options: dict[str, Any],
     settings: dict[str, Any] | None = None,
@@ -143,9 +166,8 @@ def merge_plugin_settings(
     """Fill login from plugin settings when the search form omitted it.
 
     ``settings`` keys: ``ao3_username``, ``ao3_password``.
-    Explicit values on ``options`` win. Request delay is left to the
-    host-wide rate limiter (do not pass ``--delay``). Pacing is config
-    ``request_delay`` (1.5s); tag profiles stay on the faster adaptive lane.
+    Explicit values on ``options`` win. Request pacing is handled entirely by the
+    host-wide rate limiter (do not pass ``--delay``).
     """
     settings = settings or {}
     merged = dict(options)
@@ -155,6 +177,8 @@ def merge_plugin_settings(
         merged['password'] = str(settings.get('ao3_password') or '')
     if merged.get('include_series') is None:
         merged['include_series'] = bool(settings.get('include_series'))
+    if merged.get('drop_unmarked') is None:
+        merged['drop_unmarked'] = bool(settings.get('drop_unmarked', True))
     return merged
 
 
@@ -263,6 +287,7 @@ def prepare_series_from_command(
         argv.extend(['--epub-dir', str(dest)])
         argv.append('--no-zip')
         argv.append('--no-simplify')
+        _append_cover_flag(argv, options)
     _append_credentials(argv, options)
     return argv, output, dest
 
@@ -289,6 +314,72 @@ def prepare_fill_series_command(
     ]
     _append_credentials(argv, options)
     return argv, output
+
+
+def build_identify_argv(
+    hints: str,
+    output: str,
+    options: dict[str, Any],
+    *,
+    bundle: str | None = None,
+    search: bool = True,
+) -> list[str]:
+    argv = ['identify', '--from', hints, '-o', output, '--verbose']
+    if bundle:
+        argv.extend(['--bundle', bundle])
+    if not search:
+        argv.append('--no-search')
+    _append_credentials(argv, options)
+    return argv
+
+
+def prepare_identify_command(
+    records: list[dict[str, Any]],
+    tmp: str | Path,
+    options: dict[str, Any] | None = None,
+    *,
+    bundle: str | Path | None = None,
+    search: bool = True,
+) -> tuple[list[str], Path]:
+    """Write hint JSONL and return ``(argv, output_jsonl)`` for identify."""
+    options = options or {}
+    dest = Path(tmp)
+    dest.mkdir(parents=True, exist_ok=True)
+    hints = dest / 'hints.jsonl'
+    output = dest / 'identified.jsonl'
+    write_records_jsonl(hints, records)
+    argv = build_identify_argv(
+        str(hints),
+        str(output),
+        options,
+        bundle=str(bundle) if bundle else None,
+        search=search,
+    )
+    return argv, output
+
+
+def prepare_works_from_command(
+    records: list[dict[str, Any]],
+    tmp: str | Path,
+    options: dict[str, Any] | None = None,
+) -> tuple[list[str], Path, Path]:
+    """Write seed JSONL and return ``(argv, output_jsonl, dest)`` for work-page fetch."""
+    options = options or {}
+    dest = Path(tmp) / 'bundle'
+    dest.mkdir(parents=True, exist_ok=True)
+    seeds = dest / 'seeds.jsonl'
+    output = dest / 'results.jsonl'
+    write_records_jsonl(seeds, records)
+    argv = ['scrape', '--works-from', str(seeds), '-o', str(output), '--verbose']
+    if options.get('include_series'):
+        argv.append('--include-series')
+    if options.get('download_epubs'):
+        argv.append('--download')
+        argv.extend(['--epub-dir', str(dest)])
+        argv.append('--no-zip')
+        argv.append('--no-simplify')
+    _append_credentials(argv, options)
+    return argv, output, dest
 
 
 def prepare_download_command(
@@ -320,6 +411,7 @@ def build_download_argv(
         '--no-zip',
         '--no-simplify',
     ]
+    _append_cover_flag(argv, options)
     _append_credentials(argv, options)
     return argv
 
@@ -359,6 +451,10 @@ def build_enrich_argv(
         jsonl_out,
         '--verbose',
     ]
+    if options.get('drop_unmarked', True):
+        argv.append('--drop-unmarked')
+    else:
+        argv.append('--no-drop-unmarked')
     _append_credentials(argv, options)
     return argv
 

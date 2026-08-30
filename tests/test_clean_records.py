@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from ao3kit.tags.clean import collect_unique_tag_names, enrich_record, enrich_records
-from ao3kit.tags.metadata import ResolvedTag, TagResolver
+from ao3kit.tags.metadata import ResolvedTag, TagProfile, TagResolver
 from ao3kit.tags.rules import CollectRule, KeepSeparateRule, TagRulesConfig, TagRulesEngine
 
 
 def _resolver_with(*resolved: ResolvedTag) -> TagResolver:
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
 
     def fake_resolve_one(name: str) -> ResolvedTag:
@@ -222,11 +222,51 @@ def test_enrich_records_with_injected_resolver(tmp_path, monkeypatch):
     assert out[0]["cleaned"]["simplified"] == ["Kissing"]
 
 
+def test_enrich_records_drop_unmarked_override(tmp_path, monkeypatch):
+    from ao3kit import config as config_mod
+
+    monkeypatch.setattr(
+        config_mod,
+        "default_home",
+        lambda project_root=None: tmp_path / ".ao3kit",
+    )
+    cfg = config_mod.init_user_config(home=tmp_path / ".ao3kit")
+    cfg.update_settings(drop_unmarked=False)
+    cfg.write_rule(
+        "default",
+        "from ao3kit.tags.rules import TagRulesConfig\n"
+        "RULES = TagRulesConfig(resolve_canonical=True, rules=[])\n",
+    )
+
+    resolver = TagResolver(
+        session=object(), owns_session=False, cache_path=None, persist=False
+    )
+    resolver.warm(
+        TagProfile(
+            name="custom freeform",
+            url="https://archiveofourown.org/tags/custom%20freeform",
+            category="Additional Tags",
+            canonical=False,
+            filterable=True,
+            description="",
+        )
+    )
+
+    out = enrich_records(
+        [{"work_id": "9", "tags": ["custom freeform"]}],
+        resolver=resolver,
+        include_fandoms=False,
+        drop_unmarked=True,
+    )
+    assert out[0]["cleaned"]["simplified"] == []
+    assert "custom freeform" in out[0]["cleaned"]["dropped"]
+
+
 def test_enrich_record_appends_fandom_metatags():
     from ao3kit.tags.metadata import TagProfile, TagRef
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         TagProfile(
@@ -333,11 +373,48 @@ def test_enrich_record_splits_relationship_tags_and_simplifies_column():
     assert extra[0]["mapped"] == "Frank Langdon/Mel King"
 
 
-def test_looks_like_relationship():
-    from ao3kit.tags.clean import looks_like_relationship
-
-    assert looks_like_relationship("Frank Langdon/Mel King")
-    assert not looks_like_relationship("Hurt & Comfort")
+def test_enrich_record_drops_non_relationship_tags_from_relationships_column():
+    resolver = _resolver_with(
+        ResolvedTag(
+            original="James 'Bucky' Barnes/Steve Rogers",
+            resolved="James 'Bucky' Barnes/Steve Rogers",
+            status="canonical",
+            changed=False,
+            category="Relationship",
+        ),
+        ResolvedTag(
+            original="Hurt/Comfort",
+            resolved="Hurt/Comfort",
+            status="canonical",
+            changed=False,
+            category="Additional Tags",
+        ),
+        ResolvedTag(
+            original="Angst",
+            resolved="Angst",
+            status="canonical",
+            changed=False,
+            category="Additional Tags",
+        ),
+    )
+    engine = TagRulesEngine(TagRulesConfig(resolve_canonical=True), resolver)
+    enriched = enrich_record(
+        {
+            "work_id": "1",
+            "title": "T",
+            "tags": ["Hurt/Comfort", "Angst"],
+            "relationships": [
+                "James 'Bucky' Barnes/Steve Rogers",
+                "Hurt/Comfort",
+                "Angst",
+            ],
+        },
+        engine,
+        include_fandoms=False,
+    )
+    cleaned = enriched["cleaned"]
+    assert cleaned["simplified"] == ["Hurt/Comfort", "Angst"]
+    assert cleaned["relationships"] == ["James 'Bucky' Barnes/Steve Rogers"]
 
 
 def test_collect_remapping_lines_includes_relationship_column():
@@ -403,7 +480,7 @@ def test_enrich_record_does_not_append_character_metatags_to_tags():
     from ao3kit.tags.metadata import TagProfile, TagRef
 
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     resolver.warm(
         TagProfile(

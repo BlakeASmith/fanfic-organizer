@@ -31,6 +31,12 @@ from calibre_plugins.fanfic_organizer.importer import (
     write_collections_field,
     write_layout_fields,
 )
+from calibre_plugins.fanfic_organizer.library_job import (
+    LibraryBook,
+    LibraryJobOptions,
+    select_library_job_books,
+)
+from calibre_plugins.fanfic_organizer.tag_purge import field_values
 
 
 _TAG_RE = re.compile(r'<[^>]+>')
@@ -98,6 +104,7 @@ def record_from_calibre_book(
     authors: list[str] = []
     identifiers: dict[str, Any] = {}
     tags: list[str] = []
+    comments = ''
     mi = None
     try:
         mi = db.get_metadata(book_id, index_is_id=True)
@@ -105,6 +112,7 @@ def record_from_calibre_book(
         authors = list(mi.authors or [])
         identifiers = mi.get_identifiers() or {}
         tags = list(mi.tags or [])
+        comments = str(getattr(mi, 'comments', None) or '')
     except Exception:
         mi = None
 
@@ -114,6 +122,7 @@ def record_from_calibre_book(
     characters = as_name_list(get_custom_value(db, book_id, 'characters'))
     original_tags = as_name_list(get_custom_value(db, book_id, 'originaltags'))
     wordcount = get_custom_value(db, book_id, 'wordcount')
+    summary_value = get_custom_value(db, book_id, 'summary')
     if isinstance(wordcount, str):
         try:
             wordcount = int(wordcount.replace(',', ''))
@@ -146,6 +155,8 @@ def record_from_calibre_book(
         relationships=relationships,
         characters=characters,
         wordcount=wordcount if isinstance(wordcount, int) else None,
+        comments=comments or None,
+        summary=str(summary_value or '').strip() or None,
         raw_record=raw,
         is_complete=is_complete,
         series_name=series_name,
@@ -350,6 +361,117 @@ def load_selected_for_epub_download(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return ``(ready, skipped)`` for selected books missing a native EPUB."""
     return plan_missing_epub_downloads(snapshot_selected_for_epub(db, book_ids))
+
+
+REASON_NO_IDENTIFY_HINT = 'no AO3 URL, EPUB, or title to identify from'
+
+
+def _usable_identify_title(title: Any) -> str:
+    text = str(title or '').strip()
+    if not text or text.casefold() in {'unknown', 'untitled', 'no title'}:
+        return ''
+    return text
+
+
+def _usable_identify_authors(authors: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(authors, (list, tuple, set)):
+        names = [str(item).strip() for item in authors if str(item).strip()]
+    elif authors:
+        names = [str(authors).strip()]
+    skip = {'unknown', 'unknown author', 'anonymous', 'anon'}
+    return [name for name in names if name.casefold() not in skip]
+
+
+def load_selected_for_identify(
+    db,
+    book_ids: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(ready, skipped)`` for Fill from AO3.
+
+    A book is usable if it has an AO3 id/URL, comments/identifiers that
+    contain one, an EPUB to scan, or a real title (author optional).
+    """
+    from calibre_plugins.fanfic_organizer.cleaned import work_id_from_url
+
+    ready: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for book_id in book_ids:
+        title = '?'
+        comments = ''
+        identifiers: dict[str, Any] = {}
+        mi = None
+        try:
+            mi = db.get_metadata(book_id, index_is_id=True)
+            title = mi.title or title
+            comments = str(getattr(mi, 'comments', None) or '')
+            identifiers = mi.get_identifiers() or {}
+        except Exception:
+            mi = None
+        record = record_from_calibre_book(db, book_id, require_work_id=False)
+        if record is None:
+            record = {'title': title}
+            authors = list(getattr(mi, 'authors', None) or []) if mi is not None else []
+            if authors:
+                record['authors'] = authors
+                record['author'] = authors[0]
+        if not record.get('title'):
+            record['title'] = title
+        record['book_id'] = book_id
+        record['calibre_book_id'] = book_id
+        if comments:
+            record['comments'] = comments
+        if identifiers:
+            record['identifiers'] = dict(identifiers)
+        has_epub = book_has_epub(db, book_id)
+        work_id = str(record.get('work_id') or '').strip()
+        url = str(record.get('url') or '').strip()
+        found = bool(
+            work_id
+            or url
+            or work_id_from_url(comments)
+            or work_id_from_url(identifiers)
+            or has_epub
+            or _usable_identify_title(record.get('title'))
+        )
+        if not found:
+            skipped.append(
+                {
+                    'book_id': book_id,
+                    'title': title,
+                    'reason': REASON_NO_IDENTIFY_HINT,
+                }
+            )
+            continue
+        ready.append(
+            {
+                'book_id': book_id,
+                'record': record,
+                'title': title,
+                'has_epub': has_epub,
+            }
+        )
+    return ready, skipped
+
+
+def stamp_ao3_identifiers(db, book_id: int, work_id: str, url: str = '') -> bool:
+    """Write ``ao3`` / ``url`` identifiers so later import can match this book."""
+    work_id = str(work_id or '').strip()
+    if not work_id:
+        return False
+    try:
+        mi = db.get_metadata(book_id, index_is_id=True)
+    except Exception:
+        return False
+    identifiers = dict(mi.get_identifiers() or {})
+    identifiers['ao3'] = work_id
+    identifiers['url'] = str(url or '').strip() or f'https://archiveofourown.org/works/{work_id}'
+    mi.set_identifiers(identifiers)
+    try:
+        db.set_metadata(book_id, mi, force_changes=True)
+    except TypeError:
+        db.set_metadata(book_id, mi)
+    return True
 
 
 def load_selected_similar_records(
@@ -696,3 +818,238 @@ def apply_cover_records(
             }
         )
     return outcomes
+
+
+def _all_field_for(api, lookup: str, ids: list[int]) -> dict[int, Any]:
+    getter = getattr(api, 'all_field_for', None)
+    if getter is None:
+        return {}
+    try:
+        return getter(lookup, ids) or {}
+    except Exception:
+        return {}
+
+
+def _identifiers_map(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, item in value.items():
+        text = str(item or '').strip()
+        if text:
+            out[str(key)] = text
+    return out
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ''):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ''):
+        return None
+    if isinstance(value, str):
+        text = value.replace(',', '').strip()
+        if not text:
+            return None
+        value = text
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _book_has_epub_from_maps(
+    book_id: int,
+    *,
+    db,
+    api,
+    formats_map: dict[int, Any],
+) -> bool:
+    if book_id in formats_map:
+        return formats_include_epub(formats_map.get(book_id))
+    formats_fn = getattr(api, 'formats', None) if api is not None else None
+    if callable(formats_fn):
+        try:
+            return formats_include_epub(formats_fn(book_id, verify_formats=False))
+        except TypeError:
+            try:
+                return formats_include_epub(formats_fn(book_id))
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return book_has_epub(db, book_id)
+
+
+def load_library_books(db, book_ids: list[int]) -> list[LibraryBook]:
+    """Bulk-read library fields for Process library estimates (no get_metadata)."""
+    ids = [int(book_id) for book_id in book_ids]
+    api = getattr(db, 'new_api', None)
+    if api is None or not hasattr(api, 'all_field_for'):
+        books: list[LibraryBook] = []
+        for book_id in ids:
+            record = record_from_calibre_book(db, book_id, require_work_id=False)
+            title = (record or {}).get('title') or '?'
+            identifiers = {}
+            comments = ''
+            try:
+                mi = db.get_metadata(book_id, index_is_id=True)
+                title = mi.title or title
+                identifiers = dict(mi.get_identifiers() or {})
+                comments = str(getattr(mi, 'comments', None) or '')
+            except Exception:
+                comments = ''
+                pass
+            books.append(
+                LibraryBook(
+                    book_id=book_id,
+                    title=str(title or ''),
+                    authors=tuple((record or {}).get('authors') or ()),
+                    identifiers={
+                        str(key): str(val)
+                        for key, val in identifiers.items()
+                        if str(val or '').strip()
+                    },
+                    tags=tuple((record or {}).get('tags') or ()),
+                    fandoms=tuple((record or {}).get('fandoms') or ()),
+                    relationships=tuple((record or {}).get('relationships') or ()),
+                    characters=tuple((record or {}).get('characters') or ()),
+                    original_tags=tuple(
+                        as_name_list(get_custom_value(db, book_id, 'originaltags'))
+                    ),
+                    collections=tuple((record or {}).get('current_collections') or ()),
+                    series_name=str((record or {}).get('series') or '')
+                    if isinstance((record or {}).get('series'), str)
+                    else str(
+                        (((record or {}).get('series') or [{}])[0] or {}).get('name')
+                        or ''
+                    ),
+                    has_epub=book_has_epub(db, book_id),
+                    uuid=str((record or {}).get('calibre_uuid') or ''),
+                    comments=comments,
+                    summary=str((record or {}).get('summary') or ''),
+                )
+            )
+        return books
+
+    title_map = _all_field_for(api, 'title', ids)
+    authors_map = _all_field_for(api, 'authors', ids)
+    identifiers_map = _all_field_for(api, 'identifiers', ids)
+    tags_map = _all_field_for(api, 'tags', ids)
+    fandom_map = _all_field_for(api, '#fandom', ids)
+    rel_map = _all_field_for(api, '#relationships', ids)
+    char_map = _all_field_for(api, '#characters', ids)
+    original_map = _all_field_for(api, '#originaltags', ids)
+    collections_map = _all_field_for(api, '#collections', ids)
+    series_map = _all_field_for(api, 'series', ids)
+    series_index_map = _all_field_for(api, 'series_index', ids)
+    formats_map = _all_field_for(api, 'formats', ids)
+    uuid_map = _all_field_for(api, 'uuid', ids)
+    words_map = _all_field_for(api, '#wordcount', ids)
+    comments_map = _all_field_for(api, 'comments', ids)
+    summary_map = _all_field_for(api, '#summary', ids)
+    books = []
+    for book_id in ids:
+        tags = field_values(tags_map.get(book_id))
+        tag_keys = {name.casefold() for name in tags}
+        is_complete = True if ('completed' in tag_keys or 'complete' in tag_keys) else None
+        series_name = series_map.get(book_id)
+        books.append(
+            LibraryBook(
+                book_id=book_id,
+                title=str(title_map.get(book_id) or ''),
+                authors=field_values(authors_map.get(book_id)),
+                identifiers=_identifiers_map(identifiers_map.get(book_id)),
+                tags=tags,
+                fandoms=field_values(fandom_map.get(book_id)),
+                relationships=field_values(rel_map.get(book_id)),
+                characters=field_values(char_map.get(book_id)),
+                original_tags=field_values(original_map.get(book_id)),
+                collections=field_values(collections_map.get(book_id)),
+                series_name=str(series_name or ''),
+                series_index=_optional_float(series_index_map.get(book_id))
+                if series_name
+                else None,
+                has_epub=_book_has_epub_from_maps(
+                    book_id, db=db, api=api, formats_map=formats_map
+                ),
+                uuid=str(uuid_map.get(book_id) or ''),
+                wordcount=_optional_int(words_map.get(book_id)),
+                is_complete=is_complete,
+                comments=str(comments_map.get(book_id) or ''),
+                summary=str(summary_map.get(book_id) or ''),
+            )
+        )
+    return books
+
+
+def record_from_library_book(
+    book: LibraryBook,
+    *,
+    require_work_id: bool = False,
+) -> dict[str, Any] | None:
+    record = record_from_library_fields(
+        title=book.title or None,
+        authors=list(book.authors),
+        identifiers=book.identifiers,
+        tags=list(book.tags),
+        original_tags=list(book.original_tags) or None,
+        fandoms=list(book.fandoms),
+        relationships=list(book.relationships),
+        characters=list(book.characters) or None,
+        wordcount=book.wordcount,
+        comments=book.comments or None,
+        summary=book.summary or None,
+        is_complete=book.is_complete,
+        series_name=book.series_name or None,
+        series_index=book.series_index,
+        require_work_id=require_work_id,
+    )
+    if record is None:
+        return None
+    if book.uuid:
+        record['calibre_uuid'] = book.uuid
+    record['calibre_book_id'] = book.book_id
+    if book.collections:
+        record['current_collections'] = list(book.collections)
+    return record
+
+
+def library_job_ready_items(
+    books: list[LibraryBook],
+    options: LibraryJobOptions,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split library snapshots into job-ready items vs skips."""
+    chosen, skipped = select_library_job_books(books, options)
+    ready: list[dict[str, Any]] = []
+    for book in chosen:
+        title = book.title or f'book {book.book_id}'
+        record = record_from_library_book(book, require_work_id=options.needs_ao3_id())
+        if record is None:
+            skipped.append(
+                {
+                    'book_id': book.book_id,
+                    'title': title,
+                    'reason': (
+                        'no AO3 URL or work id on this book'
+                        if options.needs_ao3_id()
+                        else 'could not load this book'
+                    ),
+                }
+            )
+            continue
+        ready.append(
+            {
+                'book_id': book.book_id,
+                'record': record,
+                'title': title,
+                'has_epub': book.has_epub,
+            }
+        )
+    return ready, skipped

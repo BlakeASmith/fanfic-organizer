@@ -11,7 +11,7 @@ same host pace together:
 
 - adaptive spacing for light paths (tag profiles) — start fast, back off on pressure
 - a short dedicated interval for login (GET form + POST)
-- work, search, and EPUB downloads share config request_delay (default 1.5s)
+- work, search, and EPUB downloads share the host-wide engine floor (default 1.5s, adaptive on pressure)
 - 429 + Retry-After pause every interface for that cooldown (not a new cruise interval)
 """
 
@@ -22,6 +22,7 @@ import random
 import threading
 import time
 import urllib.robotparser
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -35,10 +36,10 @@ from ao3kit.rate_store import (
 
 ROBOTS_URL = "https://archiveofourown.org/robots.txt"
 # General work-page pacing when no adaptive tag lane applies.
-DEFAULT_MIN_INTERVAL = 1.0
-ABSOLUTE_MIN_INTERVAL = 0.4
+DEFAULT_MIN_INTERVAL = 1.5
+ABSOLUTE_MIN_INTERVAL = 1.0
 # Tag profiles start here and adapt up/down based on AO3 responses.
-TAG_SOFT_INTERVAL = 0.5
+TAG_SOFT_INTERVAL = 1.5
 TAG_MAX_INTERVAL = 8.0
 # Tag 429 without Retry-After: brief pause; the tag lane already doubles.
 TAG_DEFAULT_RETRY_AFTER = 2.0
@@ -96,13 +97,7 @@ class RateLimitState:
     @base_interval.setter
     def base_interval(self, value: float) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=float(value),
-                tag_interval=snap.tag_interval,
-                success_streak=snap.success_streak,
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, base_interval=float(value))
 
         self.store.update(mutator)
 
@@ -113,13 +108,7 @@ class RateLimitState:
     @tag_interval.setter
     def tag_interval(self, value: float) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=snap.base_interval,
-                tag_interval=float(value),
-                success_streak=snap.success_streak,
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, tag_interval=float(value))
 
         self.store.update(mutator)
 
@@ -130,13 +119,7 @@ class RateLimitState:
     @success_streak.setter
     def success_streak(self, value: int) -> None:
         def mutator(snap: RateSnapshot) -> RateSnapshot:
-            return RateSnapshot(
-                next_allowed_at=snap.next_allowed_at,
-                base_interval=snap.base_interval,
-                tag_interval=snap.tag_interval,
-                success_streak=int(value),
-                crawl_delay=snap.crawl_delay,
-            )
+            return replace(snap, success_streak=int(value))
 
         self.store.update(mutator)
 
@@ -146,6 +129,46 @@ class RateLimitState:
 
 
 _STATE = RateLimitState()
+
+_RATE_SETTINGS: RateLimitSettings | None = None
+_RATE_MIN_INTERVAL: float | None = None
+
+
+def reset_rate_settings_cache() -> None:
+    """Clear cached config knobs (tests / after config edits)."""
+    global _RATE_SETTINGS, _RATE_MIN_INTERVAL
+    _RATE_SETTINGS = None
+    _RATE_MIN_INTERVAL = None
+
+
+def refresh_rate_settings_from_config() -> float:
+    """Load pacing knobs from XDG config; return ``min_request_interval``."""
+    global _RATE_SETTINGS, _RATE_MIN_INTERVAL
+    from ao3kit.config import load_rate_limit_settings
+
+    _RATE_MIN_INTERVAL, _RATE_SETTINGS = load_rate_limit_settings()
+    return float(_RATE_MIN_INTERVAL)
+
+
+def get_default_retry_after() -> float:
+    """Default 429 pause when AO3 omits Retry-After on tag fetches."""
+    return _rcfg().default_retry_after
+
+
+def _rcfg() -> RateLimitSettings:
+    if _RATE_SETTINGS is None:
+        refresh_rate_settings_from_config()
+    return _RATE_SETTINGS
+
+
+def _configured_min_interval() -> float:
+    if _RATE_MIN_INTERVAL is None:
+        refresh_rate_settings_from_config()
+    return max(float(_RATE_MIN_INTERVAL), ABSOLUTE_MIN_INTERVAL)
+
+
+# Late import avoids a cycle; config does not import rate.
+from ao3kit.config import RateLimitSettings  # noqa: E402
 
 
 def reset_rate_limit_state(
@@ -177,6 +200,7 @@ def reset_rate_limit_state(
         )
     _STATE = RateLimitState(store=store)
     _STATE.skip_wait = False
+    reset_rate_settings_cache()
 
 
 def _emit(on_status: StatusCallback | None, message: str) -> None:
@@ -205,11 +229,10 @@ def load_robots_text(text: str, *, fetched_at: float | None = None) -> None:
         if crawl:
             base = max(base, crawl)
             tag = max(tag, crawl)
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
+        return replace(
+            snap,
             base_interval=base,
             tag_interval=tag,
-            success_streak=snap.success_streak,
             crawl_delay=crawl,
         )
 
@@ -227,15 +250,39 @@ def _floor(crawl_delay: float | None) -> float:
     return floor
 
 
-def apply_request_delay(requested: float | None = None) -> float:
-    """Set the shared work/search/download interval from config ``request_delay``."""
-    from ao3kit.config import resolve_request_delay
+def _clamp_snapshot(snap: RateSnapshot) -> RateSnapshot:
+    """Enforce host-wide floors and keep the tag lane from outrunning scrape/search."""
+    cfg = _rcfg()
+    floor = _floor(snap.crawl_delay)
+    min_iv = _configured_min_interval()
+    soft = max(floor, cfg.tag_soft_interval, min_iv)
+    base = max(floor, min_iv, float(snap.base_interval))
+    tag = max(floor, soft, float(snap.tag_interval))
+    tag = max(tag, min(base, soft))
+    return replace(
+        snap,
+        base_interval=base,
+        tag_interval=tag,
+    )
 
-    return configure_min_interval(resolve_request_delay(requested))
+
+def ensure_rate_limits() -> float:
+    """Refresh shared work/search/download floors from config + the limiter engine.
+
+    Raises the host-wide floor to the configured minimum but does **not**
+    reset an elevated adaptive interval. A new job must not wipe backoff
+    another job just applied.
+    """
+    refresh_rate_settings_from_config()
+    return configure_min_interval()
 
 
-def configure_min_interval(requested: float | None) -> float:
-    """Set the shared host-wide general interval (tag lane keeps its own pace)."""
+def configure_min_interval(requested: float | None = None) -> float:
+    """Set the shared host-wide general interval (tag lane keeps its own pace).
+
+    ``requested`` is retained for tests only; production code should call
+    :func:`ensure_rate_limits` and let the adaptive engine manage pacing.
+    """
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
         floor = _floor(snap.crawl_delay)
@@ -245,14 +292,14 @@ def configure_min_interval(requested: float | None) -> float:
             if float(requested) < tag:
                 tag = max(floor, float(requested))
         else:
-            base = max(snap.base_interval, floor, DEFAULT_MIN_INTERVAL)
+            base = max(snap.base_interval, floor, _configured_min_interval())
             tag = snap.tag_interval
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
-            base_interval=base,
-            tag_interval=tag,
-            success_streak=snap.success_streak,
-            crawl_delay=snap.crawl_delay,
+        return _clamp_snapshot(
+            replace(
+                snap,
+                base_interval=base,
+                tag_interval=tag,
+            )
         )
 
     return _STATE.store.update(mutator).base_interval
@@ -275,13 +322,21 @@ def note_retry_after(seconds: float, *, url: str | None = None) -> None:
     now = time.time()
     _ = url  # per-IP cooldown; path does not change the host pause
 
+    cfg = _rcfg()
+
     def mutator(snap: RateSnapshot) -> RateSnapshot:
-        return RateSnapshot(
+        return replace(
+            snap,
             next_allowed_at=max(snap.next_allowed_at, now + pause),
-            base_interval=snap.base_interval,
-            tag_interval=min(max(snap.tag_interval * 2.0, 2.0), TAG_MAX_INTERVAL),
+            tag_interval=min(
+                max(
+                    snap.tag_interval * cfg.retry_after_tag_multiplier,
+                    cfg.retry_after_tag_floor,
+                ),
+                cfg.tag_max_interval,
+            ),
             success_streak=0,
-            crawl_delay=snap.crawl_delay,
+            retry_after_until=now + pause,
         )
 
     _STATE.store.update(mutator)
@@ -290,14 +345,20 @@ def note_retry_after(seconds: float, *, url: str | None = None) -> None:
 def note_request_pressure(*, status_code: int | None = None) -> None:
     """Transient edge pressure (5xx / Cloudflare) — slow the shared tag lane."""
     del status_code  # reserved for future tuning
+    cfg = _rcfg()
 
     def mutator(snap: RateSnapshot) -> RateSnapshot:
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
-            base_interval=min(max(snap.base_interval * 1.2, 1.5), MAX_MIN_INTERVAL),
-            tag_interval=min(max(snap.tag_interval * 1.5, 1.5), TAG_MAX_INTERVAL),
+        return replace(
+            snap,
+            base_interval=min(
+                max(snap.base_interval * cfg.pressure_base_multiplier, cfg.pressure_floor),
+                cfg.max_interval,
+            ),
+            tag_interval=min(
+                max(snap.tag_interval * cfg.pressure_tag_multiplier, cfg.pressure_floor),
+                cfg.tag_max_interval,
+            ),
             success_streak=0,
-            crawl_delay=snap.crawl_delay,
         )
 
     _STATE.store.update(mutator)
@@ -308,22 +369,45 @@ def note_request_success(url: str) -> None:
     if not _is_tag_profile_url(url):
         return
 
+    cfg = _rcfg()
+
     def mutator(snap: RateSnapshot) -> RateSnapshot:
         streak = snap.success_streak + 1
         tag = snap.tag_interval
-        if streak >= SUCCESS_STREAK_TO_SPEED_UP:
+        if streak >= cfg.success_streak:
             streak = 0
             floor = _floor(snap.crawl_delay)
-            tag = max(floor, min(TAG_SOFT_INTERVAL, snap.tag_interval * 0.85))
-        return RateSnapshot(
-            next_allowed_at=snap.next_allowed_at,
-            base_interval=snap.base_interval,
+            tag = max(
+                floor,
+                min(cfg.tag_soft_interval, snap.tag_interval * cfg.success_speed_factor),
+            )
+        return replace(
+            snap,
             tag_interval=tag,
             success_streak=streak,
-            crawl_delay=snap.crawl_delay,
+            retry_after_until=None,
         )
 
     _STATE.store.update(mutator)
+
+
+def _is_work_listing_url(url: str) -> bool:
+    path = (urlparse(url).path or "/").rstrip("/") or "/"
+    if path.startswith("/series/"):
+        return True
+    if path.startswith("/collections/") and path.endswith("/works"):
+        return True
+    if path.startswith("/users/") and (
+        path.endswith("/works")
+        or path.endswith("/works/collected")
+        or path.endswith("/bookmarks")
+    ):
+        return True
+    if path.startswith("/tags/") and path.endswith("/works"):
+        return True
+    if path in {"/works", "/works/search"}:
+        return True
+    return False
 
 
 def path_is_robots_disallow(url: str) -> bool:
@@ -352,11 +436,16 @@ def path_is_robots_disallow(url: str) -> bool:
 
 def _is_tag_profile_url(url: str) -> bool:
     parsed = urlparse(url)
-    path = parsed.path or "/"
+    path = (parsed.path or "/").rstrip("/") or "/"
     if not path.startswith("/tags/"):
         return False
-    # /tags/search is heavy; individual /tags/Name pages are light.
-    return path != "/tags/search" and not path.startswith("/tags/search/")
+    rest = path[len("/tags/") :]
+    if not rest or rest == "search" or rest.startswith("search/"):
+        return False
+    # /tags/Name/works and /tags/Name/bookmarks are listings, not profiles.
+    if "/" in rest:
+        return False
+    return True
 
 
 def _is_login_url(url: str) -> bool:
@@ -374,6 +463,8 @@ def url_kind(url: str) -> str:
         return "download"
     if _is_tag_profile_url(url):
         return "tag"
+    if _is_work_listing_url(url):
+        return "search"
     if path_is_robots_disallow(url):
         return "search"
     if path.startswith("/works"):
@@ -626,18 +717,26 @@ def clear_rate_hourly() -> int:
 
 
 def interval_for_url(url: str) -> float:
-    snap = _STATE.store.read()
+    """Seconds to reserve before this URL. Every AO3 path has a floor.
+
+    Login uses a short dedicated interval. Tag profiles use the adaptive tag
+    lane. Search, work, download, series, robots.txt, and any other AO3 path
+    share the host-wide config floor (never zero).
+    """
+    snap = _clamp_snapshot(_STATE.store.read())
     base = snap.base_interval
     tag = snap.tag_interval
     crawl = snap.crawl_delay
     if crawl:
         base = max(base, crawl)
         tag = max(tag, crawl)
+    floor = _floor(crawl)
+    min_iv = _configured_min_interval()
     if _is_login_url(url):
         return max(LOGIN_MIN_INTERVAL, crawl or 0.0)
     if _is_tag_profile_url(url):
-        return tag
-    return base
+        return max(tag, floor, min_iv)
+    return max(base, floor, min_iv)
 
 
 def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> float:
@@ -649,19 +748,15 @@ def wait_for_request(url: str, *, on_status: StatusCallback | None = None) -> fl
     if _STATE.skip_wait:
         return 0.0
     interval = interval_for_url(url)
-    jittered = interval * random.uniform(1.0 - JITTER, 1.0 + JITTER)
-    leftover = max(0.0, _STATE.store.read().next_allowed_at - time.time())
-    max_wait: float | None = None
-    if _is_login_url(url) and leftover > LOGIN_MAX_WAIT:
-        max_wait = LOGIN_MAX_WAIT
-    elif leftover > STALE_LOCK_SECONDS:
-        max_wait = STALE_LOCK_WAIT
-        _emit(
-            on_status,
-            f"Stale AO3 rate lock ({leftover:.0f}s left from an earlier 429) — "
-            f"waiting {STALE_LOCK_WAIT:.0f}s instead…",
-        )
-    wait, _snap = _STATE.store.claim_slot(jittered, max_wait=max_wait)
+    cfg = _rcfg()
+    jittered = interval * random.uniform(1.0 - cfg.jitter, 1.0 + cfg.jitter)
+    is_login = _is_login_url(url)
+    wait, _snap = _STATE.store.claim_slot(
+        jittered,
+        max_wait=LOGIN_MAX_WAIT if is_login else None,
+        stale_after=None if is_login else STALE_LOCK_SECONDS,
+        stale_wait=STALE_LOCK_WAIT,
+    )
     if wait > 0.05:
         _emit(on_status, f"Rate limit: waiting {wait:.1f}s before AO3 request…")
         time.sleep(wait)
@@ -675,6 +770,7 @@ def _disk_robots_fresh(fetched_at: float) -> bool:
 def _fetch_robots_text(fetcher: Callable[[], str] | None) -> str:
     if fetcher is not None:
         return fetcher()
+    wait_for_request(ROBOTS_URL)
     import requests
 
     response = requests.get(
@@ -861,14 +957,17 @@ __all__ = [
     "USER_AGENT",
     "clear_rate_events",
     "clear_rate_hourly",
-    "apply_request_delay",
+    "ensure_rate_limits",
     "configure_min_interval",
     "current_tag_interval",
     "default_rate_db_path",
+    "get_default_retry_after",
     "ensure_robots",
     "export_rate_log",
     "interval_for_url",
     "load_robots_text",
+    "refresh_rate_settings_from_config",
+    "reset_rate_settings_cache",
     "note_request_pressure",
     "note_request_success",
     "note_retry_after",

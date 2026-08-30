@@ -7,6 +7,7 @@ import json
 from PyQt5.Qt import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -21,6 +22,7 @@ from PyQt5.Qt import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     Qt,
@@ -39,6 +41,11 @@ from calibre_plugins.fanfic_organizer.scrape_run import (
     SORT_OPTIONS,
     ids_to_csv,
     scrape_search_is_usable,
+)
+from calibre_plugins.fanfic_organizer.tag_complete import (
+    attach_collection_match_completer,
+    attach_tag_completer,
+    combined_tag_extras,
 )
 
 
@@ -98,6 +105,18 @@ class ImportJsonlDialog(QDialog):
         )
         layout.addWidget(self.simplify_tags)
 
+        self.drop_unmarked = QCheckBox(
+            'Drop non-canonical tags after mapping'
+        )
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
+        layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -119,7 +138,195 @@ class ImportJsonlDialog(QDialog):
             'path': self.path.text().strip(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
+
+
+class ProcessLibraryDialog(QDialog):
+    """Choose whole-library jobs without selecting every book."""
+
+    def __init__(self, parent, *, estimate_text: str, options=None):
+        super().__init__(parent)
+        self.setWindowTitle('Process library')
+        self.setMinimumWidth(520)
+        self.resize(560, 640)
+
+        from calibre_plugins.fanfic_organizer.library_job import (
+            LibraryJobOptions,
+        )
+
+        self._options_cls = LibraryJobOptions
+        options = options or LibraryJobOptions()
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'Apply Fanfic Organizer jobs to <b>every book in the currently '
+            'open library</b> (including the virtual library, if any). You do '
+            'not need to select all rows — that can freeze a large library.\n\n'
+            'Pick what to run, then start one background job. The estimate '
+            'uses the library and the local tag cache only; it does not load '
+            'AO3 URLs.'
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        tasks = QGroupBox('Work to do')
+        tasks_layout = QVBoxLayout(tasks)
+        self.simplify_tags = QCheckBox(
+            'Simplify tags, fandoms & relationships'
+        )
+        self.simplify_tags.setChecked(bool(options.simplify_tags))
+        self.simplify_tags.setToolTip(
+            'AO3 synonym collapse plus your tag rules. Uncached names are '
+            'fetched from AO3; names already in the tag cache stay local.'
+        )
+        tasks_layout.addWidget(self.simplify_tags)
+
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(options.drop_unmarked))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
+        tasks_layout.addWidget(self.drop_unmarked)
+
+        self.fill_series = QCheckBox('Fill Series on books already in the library')
+        self.fill_series.setChecked(bool(options.fill_series))
+        self.fill_series.setToolTip(
+            'Look up AO3 series membership for books that are missing a '
+            'series id, name, or part number. Does not import extra works.'
+        )
+        tasks_layout.addWidget(self.fill_series)
+
+        self.import_series = QCheckBox('Import the rest of each series')
+        self.import_series.setChecked(bool(options.import_series))
+        self.import_series.setToolTip(
+            'Fetch every other work on the same AO3 series and add missing '
+            'parts to this library. Search filters do not apply. Can add '
+            'many books.'
+        )
+        tasks_layout.addWidget(self.import_series)
+
+        self.download_epubs = QCheckBox('Download missing native EPUBs')
+        self.download_epubs.setChecked(bool(options.download_epubs))
+        self.download_epubs.setToolTip(
+            'Download AO3 EPUBs for books that have a work id and no EPUB. '
+            'Existing files are never replaced.'
+        )
+        tasks_layout.addWidget(self.download_epubs)
+
+        self.generate_covers = QCheckBox('Generate covers')
+        self.generate_covers.setChecked(bool(options.generate_covers))
+        self.generate_covers.setToolTip(
+            'Stamp a generated cover onto existing EPUBs (and Calibre '
+            'thumbnails). Local; no AO3.'
+        )
+        tasks_layout.addWidget(self.generate_covers)
+
+        self.recompute_collections = QCheckBox('Recompute collections from rules')
+        self.recompute_collections.setChecked(bool(options.recompute_collections))
+        self.recompute_collections.setToolTip(
+            'Apply collection rules to every book. Included automatically '
+            'when simplify is checked. Local; no AO3.'
+        )
+        tasks_layout.addWidget(self.recompute_collections)
+        layout.addWidget(tasks)
+
+        settings = QGroupBox('This job')
+        settings_layout = QVBoxLayout(settings)
+        self.update_existing = QCheckBox(
+            'Update existing books matched by AO3 work id or URL'
+        )
+        self.update_existing.setChecked(bool(options.update_existing))
+        settings_layout.addWidget(self.update_existing)
+        self.cover_on_download = QCheckBox(
+            'Generate covers on newly downloaded EPUBs'
+        )
+        self.cover_on_download.setChecked(bool(options.cover_on_download))
+        settings_layout.addWidget(self.cover_on_download)
+        layout.addWidget(settings)
+
+        estimate_box = QGroupBox('Estimate')
+        estimate_layout = QVBoxLayout(estimate_box)
+        self.estimate = QPlainTextEdit()
+        self.estimate.setReadOnly(True)
+        self.estimate.setPlainText(estimate_text)
+        try:
+            self.estimate.setMinimumHeight(180)
+        except Exception:
+            pass
+        estimate_layout.addWidget(self.estimate)
+        layout.addWidget(estimate_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.start_btn = buttons.button(QDialogButtonBox.Ok)
+        self.start_btn.setText('Start job')
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        for widget in (
+            self.simplify_tags,
+            self.fill_series,
+            self.import_series,
+            self.download_epubs,
+            self.generate_covers,
+            self.recompute_collections,
+        ):
+            widget.toggled.connect(self._sync_dependent)
+        self._sync_dependent()
+        self._estimate_callback = None
+
+    def set_estimate_text(self, text: str) -> None:
+        self.estimate.setPlainText(text)
+
+    def set_estimate_callback(self, callback) -> None:
+        self._estimate_callback = callback
+        for widget in (
+            self.simplify_tags,
+            self.fill_series,
+            self.import_series,
+            self.download_epubs,
+            self.generate_covers,
+            self.recompute_collections,
+        ):
+            widget.toggled.connect(self._refresh_estimate)
+
+    def _refresh_estimate(self, *_args) -> None:
+        if self._estimate_callback is None:
+            return
+        text = self._estimate_callback(self.values())
+        if text:
+            self.set_estimate_text(text)
+
+    def _sync_dependent(self, *_args) -> None:
+        import_on = self.import_series.isChecked()
+        if import_on:
+            self.fill_series.setChecked(True)
+        self.fill_series.setEnabled(not import_on)
+        simplify_on = self.simplify_tags.isChecked()
+        self.recompute_collections.setEnabled(not simplify_on)
+        self.drop_unmarked.setEnabled(simplify_on)
+        if simplify_on:
+            self.recompute_collections.setChecked(True)
+        self.cover_on_download.setEnabled(self.download_epubs.isChecked())
+        self.update_existing.setEnabled(self.import_series.isChecked())
+        self.start_btn.setEnabled(self.values().any_selected())
+
+    def values(self):
+        return self._options_cls(
+            simplify_tags=self.simplify_tags.isChecked(),
+            drop_unmarked=self.drop_unmarked.isChecked(),
+            fill_series=self.fill_series.isChecked()
+            or self.import_series.isChecked(),
+            import_series=self.import_series.isChecked(),
+            download_epubs=self.download_epubs.isChecked(),
+            generate_covers=self.generate_covers.isChecked(),
+            recompute_collections=self.recompute_collections.isChecked()
+            or self.simplify_tags.isChecked(),
+            cover_on_download=self.cover_on_download.isChecked(),
+            update_existing=self.update_existing.isChecked(),
+        )
 
 
 def _form_line(placeholder: str = '', text: str = '') -> QLineEdit:
@@ -141,6 +348,7 @@ class ScrapeSearchDialog(QDialog):
         self.resize(620, 740)
         self._use_form_criteria = False
         self._filling = False
+        self._list_path = ''
 
         outer = QVBoxLayout()
         self.setLayout(outer)
@@ -162,23 +370,25 @@ class ScrapeSearchDialog(QDialog):
             'Search AO3 like the CLI, then import matches into the '
             '<b>currently open</b> Calibre library. Uses the toolkit bundled '
             'in this plugin so host-wide rate limiting still applies.\n\n'
-            'AO3 login is in Plugin settings. Paste a search '
-            'URL, or fill the form. Click Fill from URL to preview and edit '
-            'criteria. A series URL imports every work in that series. '
-            'Switch to a new empty library first if you do not want '
-            'to write an existing collection.'
+            'AO3 login is in Plugin settings. Paste a search, collection, '
+            'user works, or series URL, or fill the form. Click Fill from URL '
+            'to preview and edit criteria. A collection home URL uses the full '
+            'works listing. Switch to a new empty library first if you do not '
+            'want to write an existing collection.'
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         url_row = QHBoxLayout()
         self.url = _form_line(
-            'https://archiveofourown.org/works?... or /series/…',
+            'https://archiveofourown.org/works?…, /collections/…, /users/…/works, or /series/…',
             prefs.get('last_scrape_url') or '',
         )
         self.url.textChanged.connect(self._on_url_changed)
         fill = QPushButton('Fill from URL')
-        fill.setToolTip('Parse the AO3 search URL into the form fields (no network scrape).')
+        fill.setToolTip(
+            'Parse the AO3 URL into the form fields (no network scrape).'
+        )
         fill.clicked.connect(self.fill_from_url)
         url_row.addWidget(self.url)
         url_row.addWidget(fill)
@@ -206,6 +416,10 @@ class ScrapeSearchDialog(QDialog):
         self.date_to = _form_line('YYYY-MM-DD')
         self.other_tag_names = _form_line('comma-separated tag names')
         self.excluded_tag_names = _form_line('comma-separated tag names')
+        extras = combined_tag_extras(parent)
+        attach_tag_completer(self.tag_id, extra=extras)
+        attach_tag_completer(self.other_tag_names, extra=extras, csv=True)
+        attach_tag_completer(self.excluded_tag_names, extra=extras, csv=True)
         criteria_form.addRow('Fandom / tag', self.tag_id)
         criteria_form.addRow('Search query', self.query)
         criteria_form.addRow('Sort by', self.sort_column)
@@ -272,9 +486,18 @@ class ScrapeSearchDialog(QDialog):
             'and Relationships. Collection and tag rules: '
             'Tags and collections → Collections & tag rules.'
         )
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
+        self.drop_unmarked.setToolTip(
+            'After your tag mapping rules, remove tags that AO3 does not '
+            'list as canonical or synonymous. Default is set in plugin settings.'
+        )
         import_layout.addWidget(self.download_epubs)
         import_layout.addWidget(self.update_existing)
         import_layout.addWidget(self.simplify_tags)
+        import_layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
         layout.addWidget(import_box)
 
         for widget in (
@@ -308,6 +531,7 @@ class ScrapeSearchDialog(QDialog):
         if self._filling:
             return
         self._use_form_criteria = False
+        self._list_path = ''
 
     def _on_criteria_edited(self, *_args) -> None:
         if self._filling:
@@ -368,6 +592,16 @@ class ScrapeSearchDialog(QDialog):
                 self.start_page.setText(str(payload.get('start_page') or 1))
             finally:
                 self._filling = False
+            self._list_path = ''
+            self._use_form_criteria = False
+            return
+        if payload.get('kind') == 'bookmarks':
+            self._filling = True
+            try:
+                self.start_page.setText(str(payload.get('start_page') or 1))
+            finally:
+                self._filling = False
+            self._list_path = str(payload.get('list_path') or '')
             self._use_form_criteria = False
             return
         criteria = payload.get('criteria') or {}
@@ -403,6 +637,7 @@ class ScrapeSearchDialog(QDialog):
             self.start_page.setText(str(payload.get('start_page') or 1))
         finally:
             self._filling = False
+        self._list_path = str(payload.get('list_path') or '')
         # Keep using the original URL until the user edits a criteria field,
         # matching scrape --parse-only URL fill.
         self._use_form_criteria = False
@@ -413,7 +648,8 @@ class ScrapeSearchDialog(QDialog):
             error_dialog(
                 self,
                 'Fanfic Organizer',
-                'Paste an AO3 search URL, a series URL, or enter a fandom/tag or query.',
+                'Paste an AO3 search, collection, user works, or series URL, '
+                'or enter a fandom/tag or query.',
                 show=True,
             )
             return
@@ -422,6 +658,7 @@ class ScrapeSearchDialog(QDialog):
     def values(self) -> dict:
         return {
             'url': self.url.text().strip(),
+            'list_path': self._list_path,
             'use_form_criteria': self._use_form_criteria,
             'tag_id': self.tag_id.text().strip(),
             'query': self.query.text().strip(),
@@ -446,6 +683,7 @@ class ScrapeSearchDialog(QDialog):
             'download_epubs': self.download_epubs.isChecked(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
 
 
@@ -1019,9 +1257,14 @@ class SimilarSearchDialog(QDialog):
             'Simplify tags, fandoms & relationships (AO3 canonical + user rules)'
         )
         self.simplify_tags.setChecked(bool(prefs.get('simplify_tags', False)))
+        self.drop_unmarked = QCheckBox('Drop non-canonical tags after mapping')
+        self.drop_unmarked.setChecked(bool(prefs.get('drop_unmarked', True)))
         import_layout.addWidget(self.download_epubs)
         import_layout.addWidget(self.update_existing)
         import_layout.addWidget(self.simplify_tags)
+        import_layout.addWidget(self.drop_unmarked)
+        self.simplify_tags.toggled.connect(self.drop_unmarked.setEnabled)
+        self.drop_unmarked.setEnabled(self.simplify_tags.isChecked())
         layout.addWidget(import_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1088,6 +1331,7 @@ class SimilarSearchDialog(QDialog):
             'download_epubs': self.download_epubs.isChecked(),
             'update_existing': self.update_existing.isChecked(),
             'simplify_tags': self.simplify_tags.isChecked(),
+            'drop_unmarked': self.drop_unmarked.isChecked(),
         }
 
 
@@ -1179,6 +1423,7 @@ class CollectionRulesPage(QWidget):
             self.match.addItem(label, value)
         self.match.currentIndexChanged.connect(self._sync_match_fields)
         self.values = QLineEdit()
+        attach_collection_match_completer(self.values, self.match, self._dialog)
         if_layout.addWidget(self.match)
         if_layout.addWidget(self.values, 1)
         form.addRow('When', if_row)
@@ -1592,6 +1837,8 @@ class TagMappingsDialog(QDialog):
         self.values = QLineEdit()
         self.values.setPlaceholderText('River Song')
         self.values.setToolTip('The text to look for in a tag.')
+        extras = combined_tag_extras(parent)
+        attach_tag_completer(self.values, extra=extras, csv=True)
         if_layout.addWidget(self.match)
         if_layout.addWidget(self.values, 1)
         form.addRow('When a tag', if_row)
@@ -1622,6 +1869,7 @@ class TagMappingsDialog(QDialog):
         self.map_to = QLineEdit()
         self.map_to.setPlaceholderText('new tag name')
         self.map_to.setToolTip('The name to store instead.')
+        attach_tag_completer(self.map_to, extra=extras)
         tag_layout_fields.addWidget(self.action)
         tag_layout_fields.addWidget(self.map_to, 1)
         form.addRow('With the tag itself', tag_row)
@@ -1645,6 +1893,7 @@ class TagMappingsDialog(QDialog):
         self.preview_tag.setToolTip(
             'Type a tag from a book to see the cleaned name.'
         )
+        attach_tag_completer(self.preview_tag, extra=extras)
         preview_btn = QPushButton('Try')
         preview_btn.setToolTip('Show what Simplify would do with this tag.')
         preview_btn.clicked.connect(self._preview)
@@ -2028,4 +2277,123 @@ class WarmLogDialog(QDialog):
         self.log.setPlainText(text)
         if follow:
             bar.setValue(bar.maximum())
+
+
+def _candidate_label(candidate: dict) -> str:
+    title = str(candidate.get('title') or 'Untitled').strip()
+    author = str(candidate.get('author') or '').strip()
+    if not author:
+        authors = candidate.get('authors') or []
+        if isinstance(authors, (list, tuple)) and authors:
+            author = ', '.join(str(item) for item in authors if str(item).strip())
+        elif authors:
+            author = str(authors)
+    fandoms = candidate.get('fandoms') or []
+    fandom = ''
+    if isinstance(fandoms, (list, tuple)) and fandoms:
+        fandom = str(fandoms[0])
+    meta = candidate.get('metadata') or {}
+    words = meta.get('words') if isinstance(meta, dict) else None
+    kudos = meta.get('kudos') if isinstance(meta, dict) else None
+    work_id = str(candidate.get('work_id') or '').strip()
+    parts = [title]
+    if author:
+        parts.append(f'by {author}')
+    extras = []
+    if fandom:
+        extras.append(fandom)
+    if isinstance(words, int):
+        extras.append(f'{words:,} words')
+    if isinstance(kudos, int):
+        extras.append(f'{kudos:,} kudos')
+    if work_id:
+        extras.append(f'AO3 {work_id}')
+    line = ' '.join(parts)
+    if extras:
+        line += ' — ' + ' · '.join(extras)
+    return line
+
+
+class IdentifyWorksDialog(QDialog):
+    """Pick the AO3 work when title+author search returns more than one match."""
+
+    SKIP = ''
+
+    def __init__(self, parent, ambiguous: list[dict], titles: dict | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Fill from AO3 — pick the matching work')
+        self.setMinimumWidth(640)
+        self.resize(720, 520)
+        self._groups: dict[str, QButtonGroup] = {}
+        titles = titles or {}
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'More than one AO3 work matches some of the selected books. '
+            'Pick the right one for each book, or skip it.'
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(0, 0, 0, 0)
+
+        for record in ambiguous:
+            book_id = record.get('book_id')
+            if book_id is None:
+                book_id = record.get('calibre_book_id')
+            key = str(book_id or '')
+            if not key:
+                continue
+            book_title = (
+                titles.get(book_id)
+                or titles.get(key)
+                or record.get('title')
+                or f'Book {key}'
+            )
+            author = str(record.get('author') or '').strip()
+            heading = str(book_title)
+            if author:
+                heading += f' by {author}'
+            box = QGroupBox(heading)
+            box_layout = QVBoxLayout(box)
+            group = QButtonGroup(box)
+            group.setExclusive(True)
+            candidates = list(record.get('candidates') or [])
+            for index, candidate in enumerate(candidates):
+                work_id = str((candidate or {}).get('work_id') or '').strip()
+                radio = QRadioButton(_candidate_label(candidate or {}))
+                radio.setProperty('work_id', work_id)
+                if index == 0:
+                    radio.setChecked(True)
+                group.addButton(radio)
+                box_layout.addWidget(radio)
+            skip = QRadioButton('Skip this book')
+            skip.setProperty('work_id', self.SKIP)
+            group.addButton(skip)
+            box_layout.addWidget(skip)
+            self._groups[key] = group
+            inner_layout.addWidget(box)
+
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def choices(self) -> dict[str, str]:
+        picked: dict[str, str] = {}
+        for book_id, group in self._groups.items():
+            button = group.checkedButton()
+            work_id = ''
+            if button is not None:
+                work_id = str(button.property('work_id') or '')
+            picked[book_id] = work_id
+        return picked
 

@@ -23,7 +23,7 @@ from ao3kit.tags.rules import (
 
 def _resolver_with(*resolved: ResolvedTag) -> TagResolver:
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
 
     def fake_resolve_one(name: str) -> ResolvedTag:
@@ -52,6 +52,7 @@ def test_custom_code_rule_and_keep_separate():
 
     config = TagRulesConfig(
         resolve_canonical=True,
+        drop_unmarked=False,
         rules=[ShipNickname()],
     )
     resolver = _resolver_with(
@@ -245,7 +246,7 @@ def test_match_spec_and_vs_any():
 
 def _warmed_resolver(*profiles):
     resolver = TagResolver(
-        session=object(), delay=0, owns_session=False, cache_path=None, persist=False
+        session=object(), owns_session=False, cache_path=None, persist=False
     )
     for profile in profiles:
         resolver.warm(profile)
@@ -339,3 +340,19 @@ def test_engine_skips_metatags_for_non_fandom_tags():
     )
     assert result.simplified == ["Amy Pond (Doctor Who)"]
     assert result.inserted_metatags == []
+
+
+def test_engine_drop_unmarked_after_mapping():
+    config = TagRulesConfig(resolve_canonical=True, drop_unmarked=True)
+    resolver = _resolver_with(
+        ResolvedTag(
+            original="custom freeform",
+            resolved="custom freeform",
+            status="unmarked",
+            changed=False,
+        ),
+        ResolvedTag(original="Fluff", resolved="Fluff", status="canonical"),
+    )
+    result = TagRulesEngine(config, resolver).apply(["custom freeform", "Fluff"])
+    assert result.simplified == ["Fluff"]
+    assert "custom freeform" in result.dropped

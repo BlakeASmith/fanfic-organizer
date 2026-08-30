@@ -9,6 +9,7 @@ with FanFicFare:
 * ``#relationships`` ← cleaned AO3 Relationship tags
 * ``#collections`` ← rule collection names
 * ``#originaltags`` ← pre-clean AO3 tags (warnings, ships, characters, freeforms)
+* ``#summary`` ← AO3 work summary (when the column exists; Comments is also read)
 * ``#wordcount`` ← AO3 word count (when present)
 * Tags ← remaining cleaned tags + ``Completed``
 * Series / series index ← first AO3 series membership (Calibre's built-in Series)
@@ -19,7 +20,11 @@ the standard Tags field instead of being dropped.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 AO3_WORK_ID_RE = re.compile(
@@ -31,6 +36,30 @@ FFF_INJECTED_TAGS = frozenset({'fanfiction', 'completed', 'complete'})
 RELATIONSHIP_CATEGORIES = frozenset({'relationship'})
 FANDOM_CATEGORIES = frozenset({'fandom'})
 COMPLETED_TAG = 'Completed'
+
+
+def _resolve_record_summary(*args: Any, **kwargs: Any) -> str:
+    """Resolve cover summary text without requiring Calibre's package path.
+
+    pytest loads ``cleaned.py`` via ``importlib`` (no ``calibre_plugins``), so
+    fall back to the sibling ``cover_summary`` module on disk.
+    """
+    try:
+        from calibre_plugins.fanfic_organizer.cover_summary import (
+            resolve_record_summary as resolve,
+        )
+    except ImportError:
+        name = '_fanfic_organizer_cover_summary'
+        cached = sys.modules.get(name)
+        if cached is None:
+            path = Path(__file__).resolve().parent / 'cover_summary.py'
+            spec = importlib.util.spec_from_file_location(name, path)
+            assert spec is not None and spec.loader is not None
+            cached = importlib.util.module_from_spec(spec)
+            sys.modules[name] = cached
+            spec.loader.exec_module(cached)
+        resolve = cached.resolve_record_summary
+    return resolve(*args, **kwargs)
 
 
 def work_id_from_url(url: Any) -> str | None:
@@ -86,6 +115,25 @@ def book_matches_work(
     if url and existing_url.rstrip('/') == url.rstrip('/'):
         return True
     return False
+
+
+def existing_book_id_from_identifiers(
+    books: Iterable[tuple[Any, dict[str, Any] | None]],
+    record: dict[str, Any],
+) -> Any | None:
+    """Return the library book id that already stores this AO3 work, if any.
+
+    ``books`` is ``(book_id, identifiers)`` from the in-memory Calibre
+    identifier maps. Same match rules as ``book_matches_work`` (ao3 id or URL).
+    """
+    work_id = canonical_work_id(record)
+    url = canonical_work_url(record)
+    if not work_id and not url:
+        return None
+    for book_id, ids in books:
+        if book_matches_work(ids, work_id=work_id, url=url):
+            return book_id
+    return None
 
 
 def build_cleaned_payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -368,11 +416,6 @@ def _category_of(item: dict[str, Any]) -> str:
     return str(item.get('category') or '').strip().casefold()
 
 
-def _looks_like_relationship(name: str) -> bool:
-    """AO3 romantic ships use ``/``. Platonic ``&`` is left to AO3 category."""
-    return '/' in name
-
-
 AO3_SERIES_ID_RE = re.compile(
     r'(?:https?://)?(?:www\.)?archiveofourown\.org/series/(\d+)',
     re.IGNORECASE,
@@ -471,18 +514,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
                 continue
             if name.casefold() in fandom_keys:
                 continue
-            is_ship = category in RELATIONSHIP_CATEGORIES or (
-                not category and _looks_like_relationship(name)
-            )
-            if is_ship:
-                if category in RELATIONSHIP_CATEGORIES:
-                    if name.casefold() not in rel_keys:
-                        relationships.append(name)
-                        rel_keys.add(name.casefold())
-                    continue
-                if has_cleaned_rels:
-                    other_tags.append(name)
-                    continue
+            if category in RELATIONSHIP_CATEGORIES:
                 if name.casefold() not in rel_keys:
                     relationships.append(name)
                     rel_keys.add(name.casefold())
@@ -496,11 +528,6 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
             key = tag.casefold()
             if key in fandom_keys or key in rel_keys:
                 continue
-            if _looks_like_relationship(tag):
-                if not has_cleaned_rels:
-                    relationships.append(tag)
-                    rel_keys.add(key)
-                continue
             other_tags.append(tag)
 
     chapters = (record.get('metadata') or {}).get('chapters') or {}
@@ -511,6 +538,8 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
 
     words = (record.get('metadata') or {}).get('words')
     wordcount = words if isinstance(words, int) else None
+
+    summary = _resolve_record_summary(record)
 
     work_id = canonical_work_id(record)
     url = canonical_work_url(record)
@@ -542,6 +571,7 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         'tags': tags,
         'original_tags': original_tag_names(record),
         'wordcount': wordcount,
+        'summary': summary or None,
         'work_id': work_id,
         'url': url,
         'identifiers': identifiers,
@@ -619,6 +649,8 @@ def record_from_library_fields(
     relationships: list[str] | None = None,
     characters: list[str] | None = None,
     wordcount: int | None = None,
+    comments: str | None = None,
+    summary: str | None = None,
     raw_record: dict[str, Any] | None = None,
     is_complete: bool | None = None,
     series_name: str | None = None,
@@ -630,6 +662,17 @@ def record_from_library_fields(
     Prefers a legacy raw JSON blob when present. Otherwise reconstructs from
     URL / ``ao3`` identifiers, Original Tags (if stored), and custom columns.
     """
+
+    def _attach_summary(record: dict[str, Any]) -> dict[str, Any]:
+        text = _resolve_record_summary(
+            record,
+            summary_column=summary,
+            comments=comments,
+        )
+        if text:
+            record['summary'] = text
+        return record
+
     ids = dict(identifiers or {})
     author_list = _unique_names(authors)
     restored_series = _series_from_calibre(
@@ -662,7 +705,7 @@ def record_from_library_fields(
             record['characters'] = _unique_names(characters)
         if restored_series and not series_memberships_from_record(record):
             record['series'] = restored_series
-        return record
+        return _attach_summary(record)
 
     work_id = str(ids.get('ao3') or '').strip() or (work_id_from_url(ids.get('url')) or '')
     url = str(ids.get('url') or '').strip() or (work_url(work_id) or '')
@@ -715,7 +758,7 @@ def record_from_library_fields(
         record['relationships'] = _unique_names(relationships)
     if restored_series:
         record['series'] = restored_series
-    return record
+    return _attach_summary(record)
 
 
 def _series_from_calibre(

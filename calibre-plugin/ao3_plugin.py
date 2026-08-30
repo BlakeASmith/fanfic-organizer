@@ -9,6 +9,7 @@ from calibre.gui2.actions import InterfaceAction
 
 from calibre_plugins.fanfic_organizer.dialogs import (
     ImportJsonlDialog,
+    ProcessLibraryDialog,
     ScrapeSearchDialog,
     SimilarSearchDialog,
     TagMappingsDialog,
@@ -57,6 +58,14 @@ class FanficOrganizerPlugin(InterfaceAction):
         self.qaction.setMenu(self.menu)
         self.menu.aboutToShow.connect(self.build_menu)
         self._jobs = None
+        self._koreader = None
+
+    def koreader(self):
+        if self._koreader is None:
+            from calibre_plugins.fanfic_organizer.koreader_support import KoreaderSupport
+
+            self._koreader = KoreaderSupport(self)
+        return self._koreader
 
     def jobs(self):
         if self._jobs is None:
@@ -157,6 +166,11 @@ class FanficOrganizerPlugin(InterfaceAction):
         complete.setStatusTip(
             'Fill series, import missing parts, download EPUBs, and simplify tags'
         )
+        fill = self.menu.addAction('Fill from AO3', self.fill_selected_from_ao3)
+        fill.setEnabled(has_selection)
+        fill.setStatusTip(
+            'Identify from URL, EPUB, or title+author, then fill missing metadata'
+        )
         for label, slot in (
             ('Download EPUB', self.download_selected_epubs),
             ('Generate covers', self.generate_covers_for_selected),
@@ -187,6 +201,9 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         self.menu.addSeparator()
         self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
+        self.menu.addAction(
+            'Process library...', self.show_process_library_dialog
+        )
         self.menu.addAction('Running jobs...', self.show_running_jobs)
 
         self.menu.addSeparator()
@@ -206,6 +223,15 @@ class FanficOrganizerPlugin(InterfaceAction):
         more.addAction('JSONL or zip...', self.show_import_dialog)
 
         self.menu.addSeparator()
+        self.menu.addAction('Check for updates...', self.check_for_updates)
+        deploy_koreader = self.menu.addAction(
+            'Deploy to KOReader…', self.deploy_to_koreader
+        )
+        deploy_koreader.setEnabled(self.koreader().deploy_ready())
+        deploy_koreader.setStatusTip(
+            'Install or refresh the Fanfic collections KOReader plugin and '
+            'fanfic.collections.json on a Kobo or Android device with KOReader'
+        )
         self.menu.addAction('Plugin settings...', self.show_configuration)
 
     def show_running_jobs(self):
@@ -214,8 +240,16 @@ class FanficOrganizerPlugin(InterfaceAction):
     def apply_settings(self):
         return
 
+    def deploy_to_koreader(self):
+        self.koreader().deploy(silent=False)
+
     def show_configuration(self):
         self.interface_action_base_plugin.do_user_config(parent=self.gui)
+
+    def check_for_updates(self):
+        from calibre_plugins.fanfic_organizer.update_ui import show_update_check
+
+        show_update_check(self.gui)
 
     def show_import_dialog(self):
         dialog = ImportJsonlDialog(self.gui)
@@ -229,6 +263,7 @@ class FanficOrganizerPlugin(InterfaceAction):
 
         prefs['last_jsonl_path'] = values['path']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_import
@@ -259,12 +294,141 @@ class FanficOrganizerPlugin(InterfaceAction):
             options={
                 **merge_plugin_settings({}, plugin_runtime_settings()),
                 'simplify_tags': values['simplify_tags'],
+                'drop_unmarked': values['drop_unmarked'],
                 'update_existing': values['update_existing'],
                 'include_series': bool(prefs.get('import_full_series', False)),
             },
             bundle_root=bundle_root,
             cleanup_dir=str(cleanup) if cleanup else None,
         )
+        self.jobs().start_prepared(job_dir)
+
+    def show_process_library_dialog(self):
+        from pathlib import Path
+
+        from PyQt5.Qt import QApplication, Qt
+
+        from calibre_plugins.fanfic_organizer.job_plans import plan_library_job
+        from calibre_plugins.fanfic_organizer.library_job import (
+            estimate_library_job,
+            format_library_estimate,
+            load_request_interval,
+            options_from_prefs,
+            prefs_from_options,
+        )
+        from calibre_plugins.fanfic_organizer.selected import (
+            copy_book_epub,
+            export_selected_epubs_for_cover,
+            library_job_ready_items,
+            load_library_books,
+        )
+        from calibre_plugins.fanfic_organizer.tag_complete import tag_cache_path
+        from calibre_plugins.fanfic_organizer.tag_purge import resolve_scope_ids
+        from calibre_plugins.fanfic_organizer.user_dirs import config_dir
+
+        db = self.gui.current_db
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            book_ids = resolve_scope_ids(db, '', use_virtual_library=True)
+            books = load_library_books(db, book_ids)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Could not read this library.',
+                det_msg=str(exc),
+                show=True,
+            )
+            return
+        QApplication.restoreOverrideCursor()
+
+        if not books:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'This library has no books to process.',
+                show=True,
+            )
+            return
+
+        cache = tag_cache_path()
+        interval = load_request_interval(config_dir() / 'config.yaml')
+        saved = options_from_prefs(prefs)
+
+        def estimate_text(opts) -> str:
+            estimate = estimate_library_job(
+                books,
+                opts,
+                cache_path=cache,
+                request_interval=interval,
+            )
+            return format_library_estimate(estimate, opts)
+
+        dialog = ProcessLibraryDialog(
+            self.gui,
+            estimate_text=estimate_text(saved),
+            options=saved,
+        )
+        dialog.set_estimate_callback(estimate_text)
+        dialog.set_estimate_text(estimate_text(dialog.values()))
+        if not dialog.exec_():
+            return
+
+        chosen = dialog.values()
+        for key, value in prefs_from_options(chosen).items():
+            prefs[key] = value
+        if not chosen.any_selected():
+            return
+
+        ready, skipped = library_job_ready_items(books, chosen)
+        if not ready:
+            extra = ''
+            if skipped:
+                extra = '\n\n' + '\n'.join(
+                    f'{item.get("title")}: {item.get("reason")}'
+                    for item in skipped[:8]
+                )
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'None of the books in this library can run those jobs.' + extra,
+                show=True,
+            )
+            return
+
+        job_dir = self.jobs().prepare_job_dir('library')
+        if job_dir is None:
+            return
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        epub_dir.mkdir(parents=True, exist_ok=True)
+        if chosen.import_series and chosen.download_epubs:
+            for item in ready:
+                work_id = str((item.get('record') or {}).get('work_id') or '').strip()
+                if work_id and item.get('has_epub'):
+                    copy_book_epub(
+                        db, item['book_id'], epub_dir / f'{work_id}.epub'
+                    )
+        if chosen.generate_covers:
+            ready = export_selected_epubs_for_cover(db, ready, epub_dir)
+
+        job_options = merge_plugin_settings(
+            chosen.to_dict(), plugin_runtime_settings()
+        )
+        if chosen.download_epubs:
+            job_options['cover'] = bool(chosen.cover_on_download)
+        spec = plan_library_job(ready, skipped, job_dir, job_options)
+        if not spec.get('steps'):
+            import shutil
+
+            shutil.rmtree(job_dir, ignore_errors=True)
+            error_dialog(
+                self.gui,
+                'Process library',
+                'Nothing to do with the current options for this library.',
+                show=True,
+            )
+            return
         self.jobs().start_prepared(job_dir)
 
     def show_scrape_dialog(self):
@@ -279,6 +443,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         prefs['last_max_results'] = values['max_results'] or '25'
         prefs['download_epubs'] = values['download_epubs']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
@@ -335,6 +500,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         prefs['last_max_results'] = values['max_results'] or '25'
         prefs['download_epubs'] = values['download_epubs']
         prefs['simplify_tags'] = values['simplify_tags']
+        prefs['drop_unmarked'] = values['drop_unmarked']
         prefs['update_existing'] = values['update_existing']
 
         from calibre_plugins.fanfic_organizer.job_plans import plan_scrape
@@ -489,6 +655,63 @@ class FanficOrganizerPlugin(InterfaceAction):
             skipped,
             job_dir,
             merge_plugin_settings({}, plugin_runtime_settings()),
+        )
+        self.jobs().start_prepared(job_dir)
+
+    def fill_selected_from_ao3(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        from pathlib import Path
+
+        from calibre_plugins.fanfic_organizer.job_plans import plan_identify_selected
+        from calibre_plugins.fanfic_organizer.selected import (
+            export_selected_epubs_for_cover,
+            load_selected_for_identify,
+        )
+
+        ready, skipped = load_selected_for_identify(self.gui.current_db, book_ids)
+        if not ready:
+            extra = ''
+            if skipped:
+                extra = '\n\n' + '\n'.join(
+                    f'{item.get("title")}: {item.get("reason")}' for item in skipped[:8]
+                )
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'None of the selected books have an AO3 URL, EPUB, or title '
+                'to identify from.' + extra,
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('identify')
+        if job_dir is None:
+            return
+        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+        ready = export_selected_epubs_for_cover(
+            self.gui.current_db, ready, epub_dir
+        )
+        plan_identify_selected(
+            ready,
+            skipped,
+            job_dir,
+            merge_plugin_settings(
+                {
+                    'download_epubs': bool(prefs.get('download_epubs', True)),
+                    'simplify_tags': bool(prefs.get('simplify_tags', False)),
+                    'include_series': bool(prefs.get('import_full_series', False)),
+                    'update_existing': True,
+                },
+                plugin_runtime_settings(),
+            ),
         )
         self.jobs().start_prepared(job_dir)
 

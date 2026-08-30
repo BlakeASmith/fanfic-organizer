@@ -302,6 +302,28 @@ def main(argv: list[str] | None = None) -> int:
             cfg.update_settings(cover=CoverSettings.from_dict(data))
             _print(cfg.settings.to_dict())
             return 0
+        if key.startswith("rate."):
+            from ao3kit.config import RateLimitSettings
+
+            field = key.split(".", 1)[1]
+            rate = cfg.settings.rate
+            if not hasattr(rate, field):
+                print(f"Unknown settings key: {key}", file=sys.stderr)
+                return 1
+            current = getattr(rate, field)
+            if isinstance(current, bool):
+                value: object = raw.lower() in {"1", "true", "yes", "on"}
+            elif isinstance(current, int) and not isinstance(current, bool):
+                value = int(raw)
+            elif isinstance(current, float):
+                value = float(raw)
+            else:
+                value = raw
+            data = rate.to_dict()
+            data[field] = value
+            cfg.update_settings(rate=RateLimitSettings.from_dict(data))
+            _print(cfg.settings.to_dict())
+            return 0
         if not hasattr(cfg.settings, key) or key == "version":
             print(f"Unknown settings key: {key}", file=sys.stderr)
             return 1
@@ -343,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
             if key == "cover" and isinstance(value, dict):
                 merged = {**(data.get("cover") or {}), **value}
                 data["cover"] = merged
+            elif key == "rate" and isinstance(value, dict):
+                merged = {**(data.get("rate") or {}), **value}
+                data["rate"] = merged
             else:
                 data[key] = value
         from ao3kit.config import UserSettings
@@ -498,7 +523,6 @@ def main(argv: list[str] | None = None) -> int:
             rules.include_metatags = cfg.settings.include_metatags
             use_cache = (not args.no_cache) and cfg.settings.tag_cache_enabled
             with TagResolver(
-                delay=cfg.settings.request_delay,
                 cache_path=default_tag_cache_path() if use_cache else None,
                 follow_canonical=cfg.settings.follow_canonical,
                 persist=use_cache,

@@ -1,0 +1,12 @@
+---
+description: Calibre source is read-only; never PR upstream; plugin stays on stock Calibre
+alwaysApply: true
+---
+
+# Calibre source (read-only)
+
+A checkout of https://github.com/BlakeASmith/calibre lives at `$HOME/src/calibre`. How to clone/update and where to look: `.cursor/skills/calibre-source-code-read/SKILL.md`.
+
+- **Never** open a pull request against `kovidgoyal/calibre` (or `git push` to that remote).
+- Do not push the BlakeASmith Calibre fork unless the user explicitly asked to change the fork.
+- Fanfic Organizer must keep working on **stock Calibre**. Do not call fork-only APIs.
