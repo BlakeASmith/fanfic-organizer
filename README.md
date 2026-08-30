@@ -23,6 +23,7 @@ Prefer a release marked **Stable** — that label is added after the fact when n
 
 **Selected books**
 
+- **Open in AO3** — top-level library right-click (and toolbar menu) opens the selected book’s AO3 works page in the browser ([demo](demos/README.md#open-in-ao3))
 - **Complete selected** — fill Series, import missing series parts, download missing EPUBs, simplify tags, recompute collections
 - **Fill from AO3** — identify selected books from a work URL, the EPUB, or title + author (picker when several works match), then fill missing metadata and EPUBs ([demo](demos/README.md))
 - Download missing native EPUBs (existing files are never replaced)
