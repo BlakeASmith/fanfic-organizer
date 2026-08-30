@@ -13,6 +13,28 @@ MANIFEST_NAME = 'results.jsonl'
 EPUB_DIRNAME = 'epubs'
 
 
+def record_has_identity(record: dict[str, Any]) -> bool:
+    """True when the row can be matched to an AO3 work or a Calibre book.
+
+    Process library / simplify may include books that have no AO3 work id yet;
+    those rows carry ``calibre_book_id`` and/or ``calibre_uuid`` so ingest can
+    merge cleaned tags back onto the library book.
+    """
+    if str(record.get('work_id') or '').strip():
+        return True
+    if str(record.get('url') or '').strip():
+        return True
+    if str(record.get('calibre_uuid') or '').strip():
+        return True
+    raw_book_id = record.get('calibre_book_id')
+    if raw_book_id is None or raw_book_id == '':
+        return False
+    try:
+        return int(raw_book_id) != 0
+    except (TypeError, ValueError):
+        return bool(str(raw_book_id).strip())
+
+
 def iter_jsonl_records(path: str | Path) -> Iterator[dict[str, Any]]:
     path = Path(path)
     with path.open(encoding='utf-8') as fh:
@@ -26,8 +48,11 @@ def iter_jsonl_records(path: str | Path) -> Iterator[dict[str, Any]]:
                 raise ValueError(f'{path}:{line_no}: invalid JSON: {exc}') from exc
             if not isinstance(record, dict):
                 raise ValueError(f'{path}:{line_no}: expected a JSON object')
-            if not record.get('work_id') and not record.get('url'):
-                raise ValueError(f'{path}:{line_no}: missing work_id and url')
+            if not record_has_identity(record):
+                raise ValueError(
+                    f'{path}:{line_no}: missing work_id, url, '
+                    f'calibre_book_id, and calibre_uuid'
+                )
             yield record
 
 
