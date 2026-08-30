@@ -20,7 +20,8 @@ def test_main_lua_defines_plugin_class_not_instance():
     assert "SetupShowReader" in text
     assert "filemanagerutil.openFile" in text
     assert "DocumentRegistry:hasProvider" in text
-    assert "self.ui.menu:registerToMainMenu(self)" in text
+    assert "BookList" in text
+    assert "is_doc_only = false" in text
     assert 'require("errors")' in text
     assert "run_action" in text
 
@@ -33,6 +34,8 @@ def test_metadata_lua_resolves_paths_from_calibre_library_roots():
     assert "Metadata.library_roots()" in text
     assert "KOBO_STORAGE_ROOTS" in text
     assert "cache/calibre/libraries.lua" in text
+    assert "find_calibre_metadata" in text
+    assert ".calibre.metadata" in text
     assert 'DataStorage:getDataDir() .. "/" .. lpath' not in text
 
 

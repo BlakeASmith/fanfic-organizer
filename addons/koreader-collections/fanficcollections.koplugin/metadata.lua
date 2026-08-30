@@ -11,19 +11,35 @@ local KOBO_STORAGE_ROOTS = {
     carda = "/mnt/sd",
     cardb = "/mnt/sd",
 }
+local SKIP_SCAN_DIRS = {
+    cache = true,
+    plugins = true,
+    ota = true,
+    screenshots = true,
+    history = true,
+    docsettings = true,
+    hashdocsettings = true,
+    settings = true,
+    clipboard = true,
+    styletweaks = true,
+}
 
 local Metadata = {
     last_error = nil,
 }
 local library_roots
 
-local function metadata_file_in(dir)
+local function has_metadata_file(dir)
     if util.fileExists(dir .. "/metadata.calibre") then
-        return dir
+        return true
     end
     if util.fileExists(dir .. "/.metadata.calibre") then
-        return dir
+        return true
     end
+    if util.fileExists(dir .. "/.calibre.metadata") then
+        return true
+    end
+    return false
 end
 
 local function add_library_root(roots, seen, path)
@@ -34,10 +50,88 @@ local function add_library_root(roots, seen, path)
     if seen[path] then
         return
     end
-    if metadata_file_in(path) then
+    if has_metadata_file(path) then
         seen[path] = true
         table.insert(roots, path)
     end
+end
+
+local function detect_library_root()
+    local root
+
+    local ok_settings, G = pcall(function()
+        return G_reader_settings
+    end)
+    if ok_settings and G and type(G.readSetting) == "function" then
+        local home = G:readSetting("home_dir")
+        if type(home) == "string" and home ~= "" then
+            root = home
+        end
+    end
+
+    if not root or root == "" then
+        if type(Device.home_dir) == "string" and Device.home_dir ~= "" then
+            root = Device.home_dir
+        end
+    end
+
+    if not root or root == "" then
+        local ok_fm, filemanagerutil = pcall(require, "apps/filemanager/filemanagerutil")
+        if ok_fm and filemanagerutil and type(filemanagerutil.getDefaultDir) == "function" then
+            local ok_def, def = pcall(filemanagerutil.getDefaultDir)
+            if ok_def and type(def) == "string" and def ~= "" then
+                root = def
+            end
+        end
+    end
+
+    if not root or root == "" then
+        local ok_root, res = pcall(function()
+            if DataStorage.getFullDataDir then
+                return DataStorage:getFullDataDir() or DataStorage:getDataDir()
+            end
+            return DataStorage:getDataDir()
+        end)
+        if ok_root and type(res) == "string" and res ~= "" then
+            root = res
+        end
+    end
+
+    return root
+end
+
+local function find_calibre_metadata(root_dir)
+    if not root_dir or root_dir == "" then
+        return nil, nil
+    end
+    local max_depth = 4
+    local queue = { { path = root_dir, depth = 0 } }
+    local head = 1
+    while head <= #queue do
+        local item = queue[head]
+        head = head + 1
+        local dir = item.path
+        if has_metadata_file(dir) then
+            return dir, dir
+        end
+        if item.depth < max_depth then
+            local ok_iter, iter, dir_obj, err = pcall(lfs.dir, dir)
+            if ok_iter and iter then
+                for entry in iter, dir_obj do
+                    if entry ~= "." and entry ~= ".." and not SKIP_SCAN_DIRS[entry] then
+                        local child = dir .. "/" .. entry
+                        local mode_ok, mode = pcall(lfs.attributes, child, "mode")
+                        if mode_ok and mode == "directory" then
+                            table.insert(queue, { path = child, depth = item.depth + 1 })
+                        end
+                    end
+                end
+            else
+                logger.dbg("fanficcollections: unable to scan directory", dir, err)
+            end
+        end
+    end
+    return nil, nil
 end
 
 local function load_calibre_search_libraries()
@@ -62,28 +156,41 @@ local function load_calibre_search_libraries()
     return nil
 end
 
-local function scan_for_libraries(root_dir, roots, seen, depth)
-    depth = depth or 0
-    if depth > 8 or not root_dir or root_dir == "" then
-        return
+local function collect_scan_starts()
+    local starts = {}
+    local seen = {}
+
+    local function add_start(path)
+        if not path or path == "" then
+            return
+        end
+        path = path:gsub("/+$", "")
+        if seen[path] then
+            return
+        end
+        seen[path] = true
+        table.insert(starts, path)
     end
-    add_library_root(roots, seen, root_dir)
-    local ok, iter, dir_obj = pcall(lfs.dir, root_dir)
-    if not ok then
-        return
+
+    for _, key in ipairs({"SEARCH_LIBRARY_PATH", "SEARCH_LIBRARY_PATH2"}) do
+        add_start(G_reader_settings:readSetting(key))
     end
-    for entry in iter, dir_obj do
-        if entry ~= "." and entry ~= ".." then
-            local path = root_dir .. "/" .. entry
-            local mode_ok, mode = pcall(lfs.attributes, path, "mode")
-            if mode_ok and mode == "directory" then
-                add_library_root(roots, seen, path)
-                if depth < 8 then
-                    scan_for_libraries(path, roots, seen, depth + 1)
-                end
+
+    local cached = load_calibre_search_libraries()
+    if type(cached) == "table" then
+        for path, enabled in pairs(cached) do
+            if enabled then
+                add_start(path)
             end
         end
     end
+
+    add_start(detect_library_root())
+    if Device:isKobo() or Device:isCervantes() then
+        add_start("/mnt")
+    end
+
+    return starts
 end
 
 function Metadata.library_roots()
@@ -93,26 +200,13 @@ function Metadata.library_roots()
     local ok, roots = pcall(function()
         local found = {}
         local seen = {}
-        for _, key in ipairs({"SEARCH_LIBRARY_PATH", "SEARCH_LIBRARY_PATH2"}) do
-            add_library_root(found, seen, G_reader_settings:readSetting(key))
-        end
-        local cached = load_calibre_search_libraries()
-        if type(cached) == "table" then
-            for path, enabled in pairs(cached) do
-                if enabled then
-                    add_library_root(found, seen, path)
-                end
+        for _, start in ipairs(collect_scan_starts()) do
+            add_library_root(found, seen, start)
+            local _, lib_root = find_calibre_metadata(start)
+            if lib_root then
+                add_library_root(found, seen, lib_root)
             end
         end
-        local scan_root
-        if Device:isKobo() or Device:isCervantes() then
-            scan_root = "/mnt"
-        elseif Device:isAndroid() then
-            scan_root = Device.home_dir
-        else
-            scan_root = Device.home_dir or lfs.currentdir()
-        end
-        scan_for_libraries(scan_root, found, seen, 0)
         return found
     end)
     if ok and type(roots) == "table" then
@@ -239,7 +333,8 @@ function Metadata.resolve_path_with_debug(book)
     end
     local roots = Metadata.library_roots()
     if #roots == 0 then
-        append_debug(debug_lines, "no Calibre library roots found (metadata.calibre)")
+        append_debug(debug_lines, "no Calibre library roots found (.metadata.calibre)")
+        append_debug(debug_lines, "home_dir: " .. tostring(detect_library_root()))
     end
     for _, root in ipairs(roots) do
         local candidate = root .. "/" .. lpath

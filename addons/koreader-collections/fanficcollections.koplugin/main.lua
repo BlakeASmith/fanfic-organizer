@@ -1,3 +1,4 @@
+local BookList = require("ui/widget/booklist")
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local DocumentRegistry = require("document/documentregistry")
@@ -16,6 +17,7 @@ local Screen = Device.screen
 
 local FanficCollections = WidgetContainer:extend{
     name = "fanficcollections",
+    is_doc_only = false,
 }
 
 function FanficCollections:show_error(context, user_text, debug_text)
@@ -27,6 +29,11 @@ function FanficCollections:run_action(context, user_text, fn)
 end
 
 function FanficCollections:init()
+    if not self.ui or not self.ui.menu then
+        self._load_error = "ui/menu unavailable during init"
+        logger.err("fanficcollections:", self._load_error)
+        return
+    end
     local ok, err = pcall(function()
         self.ui.menu:registerToMainMenu(self)
     end)
@@ -132,7 +139,7 @@ function FanficCollections:show_collection_picker()
                 "No fanfic-organizer collections found.\n\n"
                     .. "Connect your Kobo to Calibre, run Fanfic Organizer "
                     .. "→ Deploy to KOReader… after sync."
-            ) .. (load_debug or ""),
+            ) .. (load_debug and ("\n\n" .. load_debug) or ""),
         })
         return
     end
@@ -183,6 +190,7 @@ function FanficCollections:show_books_for_collection(books, collection_name)
     end
     local items = {}
     for _, book in ipairs(matches) do
+        local path, debug_text = Metadata.resolve_path(book)
         local title = book.title or book.lpath or _("Unknown title")
         local authors = book.authors
         local author_text = ""
@@ -195,23 +203,24 @@ function FanficCollections:show_books_for_collection(books, collection_name)
         end
         table.insert(items, {
             text = label,
-            callback = function()
-                self:run_action("open_book", _("Could not open this book."), function()
-                    local path, debug_text = Metadata.resolve_path(book)
-                    self:open_book(path, debug_text)
-                end)
-            end,
+            file = path,
+            _debug = debug_text,
         })
     end
     local ok, err = pcall(function()
-        self._books_menu = Menu:new{
+        local menu
+        menu = BookList:new{
             title = collection_name,
-            width = Screen:getWidth(),
-            height = Screen:getHeight(),
             show_parent = self.ui,
             item_table = items,
+            onMenuSelect = function(_, item)
+                self:run_action("open_book", _("Could not open this book."), function()
+                    self:open_book(item.file, item._debug)
+                end)
+            end,
         }
-        UIManager:show(self._books_menu)
+        self._books_menu = menu
+        UIManager:show(menu)
     end)
     if not ok then
         self:show_error("books_menu", _("Could not show books in this collection."), tostring(err))
