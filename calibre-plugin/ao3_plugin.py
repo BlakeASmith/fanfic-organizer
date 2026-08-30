@@ -123,7 +123,6 @@ class FanficOrganizerPlugin(InterfaceAction):
         )
         similar.setEnabled(has_selection)
         similar.setStatusTip('Build an AO3 search from the selected books')
-        self.menu.addAction('Import JSONL or zip...', self.show_import_dialog)
 
         self.menu.addSeparator()
         if n == 0:
@@ -179,6 +178,10 @@ class FanficOrganizerPlugin(InterfaceAction):
         tags.addAction('Warm tag cache', self.warm_tag_cache)
         tags.addAction('Tag cache log...', self.show_tag_cache_log)
         tags.addAction('Stop tag cache', self.stop_tag_cache_warm)
+
+        self.menu.addSeparator()
+        more = self.menu.addMenu('Import')
+        more.addAction('JSONL or zip...', self.show_import_dialog)
 
         self.menu.addSeparator()
         self.menu.addAction('Plugin settings...', self.show_configuration)
