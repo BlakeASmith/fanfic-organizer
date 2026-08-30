@@ -79,6 +79,8 @@ class FanficOrganizerPlugin(InterfaceAction):
         # Do not create columns or write the open library on startup.
         self.jobs()
         self._apply_popup_mode()
+        self._menu_for_context = False
+        self._context_menu_hooks = False
         try:
             from PyQt5.Qt import QTimer
         except ImportError:
@@ -87,30 +89,71 @@ class FanficOrganizerPlugin(InterfaceAction):
 
     def _ensure_context_menu_placement(self):
         """One-shot: append this plugin to library context-menu layouts."""
-        if prefs.get('context_menu_placed', False):
-            return
-        try:
-            from calibre.gui2 import gprefs
-            from calibre_plugins.fanfic_organizer.context_menu import (
-                CONTEXT_MENU_LAYOUT_KEYS,
-                layouts_needing_plugin,
-            )
-        except Exception:
-            prefs['context_menu_placed'] = True
-            return
+        if not prefs.get('context_menu_placed', False):
+            try:
+                from calibre.gui2 import gprefs
+                from calibre_plugins.fanfic_organizer.context_menu import (
+                    CONTEXT_MENU_LAYOUT_KEYS,
+                    layouts_needing_plugin,
+                )
+            except Exception:
+                prefs['context_menu_placed'] = True
+                self._hook_context_menu_mode()
+                return
 
-        current = {key: gprefs.get(key) for key in CONTEXT_MENU_LAYOUT_KEYS}
-        updates = layouts_needing_plugin(current, self.name)
-        for key, layout in updates.items():
-            gprefs[key] = tuple(layout)
-        prefs['context_menu_placed'] = True
-        if updates:
-            rebuild = getattr(self.gui, 'build_context_menus', None)
-            if callable(rebuild):
-                try:
-                    rebuild()
-                except Exception:
-                    pass
+            current = {key: gprefs.get(key) for key in CONTEXT_MENU_LAYOUT_KEYS}
+            updates = layouts_needing_plugin(current, self.name)
+            for key, layout in updates.items():
+                gprefs[key] = tuple(layout)
+            prefs['context_menu_placed'] = True
+            if updates:
+                rebuild = getattr(self.gui, 'build_context_menus', None)
+                if callable(rebuild):
+                    try:
+                        rebuild()
+                    except Exception:
+                        pass
+        self._hook_context_menu_mode()
+
+    def _iter_book_context_menus(self):
+        """Yield Calibre book-list / cover-browser context menus once each."""
+        seen: set[int] = set()
+        views = []
+        library_view = getattr(self.gui, 'library_view', None)
+        if library_view is not None:
+            views.append(library_view)
+            pin_view = getattr(library_view, 'pin_view', None)
+            if pin_view is not None:
+                views.append(pin_view)
+        cover_flow = getattr(self.gui, 'cover_flow', None)
+        if cover_flow is not None:
+            views.append(cover_flow)
+        for view in views:
+            menu = getattr(view, 'context_menu', None)
+            if menu is None:
+                continue
+            menu_id = id(menu)
+            if menu_id in seen:
+                continue
+            seen.add(menu_id)
+            yield menu
+
+    def _hook_context_menu_mode(self):
+        """Track library right-click so our submenu can stay selection-only."""
+        if self._context_menu_hooks:
+            return
+        hooked = False
+        for menu in self._iter_book_context_menus():
+            menu.aboutToShow.connect(self._begin_context_menu_mode)
+            menu.aboutToHide.connect(self._end_context_menu_mode)
+            hooked = True
+        self._context_menu_hooks = hooked
+
+    def _begin_context_menu_mode(self):
+        self._menu_for_context = True
+
+    def _end_context_menu_mode(self):
+        self._menu_for_context = False
 
     def _selected_ids(self):
         try:
@@ -153,12 +196,19 @@ class FanficOrganizerPlugin(InterfaceAction):
         self.menu.popup(QCursor.pos())
 
     def build_menu(self):
+        # Library right-click uses the same QAction menu; show selection ops only.
+        # One-shot clear: Linux clone_menu emits aboutToShow without aboutToHide.
+        for_context = bool(getattr(self, '_menu_for_context', False))
+        self._menu_for_context = False
+
         self.menu.clear()
         selected_ids = self._selected_ids()
-        n = len(selected_ids)
-        has_selection = n > 0
+        has_selection = len(selected_ids) > 0
+        self._populate_selection_actions(has_selection)
+        if not for_context:
+            self._populate_global_actions()
 
-        # Selected-book actions first (library right-click and toolbar).
+    def _populate_selection_actions(self, has_selection: bool):
         complete = self.menu.addAction(
             'Complete selected', self.complete_selected_books
         )
@@ -199,6 +249,7 @@ class FanficOrganizerPlugin(InterfaceAction):
         similar.setEnabled(has_selection)
         similar.setStatusTip('Build an AO3 search from the selected books')
 
+    def _populate_global_actions(self):
         self.menu.addSeparator()
         self.menu.addAction('Search AO3 and import...', self.show_scrape_dialog)
         self.menu.addAction(

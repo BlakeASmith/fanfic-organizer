@@ -101,13 +101,13 @@ MCP restart uses `lock_timeout=0` by default: if another agent holds the lock, t
 
 The plugin is for a **new** Calibre library that should look like the existing FanFicFare fanfic library. Do not run Search AO3 / Import / Process library / Fill from AO3 / Download EPUB / Import series / Fill series / Simplify / Tag Purge / “create columns” against a library you want left untouched — those actions write to whichever library is currently open. Installing the plugin does not modify a library by itself.
 
-The toolbar button opens the plugin menu. The same menu is available from the library **right-click** context menu (placed once on first launch). Menu order (most-used first):
+The toolbar button opens the full plugin menu. The library **right-click** context menu (placed once on first launch) shows only **selection** actions. Toolbar order (most-used first):
 
-- **Complete selected** / **Fill from AO3** / Download EPUB / Generate covers / Import rest of series / Fill series / Simplify tags / Edit · recompute · add collections / **Search similar…** (disabled when nothing is selected)
-- **Search AO3 and import…** / **Process library…** / **Running jobs…**
-- **Tags and collections** — Collections & tag rules, tag graph, tag purge, warm / log / stop tag cache
-- **Import** — JSONL or zip (files produced outside Calibre)
-- **Check for updates…** / **Deploy to KOReader…** / **Plugin settings…**
+- **Complete selected** / **Fill from AO3** / Download EPUB / Generate covers / Import rest of series / Fill series / Simplify tags / Edit · recompute · add collections / **Search similar…** (disabled when nothing is selected) — these are also the right-click submenu
+- **Search AO3 and import…** / **Process library…** / **Running jobs…** (toolbar only)
+- **Tags and collections** — Collections & tag rules, tag graph, tag purge, warm / log / stop tag cache (toolbar only)
+- **Import** — JSONL or zip (files produced outside Calibre; toolbar only)
+- **Check for updates…** / **Deploy to KOReader…** / **Plugin settings…** (toolbar only)
 
 **Search similar** (menu; needs a selection) builds an AO3 search from the selected library book(s). Fandoms, authors, relationships, characters, and additional tags are merged across the selection and shown in dropdowns so you can add a fandom plus a ship or two. AO3 ANDs every selected tag — pick a few. Then Search and import runs the same scrape/download path as Search AO3. Work id is optional; FanFicFare `#characters` is used when that column exists.
 
