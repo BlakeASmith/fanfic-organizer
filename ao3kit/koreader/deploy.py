@@ -47,13 +47,37 @@ def _strip_collections(raw: Any) -> list[str]:
     return out
 
 
+def _iter_device_books(device: Any):
+    """Yield ``(book, storage)`` for main memory and removable cards."""
+    books_method = getattr(device, "books", None)
+    if not callable(books_method):
+        return
+    seen_lpaths: set[str] = set()
+    for storage in (None, "carda", "cardb"):
+        try:
+            if storage is None:
+                batch = books_method(main_memory=True)
+            else:
+                batch = books_method(oncard=storage)
+        except TypeError:
+            if storage is not None:
+                continue
+            batch = books_method(main_memory=True)
+        for book in batch:
+            lpath = getattr(book, "lpath", None)
+            if not lpath:
+                continue
+            key = str(lpath).replace("\\", "/")
+            if key in seen_lpaths:
+                continue
+            seen_lpaths.add(key)
+            yield book, storage or "main"
+
+
 def build_collections_index(db: Any, device: Any) -> list[dict[str, Any]]:
     """Build the collections-only JSON from books on the connected device."""
     entries: list[dict[str, Any]] = []
-    books_method = getattr(device, "books", None)
-    if not callable(books_method):
-        return entries
-    for book in books_method(main_memory=True):
+    for book, storage in _iter_device_books(device):
         db_id = getattr(book, "db_id", None)
         lpath = getattr(book, "lpath", None)
         if not db_id or not lpath:
@@ -65,6 +89,7 @@ def build_collections_index(db: Any, device: Any) -> list[dict[str, Any]]:
         entry: dict[str, Any] = {
             "lpath": str(lpath).replace("\\", "/"),
             "collections": collections,
+            "storage": storage,
         }
         title = getattr(mi, "title", None)
         if title:

@@ -6,6 +6,11 @@ local util = require("util")
 local lfs = require("libs/libkoreader-lfs")
 
 local JSON_NAME = "fanfic.collections.json"
+local KOBO_STORAGE_ROOTS = {
+    main = "/mnt/onboard",
+    carda = "/mnt/sd",
+    cardb = "/mnt/sd",
+}
 
 local Metadata = {}
 local library_roots
@@ -31,6 +36,17 @@ local function add_library_root(roots, seen, path)
         seen[path] = true
         table.insert(roots, path)
     end
+end
+
+local function load_calibre_search_libraries()
+    local ok, Persist = pcall(require, "persist")
+    if not ok then
+        return nil
+    end
+    local cache = Persist:new{
+        path = DataStorage:getDataDir() .. "/cache/calibre/libraries.lua",
+    }
+    return cache:load()
 end
 
 local function scan_for_libraries(root_dir, roots, seen, depth)
@@ -65,6 +81,14 @@ function Metadata.library_roots()
     for _, key in ipairs({"SEARCH_LIBRARY_PATH", "SEARCH_LIBRARY_PATH2"}) do
         add_library_root(roots, seen, G_reader_settings:readSetting(key))
     end
+    local cached = load_calibre_search_libraries()
+    if type(cached) == "table" then
+        for path, enabled in pairs(cached) do
+            if enabled then
+                add_library_root(roots, seen, path)
+            end
+        end
+    end
     local scan_root
     if Device:isKobo() or Device:isCervantes() then
         scan_root = "/mnt"
@@ -83,6 +107,7 @@ function Metadata.json_path()
 end
 
 function Metadata.load_books()
+    library_roots = nil
     local path = Metadata.json_path()
     local handle = io.open(path, "r")
     if not handle then
@@ -102,9 +127,12 @@ end
 function Metadata.all_collection_names(books)
     local counts = {}
     for _, book in ipairs(books) do
-        local collections = book.collections or {}
+        local collections = book.collections
+        if type(collections) ~= "table" then
+            collections = {}
+        end
         for _, name in ipairs(collections) do
-            if name and name ~= "" then
+            if type(name) == "string" and name ~= "" then
                 counts[name] = (counts[name] or 0) + 1
             end
         end
@@ -120,11 +148,15 @@ function Metadata.all_collection_names(books)
 end
 
 function Metadata.books_in_collection(books, collection_name)
+    local target = string.lower(collection_name or "")
     local matches = {}
     for _, book in ipairs(books) do
-        local collections = book.collections or {}
+        local collections = book.collections
+        if type(collections) ~= "table" then
+            collections = {}
+        end
         for _, name in ipairs(collections) do
-            if name == collection_name then
+            if type(name) == "string" and string.lower(name) == target then
                 table.insert(matches, book)
                 break
             end
@@ -138,14 +170,24 @@ function Metadata.resolve_path(book)
         return nil
     end
     local lpath = book.lpath
-    if not lpath or lpath == "" then
+    if type(lpath) ~= "string" or lpath == "" then
         return nil
     end
     local rootpath = book.rootpath
-    if rootpath and rootpath ~= "" then
+    if type(rootpath) == "string" and rootpath ~= "" then
         local path = rootpath:gsub("/+$", "") .. "/" .. lpath
         if util.fileExists(path) then
             return path
+        end
+    end
+    local storage = book.storage
+    if type(storage) == "string" and (Device:isKobo() or Device:isCervantes()) then
+        local hinted = KOBO_STORAGE_ROOTS[storage]
+        if hinted then
+            local path = hinted .. "/" .. lpath
+            if util.fileExists(path) then
+                return path
+            end
         end
     end
     for _, root in ipairs(Metadata.library_roots()) do

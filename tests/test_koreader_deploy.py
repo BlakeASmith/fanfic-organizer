@@ -64,14 +64,22 @@ class _Device:
         card_prefix: str = "",
         *,
         plugboard: str = "KOBOTOUCH",
+        card_books: list[_Book] | None = None,
     ):
         self._books = books
+        self._card_books = card_books or []
         self._main_prefix = main_prefix
         self._card_a_prefix = card_prefix
         self.DEVICE_PLUGBOARD_NAME = plugboard
 
-    def books(self, main_memory=True):
-        return list(self._books)
+    def books(self, main_memory=True, oncard=None):
+        if oncard == "carda":
+            return list(self._card_books)
+        if oncard == "cardb":
+            return []
+        if main_memory:
+            return list(self._books)
+        return []
 
 
 def _seed_kobo_koreader(prefix: Path, *, subdir: str = ".adds/koreader") -> Path:
@@ -104,7 +112,33 @@ def test_build_collections_index_from_device_books(tmp_path: Path):
     assert len(entries) == 2
     assert entries[0]["lpath"] == "Author A/Alpha.epub"
     assert entries[0]["collections"] == ["Harry Potter", "Fluff"]
+    assert entries[0]["storage"] == "main"
     assert entries[1]["collections"] == []
+
+
+def test_build_collections_index_includes_sd_card_books(tmp_path: Path):
+    mount = tmp_path / "internal"
+    sd = tmp_path / "sd"
+    _seed_kobo_koreader(mount)
+    _seed_kobo_koreader(sd)
+    db = _Db(
+        {
+            1: _Meta("Internal", ["Author A"], ["Main"]),
+            2: _Meta("SD card", ["Author B"], ["SD"]),
+        }
+    )
+    device = _Device(
+        [_Book(1, "Internal.epub")],
+        str(mount),
+        str(sd),
+        card_books=[_Book(2, "SD/Title.epub")],
+    )
+    entries = build_collections_index(db, device)
+    assert len(entries) == 2
+    by_lpath = {entry["lpath"]: entry for entry in entries}
+    assert by_lpath["Internal.epub"]["storage"] == "main"
+    assert by_lpath["SD/Title.epub"]["storage"] == "carda"
+    assert by_lpath["SD/Title.epub"]["collections"] == ["SD"]
 
 
 def test_atomic_write_json(tmp_path: Path):

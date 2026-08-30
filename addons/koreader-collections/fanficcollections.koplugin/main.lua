@@ -1,9 +1,11 @@
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
+local DocumentRegistry = require("document/documentregistry")
 local Event = require("ui/event")
 local Menu = require("ui/widget/menu")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetContainer")
+local filemanagerutil = require("apps/filemanager/filemanagerutil")
 local _ = require("gettext")
 
 local Screen = Device.screen
@@ -14,10 +16,6 @@ local FanficCollections = WidgetContainer:extend{
 }
 
 function FanficCollections:init()
-    self:onDispatcherRegisterActions()
-end
-
-function FanficCollections:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 end
 
@@ -35,25 +33,44 @@ function FanficCollections:addToMainMenu(menu_items)
 end
 
 function FanficCollections:close_menu(menu)
-    if menu then
-        UIManager:close(menu)
+    if not menu then
+        return
     end
+    if menu.onClose then
+        menu:onClose()
+    end
+    UIManager:close(menu)
+end
+
+function FanficCollections:close_all_menus()
+    self:close_menu(self._books_menu)
+    self._books_menu = nil
+    self:close_menu(self._collection_menu)
+    self._collection_menu = nil
 end
 
 function FanficCollections:open_book(path)
     if not path then
+        UIManager:show(ConfirmBox:new{
+            text = _("Could not find this book on the device."),
+        })
+        return
+    end
+    if not DocumentRegistry:hasProvider(path) then
+        UIManager:show(ConfirmBox:new{
+            text = _("Could not open this file."),
+        })
         return
     end
     if self.ui.document then
         self.ui:switchDocument(path)
         return
     end
-    UIManager:broadcastEvent(Event:new("SetupShowReader"))
-    self:close_menu(self._books_menu)
-    self._books_menu = nil
-    self:close_menu(self._collection_menu)
-    self._collection_menu = nil
-    self.ui:openFile(path)
+    local function pre_callback()
+        UIManager:broadcastEvent(Event:new("SetupShowReader"))
+        self:close_all_menus()
+    end
+    filemanagerutil.openFile(self.ui, path, pre_callback, true)
 end
 
 function FanficCollections:show_collection_picker()
@@ -109,25 +126,19 @@ function FanficCollections:show_books_for_collection(books, collection_name)
     local items = {}
     for _, book in ipairs(matches) do
         local title = book.title or book.lpath or _("Unknown title")
-        local authors = ""
-        if book.authors and #book.authors > 0 then
-            authors = table.concat(book.authors, ", ")
+        local authors = book.authors
+        local author_text = ""
+        if type(authors) == "table" and #authors > 0 then
+            author_text = table.concat(authors, ", ")
         end
         local label = title
-        if authors ~= "" then
-            label = string.format("%s - %s", title, authors)
+        if author_text ~= "" then
+            label = string.format("%s - %s", title, author_text)
         end
         table.insert(items, {
             text = label,
             callback = function()
-                local path = Metadata.resolve_path(book)
-                if not path then
-                    UIManager:show(ConfirmBox:new{
-                        text = _("Could not find this book on the device."),
-                    })
-                    return
-                end
-                self:open_book(path)
+                self:open_book(Metadata.resolve_path(book))
             end,
         })
     end
