@@ -141,6 +141,8 @@ On first import into an empty library (or via the settings checkbox) it creates 
 | `#wordcount` | word count | AO3 word count |
 | Series | Series | first AO3 series name (built-in Calibre field) |
 | series index | | AO3 part number |
+| Publisher | Publisher | `Archive of Our Own` (built-in) |
+| Published | Published | AO3 published date, or search listing date when that is all we have (built-in `pubdate`) |
 | Tags | Tags | remaining cleaned tags + `Completed` |
 | identifiers | `url`, `ao3`, `ao3series` | work URL, work id, first series id |
 
