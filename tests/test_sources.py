@@ -22,13 +22,13 @@ def load_cleaned():
     return module
 
 
-def test_source_registry_lists_ao3_and_wikipedia():
+def test_source_registry_lists_ao3_wikipedia_and_web():
     from sources import all_sources, source_menu_labels
 
     ids = [s.id for s in all_sources()]
-    assert ids == ["wikipedia", "ao3"]
+    assert ids == ["wikipedia", "web", "ao3"]
     assert source_menu_labels(group="toolbar") == ("Search AO3 and import...",)
-    assert source_menu_labels(group="import") == ("Wikipedia...",)
+    assert source_menu_labels(group="import") == ("Wikipedia...", "URL or HTML...")
 
 
 def test_wikipedia_calibre_fields_use_wikipedia_identifier():
@@ -175,3 +175,126 @@ def test_wikipedia_url_parse_and_record_shape():
     assert record["tags"] == ["Doctor Who"]
     assert record["summary"] == "A time machine."
     assert record["date"] == "2020-05-01"
+
+
+def test_web_extract_metadata_and_article():
+    from ao3kit.sources.extract import extract_page
+    from ao3kit.sources.web import record_from_html, work_id_for_url
+
+    html = """
+    <html lang="en">
+    <head>
+      <title>Ignore me</title>
+      <meta property="og:title" content="The River Song Files"/>
+      <meta property="og:description" content="Spoilers."/>
+      <meta property="og:site_name" content="Example Fanfic"/>
+      <meta name="author" content="River Song"/>
+      <meta property="article:published_time" content="2021-03-15T10:00:00Z"/>
+      <meta name="keywords" content="Doctor Who, Time travel"/>
+    </head>
+    <body>
+      <nav><a href="/">Home</a></nav>
+      <article>
+        <h1>The River Song Files</h1>
+        <p>""" + ("Hello world. " * 40) + """</p>
+        <p>More paragraphs about adventures in time and space for the extract.</p>
+      </article>
+      <footer>Copyright</footer>
+    </body>
+    </html>
+    """
+    extracted = extract_page(html, url="https://example.com/river")
+    assert extracted.title == "The River Song Files"
+    assert extracted.author == "River Song"
+    assert extracted.summary == "Spoilers."
+    assert extracted.date == "2021-03-15"
+    assert extracted.language == "en"
+    assert "Doctor Who" in extracted.tags
+    assert "Hello world" in extracted.html_body
+    assert "<nav" not in extracted.html_body.casefold()
+
+    record = record_from_html(html, url="https://example.com/river")
+    assert record["source"] == "web"
+    assert record["work_id"] == work_id_for_url("https://example.com/river")
+    assert record["title"] == "The River Song Files"
+    assert record["author"] == "River Song"
+
+
+def test_web_calibre_fields_use_web_identifier():
+    mod = load_cleaned()
+    record = {
+        "source": "web",
+        "work_id": "abcd1234abcd1234",
+        "url": "https://example.com/post",
+        "title": "A post",
+        "author": "Author",
+        "summary": "Hello",
+        "tags": ["Example"],
+        "date": "2022-06-01",
+        "metadata": {"language": "en", "words": 90},
+    }
+    fields = mod.calibre_fields_for_record(record)
+    assert fields["source"] == "web"
+    assert fields["publisher"] == "Web"
+    assert fields["identifiers"]["web"] == "abcd1234abcd1234"
+    assert "ao3" not in fields["identifiers"]
+    assert fields["identifiers"]["url"] == record["url"]
+    assert fields["published"].isoformat() == "2022-06-01"
+
+
+def test_prepare_web_command_html_copies_file(tmp_path: Path):
+    from sources.web.run import prepare_web_command
+
+    html = tmp_path / "page.html"
+    html.write_text("<html><body><p>Hi</p></body></html>", encoding="utf-8")
+    work = tmp_path / "work"
+    argv, jsonl = prepare_web_command(
+        {
+            "html_path": str(html),
+            "url": "https://example.com/page",
+            "download_epubs": True,
+        },
+        work,
+    )
+    assert argv[:1] == ["web"]
+    assert "--html" in argv
+    assert "--page-url" in argv
+    assert "--epub" in argv
+    assert (work / "input.html").is_file()
+    assert jsonl == work / "results.jsonl"
+
+
+def test_write_web_epub(tmp_path: Path):
+    from ao3kit.sources.web_epub import write_web_epub
+    import zipfile
+
+    path = tmp_path / "epubs" / "abc.epub"
+    write_web_epub(
+        path,
+        title="Hello",
+        html_body="<p>Body text for the page.</p>",
+        url="https://example.com/hello",
+        work_id="abc",
+    )
+    assert path.is_file()
+    with zipfile.ZipFile(path) as zf:
+        assert zf.read("mimetype") == b"application/epub+zip"
+        chapter = zf.read("OEBPS/chapter.xhtml").decode("utf-8")
+        assert "Body text" in chapter
+
+
+def test_plan_web(tmp_path: Path):
+    from sources.web.plan import plan_web
+
+    html = tmp_path / "saved.html"
+    html.write_text("<html><body><article><p>" + ("x " * 80) + "</p></article></body></html>")
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    spec = plan_web(
+        {"html_path": str(html), "url": "https://example.com/x", "download_epubs": True},
+        job_dir,
+    )
+    assert spec["kind"] == "web"
+    assert spec["steps"][0][0] == "web"
+    assert (job_dir / "spec.json").is_file()
+

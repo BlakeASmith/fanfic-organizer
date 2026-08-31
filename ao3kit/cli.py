@@ -12,6 +12,7 @@ Usage:
   python -m ao3kit rate     # limiter snapshot + AO3 request log
   python -m ao3kit library  # estimate unmatched tags / missing EPUBs from JSONL
   python -m ao3kit wikipedia  # search/fetch Wikipedia articles to JSONL
+  python -m ao3kit web        # fetch URL or saved HTML → JSONL/EPUB
 """
 
 from __future__ import annotations
@@ -36,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "wikipedia",
         help="Search or fetch Wikipedia articles to JSONL (source=wikipedia)",
+    )
+    sub.add_parser(
+        "web",
+        help="Fetch a URL or saved HTML to JSONL/EPUB (source=web; best-effort)",
     )
     sub.add_parser(
         "tags",
@@ -89,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.sources.wikipedia import main as wikipedia_main
 
         return wikipedia_main(rest)
+
+    if command == "web":
+        from ao3kit.sources.web import main as web_main
+
+        return web_main(rest)
 
     if command == "tags":
         from ao3kit.tags.metadata import main as tags_main

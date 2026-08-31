@@ -48,15 +48,17 @@ class SourceAdapter(Protocol):
 def _load_adapters() -> list[Any]:
     try:
         from calibre_plugins.fanfic_organizer.sources.ao3 import Ao3Source
+        from calibre_plugins.fanfic_organizer.sources.web import WebSource
         from calibre_plugins.fanfic_organizer.sources.wikipedia import (
             WikipediaSource,
         )
     except ImportError:
         from sources.ao3 import Ao3Source
+        from sources.web import WebSource
         from sources.wikipedia import WikipediaSource
 
     # Specific sources before AO3 (the default catch-all).
-    return [WikipediaSource(), Ao3Source()]
+    return [WikipediaSource(), WebSource(), Ao3Source()]
 
 
 _ADAPTERS: list[Any] | None = None
