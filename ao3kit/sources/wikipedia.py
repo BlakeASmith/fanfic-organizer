@@ -203,12 +203,15 @@ def _page_to_record(page: dict[str, Any], *, lang: str) -> dict[str, Any] | None
     url = str(page.get("fullurl") or "").strip() or wiki_article_url(title, lang=lang)
     extract = str(page.get("extract") or "").strip()
     categories = _clean_categories(page.get("categories"))
-    revisions = page.get("revisions") or []
-    timestamp = None
-    if isinstance(revisions, list) and revisions:
-        first = revisions[0]
-        if isinstance(first, dict):
-            timestamp = first.get("timestamp")
+    # Prefer prop=info ``touched`` (works for multi-page queries). Revisions
+    # are only valid with rvlimit on a single page, so search batches omit them.
+    timestamp = page.get("touched")
+    if not timestamp:
+        revisions = page.get("revisions") or []
+        if isinstance(revisions, list) and revisions:
+            first = revisions[0]
+            if isinstance(first, dict):
+                timestamp = first.get("timestamp")
     words = page.get("length")
     # MediaWiki length is bytes; prefer search wordcount when present.
     wordcount = page.get("wordcount")
@@ -260,16 +263,17 @@ def fetch_pages(
         if not chunks:
             return []
         for chunk in chunks:
+            # Do not use prop=revisions + rvlimit here: MediaWiki rejects
+            # rvlimit / rvstart / … when titles or pageids list more than one
+            # page (invalidparammix). ``info`` already returns ``touched``.
             params: dict[str, Any] = {
                 "action": "query",
-                "prop": "extracts|info|categories|revisions",
+                "prop": "extracts|info|categories",
                 "exintro": "1",
                 "explaintext": "1",
                 "inprop": "url",
                 "cllimit": "50",
                 "clshow": "!hidden",
-                "rvprop": "timestamp",
-                "rvlimit": "1",
                 "format": "json",
                 "formatversion": "2",
                 **chunk,
