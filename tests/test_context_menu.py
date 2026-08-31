@@ -79,6 +79,8 @@ def test_menu_action_labels_toolbar_includes_open_in_ao3():
     assert labels[0] == cm.OPEN_IN_AO3_LABEL
     assert labels == cm.SELECTION_ACTION_LABELS + cm.GLOBAL_ACTION_LABELS
     assert "Search AO3 and import..." in labels
+    assert "Wikipedia..." not in labels
+    assert "Import" in labels
     assert "Tags and collections" in labels
     assert "Plugin settings..." in labels
 
