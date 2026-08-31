@@ -189,7 +189,7 @@ def attach_epub_to_record(
         try:
             from ao3kit.covers import maybe_stamp_downloaded_epub
 
-            err = maybe_stamp_downloaded_epub(path, updated, enabled=True)
+            err = maybe_stamp_downloaded_epub(path, updated, cover=True)
             if err:
                 updated["cover_error"] = err
         except Exception as exc:  # pragma: no cover — cover is best-effort

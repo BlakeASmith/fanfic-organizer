@@ -2,6 +2,15 @@
 
 Demos of Fanfic Organizer in Calibre. The plugin is the product; these files are recordings of the real UI, not mockups.
 
+
+## Wikipedia import
+
+**Import → Wikipedia…** searches or fetches a Wikipedia article, builds an EPUB from MediaWiki HTML (optional, on by default), and imports it with publisher Wikipedia and a `wikipedia` identifier.
+
+![TARDIS article imported from Wikipedia](wikipedia-import-library.png)
+
+Same path from the CLI: `python -m ao3kit wikipedia --url https://en.wikipedia.org/wiki/TARDIS --epub -o results.jsonl`.
+
 ## Open in AO3
 
 Library right-click → **Open in AO3** (top-level, with icon) opens the selected book’s AO3 works page in the browser from its `ao3` / `url` identifiers.[^open-in-ao3]
