@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
 KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
+WEBCOMPILE_ADDON_DIR = ROOT / "addons" / "webcompile-tampermonkey"
 OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
@@ -188,6 +189,14 @@ def iter_zip_entries(
                 continue
             rel = path.relative_to(KOREADER_ADDON_DIR).as_posix()
             entries.append((path, f"resources/koreader/{rel}"))
+    if WEBCOMPILE_ADDON_DIR.is_dir():
+        for path in sorted(WEBCOMPILE_ADDON_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".md", ".txt"}:
+                continue
+            rel = path.relative_to(WEBCOMPILE_ADDON_DIR).as_posix()
+            entries.append((path, f"resources/webcompile/{rel}"))
     return entries
 
 
