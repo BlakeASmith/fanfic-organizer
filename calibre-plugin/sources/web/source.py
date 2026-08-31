@@ -80,8 +80,17 @@ class WebSource:
         if not dialog.exec_():
             return None
         values = dialog.values()
-        prefs['last_web_url'] = values['url']
+        prefs['last_web_mode'] = values.get('mode') or 'single'
+        prefs['last_web_url'] = values.get('url') or ''
         prefs['last_web_html_path'] = values.get('html_path') or ''
+        prefs['last_web_seeds'] = '\n'.join(values.get('seeds') or [])
+        prefs['last_web_full_list'] = bool(values.get('full_list'))
+        prefs['last_web_expand'] = values.get('expand') or 'same_domain'
+        prefs['last_web_domains'] = ', '.join(values.get('domains') or [])
+        prefs['last_web_max_pages'] = int(values.get('max_pages') or 50)
+        prefs['last_web_max_depth'] = int(values.get('max_depth') or 2)
+        prefs['last_web_book_title'] = values.get('book_title') or ''
+        prefs['last_web_bundle_path'] = values.get('bundle_path') or ''
         prefs['web_build_epub'] = bool(values.get('download_epubs', True))
         prefs['update_existing'] = values['update_existing']
         return values
