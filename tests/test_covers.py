@@ -169,6 +169,55 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
     assert merged.fandom == "Doctor Who (2005)"
 
 
+def test_inject_cover_does_not_reuse_member_cover_href(tmp_path: Path):
+    """Omnibus member cover-image props must not capture the package cover path."""
+    from ao3kit.epub_merge import MemberSpec, merge_epubs
+
+    a = tmp_path / "a.epub"
+    b = tmp_path / "b.epub"
+    a.write_bytes(ao3_epub_bytes())
+    b.write_bytes(ao3_epub_bytes())
+    apply_cover_to_epub(
+        a,
+        info=CoverInfo(title="A", author="Ann"),
+        settings=CoverSettings(fields=["title", "author"], replace_existing=True),
+    )
+    omni = tmp_path / "omni.epub"
+    merge_epubs(
+        [MemberSpec("1", "A", a), MemberSpec("2", "B", b)],
+        omni,
+        title="Omni - Series",
+        series_id="9",
+        series_name="Omni",
+    )
+    apply_cover_to_epub(
+        omni,
+        record={
+            "title": "Omni - Series",
+            "source": "omnibus",
+            "identifiers": {"omnibus": "u"},
+            "members": [{"title": "A", "part": 1}, {"title": "B", "part": 2}],
+        },
+        settings=CoverSettings(
+            fields=["title", "author", "member_titles"],
+            replace_existing=True,
+        ),
+    )
+    with ZipFile(omni) as zf:
+        assert "media/cover.png" in zf.namelist()
+        opf = next(n for n in zf.namelist() if n.endswith(".opf"))
+        txt = zf.read(opf).decode()
+        assert 'href="media/cover.png"' in txt
+        assert 'content="cover-image"' in txt
+        import re
+
+        for match in re.finditer(r'<[^>]+href="m/[^"]+"[^>]*>', txt):
+            tag = match.group(0)
+            props = re.search(r'properties="([^"]*)"', tag)
+            if props:
+                assert "cover-image" not in props.group(1).split()
+
+
 def test_inject_cover_marks_opf_and_adds_image(tmp_path: Path):
     epub = tmp_path / "work.epub"
     epub.write_bytes(ao3_epub_bytes())

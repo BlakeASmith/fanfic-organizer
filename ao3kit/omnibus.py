@@ -399,6 +399,7 @@ def combine_to_path(
             kind=kind,
             title=book_title,
             series_id=series_id,
+            series_name=series_name,
             collection=collection,
             auto_update=auto_update,
             skip_prefaces_after_first=skip_prefaces_after_first,
@@ -421,10 +422,12 @@ def combine_to_path(
 def _maybe_stamp_omnibus_cover(epub_path: Path, record: dict[str, Any]) -> None:
     """Stamp a generated cover when cover.enabled (same as native downloads)."""
     try:
-        from ao3kit.covers import maybe_stamp_downloaded_epub
+        from ao3kit.covers import maybe_stamp_omnibus_epub
     except ImportError:
         return
-    maybe_stamp_downloaded_epub(Path(epub_path), record)
+    err = maybe_stamp_omnibus_epub(Path(epub_path), record)
+    if err:
+        print(f"omnibus cover: {err}", file=sys.stderr)
 
 
 def run_combine_manifest(manifest_path: str | Path) -> dict[str, Any]:

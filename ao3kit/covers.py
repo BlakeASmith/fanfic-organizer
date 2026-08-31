@@ -1680,6 +1680,25 @@ def extract_cover_bytes(path: str | Path) -> bytes | None:
         return None
 
 
+def _strip_other_cover_image_props(opf_root: ET.Element, keep_id: str) -> None:
+    """Ensure only ``keep_id`` carries the EPUB3 cover-image property."""
+    manifest = _find_child(opf_root, "manifest")
+    if manifest is None:
+        return
+    for item in _iter_local(manifest, "item"):
+        item_id = item.get("id") or ""
+        props = [p for p in (item.get("properties") or "").split() if p]
+        if "cover-image" not in props:
+            continue
+        if item_id == keep_id:
+            continue
+        props = [p for p in props if p != "cover-image"]
+        if props:
+            item.set("properties", " ".join(props))
+        elif "properties" in item.attrib:
+            del item.attrib["properties"]
+
+
 def _ensure_cover_refs(
     opf_root: ET.Element,
     *,
@@ -1705,9 +1724,11 @@ def _ensure_cover_refs(
     manifest = _find_child(opf_root, "manifest")
     if manifest is None:
         manifest = ET.SubElement(opf_root, f"{{{ns}}}manifest")
-    item, found_id = existing_cover_item(opf_root)
-    if found_id:
-        cover_id = found_id
+    item = None
+    for candidate in _iter_local(manifest, "item"):
+        if candidate.get("id") == cover_id:
+            item = candidate
+            break
     if item is None:
         item = ET.Element(f"{{{ns}}}item")
         manifest.insert(0, item)
@@ -1718,6 +1739,7 @@ def _ensure_cover_refs(
     if "cover-image" not in props:
         props.append("cover-image")
     item.set("properties", " ".join(props))
+    _strip_other_cover_image_props(opf_root, cover_id)
 
 
 COVER_PAGE_ID = "ao3-cover"
@@ -1754,8 +1776,7 @@ def _ensure_cover_page(
     page_item = None
     for item in _iter_local(manifest, "item"):
         href = (item.get("href") or "").replace("\\", "/")
-        name = href.rsplit("/", 1)[-1]
-        if item.get("id") == page_id or name == Path(page_href).name:
+        if item.get("id") == page_id or href == page_href:
             page_item = item
             page_id = item.get("id") or page_id
             page_href = item.get("href") or page_href
@@ -1861,14 +1882,22 @@ def inject_cover(
         href = settings.cover_href or f"media/cover.{ext}"
         if "." not in Path(href).name:
             href = f"{href}.{ext}"
-        elif item is not None and item.get("href"):
-            href = item.get("href") or href
+        # Never reuse a member-scoped cover path (omnibus m/<id>/…).
+        existing_href = (item.get("href") if item is not None else "") or ""
+        if (
+            item is not None
+            and existing_href
+            and not str(existing_href).replace("\\", "/").startswith("m/")
+            and "fanfic-organizer" not in str(existing_href)
+        ):
+            href = existing_href
+        package_cover_id = "cover-image"
         zip_cover = _join_zip(_opf_dir(opf_path), href)
         _ensure_cover_refs(
             opf_root,
             href=href,
             media_type=cover_media_type(settings),
-            cover_id=cover_id or "cover-image",
+            cover_id=package_cover_id,
         )
         page_href = _ensure_cover_page(opf_root)
         zip_page = _join_zip(_opf_dir(opf_path), page_href)
@@ -1909,6 +1938,28 @@ def inject_cover(
     return out
 
 
+def _record_is_omnibus(
+    record: dict[str, Any] | None,
+    epub_path: str | Path | None = None,
+) -> bool:
+    rec = record or {}
+    if str(rec.get("source") or "").strip().lower() == "omnibus":
+        return True
+    ids = rec.get("identifiers") if isinstance(rec.get("identifiers"), dict) else {}
+    if str(ids.get("omnibus") or "").strip():
+        return True
+    if isinstance(rec.get("omnibus"), dict) and rec["omnibus"].get("id"):
+        return True
+    if epub_path is not None:
+        try:
+            from ao3kit.epub_merge import read_omnibus_meta
+
+            return read_omnibus_meta(epub_path) is not None
+        except Exception:
+            return False
+    return False
+
+
 def apply_cover_to_epub(
     epub_path: str | Path,
     *,
@@ -1928,6 +1979,8 @@ def apply_cover_to_epub(
         return CoverOutcome(path=src, status="failed", error=str(exc))
     merged = merge_cover_info(info, cover_info_from_record(record), from_epub)
     attach_omnibus_members(merged, epub_path=src, record=record)
+    if _record_is_omnibus(record, src):
+        settings = omnibus_cover_settings(settings)
     if epub_has_cover(src) and not settings.replace_existing:
         if png_path:
             existing = extract_cover_bytes(src)
@@ -2061,6 +2114,48 @@ def maybe_stamp_downloaded_epub(
         return outcome.error
     return None
 
+
+def omnibus_cover_settings(base: CoverSettings | None = None) -> CoverSettings:
+    """Cover settings for omnibus EPUBs: skip huge fandom/relationship headers.
+
+    Enables member titles when neither omnibus member field is already on.
+    """
+    from ao3kit.config import merge_cover_settings
+
+    base = base or load_cover_settings()
+    fields = [
+        name
+        for name in base.fields
+        if name not in {"fandom", "relationship"}
+    ]
+    if "member_titles" not in fields and "member_parts" not in fields:
+        fields.append("member_titles")
+    return merge_cover_settings(
+        base,
+        fields=fields,
+        replace_existing=True,
+    )
+
+
+def maybe_stamp_omnibus_epub(
+    dest: Path,
+    record: dict[str, Any],
+    *,
+    cover: bool | None = None,
+    settings: CoverSettings | None = None,
+) -> str | None:
+    """Stamp an omnibus cover (member list, no fandom flood)."""
+    if cover is False:
+        return None
+    resolved = settings or load_cover_settings()
+    if cover is None and not resolved.enabled:
+        return None
+    return maybe_stamp_downloaded_epub(
+        dest,
+        record,
+        cover=True,
+        settings=omnibus_cover_settings(resolved),
+    )
 
 def _settings_from_args(args: argparse.Namespace) -> CoverSettings:
     base = load_cover_settings()

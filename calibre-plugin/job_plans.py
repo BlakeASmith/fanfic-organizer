@@ -313,6 +313,26 @@ def plan_complete_omnibus(
     if Path(existing_epub) != dest_existing:
         dest_existing.write_bytes(Path(existing_epub).read_bytes())
     argv, jsonl, dest = prepare_series_from_command(seed_records, work, forced)
+    # Pre-seed EPUBs already inside the omnibus so download skips them.
+    try:
+        from ao3kit.epub_merge import extract_member_epub, read_omnibus_meta
+
+        meta = read_omnibus_meta(dest_existing) or {}
+        epub_dir = dest / 'epubs'
+        epub_dir.mkdir(parents=True, exist_ok=True)
+        for mid in meta.get('member_ids') or []:
+            mid_s = str(mid).strip()
+            if not mid_s:
+                continue
+            out_epub = epub_dir / f'{mid_s}.epub'
+            if out_epub.is_file() and out_epub.stat().st_size > 0:
+                continue
+            try:
+                extract_member_epub(dest_existing, mid_s, out_epub)
+            except Exception:
+                continue
+    except Exception:
+        pass
     steps = [argv]
     out = jsonl
     if forced.get('simplify_tags'):

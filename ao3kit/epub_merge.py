@@ -209,6 +209,7 @@ def merge_epubs(
     kind: str = "selected",
     title: str | None = None,
     series_id: str = "",
+    series_name: str = "",
     collection: str = "",
     auto_update: bool = False,
     skip_prefaces_after_first: bool = True,
@@ -267,6 +268,7 @@ def merge_epubs(
         "id": oid,
         "kind": kind,
         "series_id": series_id or "",
+        "series_name": series_name or "",
         "collection": collection or "",
         "auto_update": bool(auto_update),
         "title": book_title,
@@ -875,8 +877,10 @@ def _copy_member_into(
                 continue
         new_id = f"{id_prefix}{old_id}"
         id_map[old_id] = new_id
-        # strip nav property if any
-        clean_props = " ".join(p for p in props.split() if p != "nav")
+        # strip nav / cover-image — package cover is stamped separately
+        clean_props = " ".join(
+            p for p in props.split() if p not in {"nav", "cover-image"}
+        )
         manifest_items.append(
             (new_id, new_href, item.get("media-type") or "application/octet-stream", clean_props)
         )

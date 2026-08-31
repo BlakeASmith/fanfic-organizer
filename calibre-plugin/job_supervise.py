@@ -1428,9 +1428,9 @@ class JobSupervisor:
             merged = None
 
         try:
-            from ao3kit.covers import maybe_stamp_downloaded_epub
+            from ao3kit.covers import maybe_stamp_omnibus_epub
 
-            maybe_stamp_downloaded_epub(out, merged or {'title': book_title})
+            maybe_stamp_omnibus_epub(out, merged or {'title': book_title})
         except Exception:
             pass
 

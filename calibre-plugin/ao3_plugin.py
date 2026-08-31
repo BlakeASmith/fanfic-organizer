@@ -1263,6 +1263,12 @@ class FanficOrganizerPlugin(InterfaceAction):
                     or (mi.series or '')
                     or ''
                 ).strip()
+                if not series_name:
+                    titled = str(meta.get('title') or mi.title or '').strip()
+                    if titled.casefold().endswith(' - series'):
+                        series_name = titled[: -len(' - Series')].rstrip()
+                    elif titled:
+                        series_name = titled
                 series_id = str(
                     ids.get('ao3series') or meta.get('series_id') or ''
                 ).strip()
