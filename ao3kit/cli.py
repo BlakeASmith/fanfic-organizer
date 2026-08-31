@@ -43,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Fetch a URL or saved HTML to JSONL/EPUB (source=web; best-effort)",
     )
     sub.add_parser(
+        "webcompile",
+        help="Compile linked web pages into one EPUB (delegates to webcompile package)",
+    )
+    sub.add_parser(
         "tags",
         help="Tag profiles, search, resolve, suggest, tag sets, graph, background cache",
     )
@@ -99,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.sources.web import main as web_main
 
         return web_main(rest)
+
+    if command == "webcompile":
+        from webcompile.cli import main as webcompile_main
+
+        return webcompile_main(rest)
 
     if command == "tags":
         from ao3kit.tags.metadata import main as tags_main

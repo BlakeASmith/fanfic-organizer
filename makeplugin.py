@@ -24,7 +24,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
+WEBCOMPILE_DIR = ROOT / "webcompile"
 KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
+WEBCOMPILE_ADDON_DIR = ROOT / "addons" / "webcompile-tampermonkey"
 OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
@@ -147,6 +149,7 @@ def iter_zip_entries(
     *,
     plugin_dir: Path = PLUGIN_DIR,
     ao3kit_dir: Path = AO3KIT_DIR,
+    webcompile_dir: Path = WEBCOMPILE_DIR,
     vendor_dir: Path | None = None,
 ) -> list[tuple[Path, str]]:
     """``(filesystem path, zip arcname)`` for a release plugin zip."""
@@ -167,6 +170,14 @@ def iter_zip_entries(
             if not path.is_file() or path.suffix.lower() != ".png":
                 continue
             entries.append((path, path.relative_to(plugin_dir).as_posix()))
+    resources_dir = plugin_dir / "resources"
+    if resources_dir.is_dir():
+        for path in sorted(resources_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".json", ".txt", ".md", ".lua"}:
+                continue
+            entries.append((path, path.relative_to(plugin_dir).as_posix()))
     if not (ao3kit_dir / "__init__.py").is_file():
         raise SystemExit(f"Missing ao3kit package: {ao3kit_dir}")
     for path in sorted(ao3kit_dir.rglob("*")):
@@ -174,6 +185,12 @@ def iter_zip_entries(
             continue
         rel = path.relative_to(ao3kit_dir).as_posix()
         entries.append((path, f"ao3kit/{rel}"))
+    if webcompile_dir.is_dir() and (webcompile_dir / "__init__.py").is_file():
+        for path in sorted(webcompile_dir.rglob("*")):
+            if not path.is_file() or _should_skip(path, webcompile_dir):
+                continue
+            rel = path.relative_to(webcompile_dir).as_posix()
+            entries.append((path, f"webcompile/{rel}"))
     if vendor_dir is not None:
         for path in sorted(vendor_dir.rglob("*")):
             if not path.is_file() or _should_skip(path, vendor_dir):
@@ -188,6 +205,18 @@ def iter_zip_entries(
                 continue
             rel = path.relative_to(KOREADER_ADDON_DIR).as_posix()
             entries.append((path, f"resources/koreader/{rel}"))
+    if WEBCOMPILE_ADDON_DIR.is_dir():
+        for path in sorted(WEBCOMPILE_ADDON_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".md", ".txt"}:
+                continue
+            rel = path.relative_to(WEBCOMPILE_ADDON_DIR).as_posix()
+            arc = f"resources/webcompile/{rel}"
+            # Prefer the copy under calibre-plugin/resources when both exist.
+            if any(existing == arc for _src, existing in entries):
+                continue
+            entries.append((path, arc))
     return entries
 
 
