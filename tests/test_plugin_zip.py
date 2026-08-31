@@ -20,6 +20,11 @@ def test_iter_zip_entries_includes_ao3kit_and_launcher():
     assert "plugin-import-name-fanfic_organizer.txt" in names
     assert "images/icon.png" in names
     assert "images/open-in-ao3.png" in names
+    assert "sources/__init__.py" in names
+    assert "sources/ao3.py" in names
+    assert "sources/wikipedia/__init__.py" in names
+    assert "sources/wikipedia/source.py" in names
+    assert "sources/wikipedia/dialog.py" in names
     assert "ao3kit/__init__.py" in names
     assert "ao3kit/cli.py" in names
     assert "ao3kit/htmlsoup.py" in names
@@ -37,6 +42,8 @@ def test_build_zip_no_vendor(tmp_path: Path):
     assert "ao3kit/__init__.py" in names
     assert "run_ao3kit.py" in names
     assert "ao3_plugin.py" in names
+    assert "sources/__init__.py" in names
+    assert "sources/wikipedia/dialog.py" in names
     assert "images/icon.png" in names
     assert "images/open-in-ao3.png" in names
     assert not any(name.endswith(".so") for name in names)
