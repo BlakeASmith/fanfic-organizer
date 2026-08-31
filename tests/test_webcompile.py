@@ -12,15 +12,13 @@ from ao3kit.webcompile.bundle import load_bundle, write_bundle
 from ao3kit.webcompile.crawl import (
     extract_links,
     link_allowed,
-    pages_from_html_files,
 )
 from ao3kit.webcompile.epub import write_compiled_epub
 from ao3kit.webcompile.models import (
-    CompiledChapter,
     CrawledPage,
     ExpandMode,
 )
-from ao3kit.webcompile.pipeline import compile_from_crawl, compile_html_files
+from ao3kit.webcompile.pipeline import compile_html_files
 from ao3kit.webcompile.preprocess import preprocess_pages, rewrite_internal_links
 from ao3kit.webcompile.userscript import resolve_userscript
 
