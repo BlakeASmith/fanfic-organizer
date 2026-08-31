@@ -17,6 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Features
 
+- Add **Import → URL or HTML…**: best-effort fetch of a static HTML URL (or a browser-exported HTML file for dynamic sites), extract title/author/summary/date/tags when present, and build an EPUB with a generated cover (`python -m ao3kit web`). Warns that JavaScript-rendered pages often fail without a saved HTML file.
 - Add a pluggable **content source** layer and **Import → Wikipedia…**: search or paste a Wikipedia URL; articles import with a `wikipedia` identifier, Wikipedia publisher, summary, and category tags. Optional **Build EPUB** (on by default) renders MediaWiki HTML into an EPUB with a generated cover (`python -m ao3kit wikipedia --epub`). AO3 stays the top-level Search action; source-specific UI lives under `sources/`.
 - Populate Calibre’s built-in **Publisher** (`Archive of Our Own`) and **Published** (AO3 published / listing date) on import, Fill from AO3, and simplify writeback.
 - Add **Open in AO3** as a top-level library right-click action (teal icon) and on the Fanfic Organizer toolbar menu to open selected books on archiveofourown.org from their `ao3` / `url` identifiers ([demo](demos/README.md#open-in-ao3)).
