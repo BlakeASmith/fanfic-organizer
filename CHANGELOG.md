@@ -34,6 +34,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
+- Fix **Import → Wikipedia…** search failing with MediaWiki ``invalidparammix`` when a query returns more than one page (``rvlimit`` is single-page only; page date now comes from ``info.touched``).
 - Fix preview/release plugin zips omitting the nested ``sources/`` package (Import → Wikipedia and source registry), which caused ``ModuleNotFoundError: No module named 'calibre_plugins.fanfic_organizer.sources'`` when opening the toolbar menu.
 - Fix the bundled **Fanfic collections** KOReader plugin crashing on load: define the plugin with `WidgetContainer:extend` so Calibre can instantiate it with a UI handle, resolve book paths from the deployed ``fanfic.collections.json`` (``lpath``, ``storage``, and ``filename`` hints plus Kobo/Android storage roots, case-insensitive checks, and bounded filename search — not Calibre ``metadata.calibre`` on the device), include SD-card books in deploy JSON, open collection books through the File Manager search path, and show a debug dialog instead of crashing when load/open/path lookup fails.
 - Fix **Deploy to KOReader…** reporting **0 book(s)** when the library has matched on-device books: use Calibre’s matched device booklists and ``application_id`` (not ``db_id``) to read ``#collections``.

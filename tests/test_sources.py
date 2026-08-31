@@ -164,7 +164,7 @@ def test_wikipedia_url_parse_and_record_shape():
             "fullurl": "https://en.wikipedia.org/wiki/TARDIS",
             "extract": "A time machine.",
             "categories": [{"title": "Category:Doctor Who"}],
-            "revisions": [{"timestamp": "2020-05-01T12:00:00Z"}],
+            "touched": "2020-05-01T12:00:00Z",
             "wordcount": 400,
         },
         lang="en",
@@ -175,3 +175,57 @@ def test_wikipedia_url_parse_and_record_shape():
     assert record["tags"] == ["Doctor Who"]
     assert record["summary"] == "A time machine."
     assert record["date"] == "2020-05-01"
+    # Revisions remain a fallback when ``touched`` is absent (single-page callers).
+    via_rev = _page_to_record(
+        {
+            "pageid": 100,
+            "title": "TARDIS",
+            "fullurl": "https://en.wikipedia.org/wiki/TARDIS",
+            "revisions": [{"timestamp": "2019-01-02T00:00:00Z"}],
+        },
+        lang="en",
+    )
+    assert via_rev is not None
+    assert via_rev["date"] == "2019-01-02"
+
+
+def test_fetch_pages_omits_rvlimit_for_multipage(monkeypatch):
+    """MediaWiki rejects rvlimit when titles/pageids list more than one page."""
+    from ao3kit.sources import wikipedia as wiki
+
+    captured: list[dict] = []
+
+    def fake_api_get(session, api_url, params, *, on_status=None):
+        captured.append(dict(params))
+        return {
+            "query": {
+                "pages": [
+                    {
+                        "pageid": 1,
+                        "title": "A",
+                        "fullurl": "https://en.wikipedia.org/wiki/A",
+                        "touched": "2024-01-01T00:00:00Z",
+                        "extract": "a",
+                    },
+                    {
+                        "pageid": 2,
+                        "title": "B",
+                        "fullurl": "https://en.wikipedia.org/wiki/B",
+                        "touched": "2024-02-01T00:00:00Z",
+                        "extract": "b",
+                    },
+                ]
+            }
+        }
+
+    monkeypatch.setattr(wiki, "_api_get", fake_api_get)
+    records = wiki.fetch_pages(pageids=[1, 2], lang="en")
+    assert len(records) == 2
+    assert len(captured) == 1
+    params = captured[0]
+    assert "rvlimit" not in params
+    assert "rvprop" not in params
+    assert "revisions" not in str(params.get("prop", ""))
+    assert params["pageids"] == "1|2"
+    assert records[0]["date"] == "2024-01-01"
+    assert records[1]["date"] == "2024-02-01"
