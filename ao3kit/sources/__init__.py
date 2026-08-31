@@ -1,4 +1,4 @@
-"""External content sources (AO3, Wikipedia, …)."""
+"""External content sources (AO3, Wikipedia, generic web, …)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from ao3kit.sources.base import (
     KNOWN_SOURCES,
     PUBLISHERS,
     SOURCE_AO3,
+    SOURCE_WEB,
     SOURCE_WIKIPEDIA,
     normalize_source,
     publisher_for_source,
@@ -19,6 +20,7 @@ __all__ = [
     "KNOWN_SOURCES",
     "PUBLISHERS",
     "SOURCE_AO3",
+    "SOURCE_WEB",
     "SOURCE_WIKIPEDIA",
     "normalize_source",
     "publisher_for_source",
