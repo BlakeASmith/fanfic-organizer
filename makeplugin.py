@@ -154,8 +154,12 @@ def iter_zip_entries(
     import_name = plugin_dir / "plugin-import-name-fanfic_organizer.txt"
     if not import_name.exists():
         raise SystemExit(f"Missing required file: {import_name}")
-    for path in sorted(plugin_dir.glob("*.py")):
-        entries.append((path, path.name))
+    # Nested packages (e.g. sources/) must ship in the fat zip; Calibre loads
+    # them as calibre_plugins.fanfic_organizer.<pkg>.
+    for path in sorted(plugin_dir.rglob("*.py")):
+        if not path.is_file() or _should_skip(path, plugin_dir):
+            continue
+        entries.append((path, path.relative_to(plugin_dir).as_posix()))
     entries.append((import_name, import_name.name))
     images_dir = plugin_dir / "images"
     if images_dir.is_dir():
