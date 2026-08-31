@@ -257,6 +257,18 @@ class ConfigWidget(QWidget):
         )
         defaults_form.addRow(self.download_epubs)
 
+        self.omnibus_auto_update = QCheckBox(
+            'Auto-update collection omnibus EPUBs when membership changes'
+        )
+        self.omnibus_auto_update.setChecked(
+            bool(prefs.get('omnibus_auto_update_collections', True))
+        )
+        self.omnibus_auto_update.setToolTip(
+            'After recompute / add-to-collection, append or shrink managed '
+            'collection omnibuses. Per-omnibus auto-update must also be on.'
+        )
+        defaults_form.addRow(self.omnibus_auto_update)
+
         self.simplify_tags = QCheckBox(
             'Simplify tags, fandoms & relationships (AO3 canonical + user rules)'
         )
@@ -483,6 +495,7 @@ class ConfigWidget(QWidget):
         prefs['ao3_password'] = self.password.text()
         prefs['last_max_results'] = self.max_results.text().strip() or '25'
         prefs['download_epubs'] = self.download_epubs.isChecked()
+        prefs['omnibus_auto_update_collections'] = self.omnibus_auto_update.isChecked()
         prefs['simplify_tags'] = self.simplify_tags.isChecked()
         prefs['drop_unmarked'] = self.drop_unmarked.isChecked()
         prefs['update_existing'] = self.update_existing.isChecked()

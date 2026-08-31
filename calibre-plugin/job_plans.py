@@ -763,3 +763,122 @@ def merge_identify_ready(
         updated['title'] = record.get('title') or item.get('title')
         merged.append(updated)
     return merged
+
+
+def plan_omnibus_combine(manifest: dict, job_dir: Path) -> dict[str, Any]:
+    """Run ``epub combine --manifest …`` then ingest omnibus."""
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    manifest_path = work / 'combine.json'
+    write_json(manifest_path, manifest)
+    kind = str(manifest.get('kind') or 'selected')
+    title = str(manifest.get('title') or 'Omnibus')
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Combine EPUB · {title}',
+            'kind': f'omnibus_{kind}',
+            'steps': [['epub', 'combine', '--manifest', str(manifest_path)]],
+            'plugin': {
+                'action': 'apply_omnibus',
+                'work_dir': str(work),
+                'manifest': str(manifest_path),
+                'update_existing': True,
+                'skip_existing_epub': False,
+            },
+            'result': {
+                'source': 'json_field',
+                'path': str(work / 'combine_result.json'),
+                'field': 'omnibus_id',
+                'label': 'omnibus',
+            },
+        },
+    )
+
+
+def plan_omnibus_explode(
+    epub_path: Path,
+    job_dir: Path,
+    *,
+    omnibus_book_id: int,
+    delete_omnibus: bool = False,
+) -> dict[str, Any]:
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    out_dir = work / 'exploded'
+    jsonl = work / 'exploded.jsonl'
+    return _write_spec(
+        job_dir,
+        {
+            'title': 'Explode omnibus',
+            'kind': 'omnibus_explode',
+            'steps': [
+                [
+                    'epub',
+                    'explode',
+                    '--from',
+                    str(epub_path),
+                    '--out-dir',
+                    str(out_dir),
+                    '--jsonl-out',
+                    str(jsonl),
+                ]
+            ],
+            'plugin': {
+                'action': 'apply_omnibus_explode',
+                'jsonl': str(jsonl),
+                'bundle_root': str(out_dir),
+                'omnibus_book_id': omnibus_book_id,
+                'delete_omnibus': bool(delete_omnibus),
+                'update_existing': True,
+                'skip_existing_epub': True,
+            },
+            'result': _jsonl_result(jsonl, label='member'),
+        },
+    )
+
+
+def plan_omnibus_sync(
+    *,
+    omnibus_epub: Path,
+    job_dir: Path,
+    add_paths: list[str] | None = None,
+    add_ids: list[str] | None = None,
+    remove_ids: list[str] | None = None,
+    records_jsonl: Path | None = None,
+    omnibus_book_id: int | None = None,
+    title: str = 'Update collection omnibus',
+) -> dict[str, Any]:
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    out = work / 'omnibus.epub'
+    argv = [
+        'epub',
+        'sync-collection',
+        '--omnibus',
+        str(omnibus_epub),
+        '--out',
+        str(out),
+    ]
+    if remove_ids:
+        argv.extend(['--remove-ids', *remove_ids])
+    if add_paths:
+        argv.extend(['--add-from', *add_paths])
+    if add_ids:
+        argv.extend(['--add-ids', *add_ids])
+    if records_jsonl:
+        argv.extend(['--records-jsonl', str(records_jsonl)])
+    return _write_spec(
+        job_dir,
+        {
+            'title': title,
+            'kind': 'omnibus_sync',
+            'steps': [argv],
+            'plugin': {
+                'action': 'apply_omnibus_sync',
+                'epub': str(out),
+                'omnibus_book_id': omnibus_book_id,
+            },
+            'result': {'source': 'last_log', 'label': 'omnibus'},
+        },
+    )
