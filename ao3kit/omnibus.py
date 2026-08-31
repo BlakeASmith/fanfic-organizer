@@ -25,6 +25,16 @@ from ao3kit.epub_merge import (
 COMPLETED_TAG = "Completed"
 
 
+def series_omnibus_title(series_name: str) -> str:
+    """Calibre title for a series omnibus: ``{series name} - Series``."""
+    name = str(series_name or "").strip()
+    if not name:
+        return "Series"
+    if name.casefold().endswith(" - series"):
+        return name
+    return f"{name} - Series"
+
+
 def member_id_from_record(record: dict[str, Any]) -> str:
     for key in ("work_id", "member_id"):
         text = str(record.get(key) or "").strip()
@@ -125,6 +135,28 @@ def _field_list(record: dict[str, Any], *keys: str) -> list[str]:
     return []
 
 
+def _member_part(record: dict[str, Any]) -> int | None:
+    for key in ("series_index", "position", "part"):
+        raw = record.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            return int(float(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    for entry in record.get("series") or []:
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("position")
+        if raw in (None, ""):
+            continue
+        try:
+            return int(float(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def merge_omnibus_record(
     members: Sequence[dict[str, Any]],
     *,
@@ -138,6 +170,16 @@ def merge_omnibus_record(
 ) -> dict[str, Any]:
     """Build one JSONL-shaped work record for an omnibus row."""
     member_ids = [member_id_from_record(m) for m in members]
+    member_rows: list[dict[str, Any]] = []
+    for m in members:
+        mid = member_id_from_record(m)
+        member_rows.append(
+            {
+                "member_id": mid,
+                "title": str(m.get("title") or mid),
+                "part": _member_part(m),
+            }
+        )
     authors = _ordered_union(*(_field_list(m, "authors", "author") or _as_list(m.get("author")) for m in members))
     # author field often a string
     if not authors:
@@ -218,6 +260,7 @@ def merge_omnibus_record(
         "summary": summary,
         "identifiers": identifiers,
         "series": series_payload,
+        "members": member_rows,
         "metadata": {
             "words": words,
             "published": pubdate,
@@ -371,7 +414,17 @@ def combine_to_path(
             auto_update=auto_update,
         )
     record["epub_file"] = dest.name
+    _maybe_stamp_omnibus_cover(path, record)
     return path, record
+
+
+def _maybe_stamp_omnibus_cover(epub_path: Path, record: dict[str, Any]) -> None:
+    """Stamp a generated cover when cover.enabled (same as native downloads)."""
+    try:
+        from ao3kit.covers import maybe_stamp_downloaded_epub
+    except ImportError:
+        return
+    maybe_stamp_downloaded_epub(Path(epub_path), record)
 
 
 def run_combine_manifest(manifest_path: str | Path) -> dict[str, Any]:

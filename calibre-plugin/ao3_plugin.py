@@ -859,6 +859,7 @@ class FanficOrganizerPlugin(InterfaceAction):
             export_member_epubs,
             find_omnibus_book_id,
             members_for_series,
+            series_omnibus_title,
             write_combine_inputs,
         )
         from calibre_plugins.fanfic_organizer.job_plans import plan_omnibus_combine
@@ -947,7 +948,7 @@ class FanficOrganizerPlugin(InterfaceAction):
             work,
             exported,
             kind='series',
-            title=series_name or f'Series {series_id}',
+            title=series_omnibus_title(series_name or f'Series {series_id}'),
             series_id=series_id,
             series_name=series_name,
             include_prefaces=bool(payload.get('include_prefaces')),
@@ -1208,39 +1209,162 @@ class FanficOrganizerPlugin(InterfaceAction):
             return
 
         from pathlib import Path
+        import shutil
+        import tempfile
 
-        from calibre_plugins.fanfic_organizer.job_plans import plan_complete_selected
+        from calibre_plugins.fanfic_organizer.job_plans import (
+            plan_complete_omnibus,
+            plan_complete_selected,
+        )
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            is_omnibus_book,
+            member_id_from_record,
+            read_omnibus_meta,
+            read_omnibus_members,
+            series_omnibus_title,
+        )
         from calibre_plugins.fanfic_organizer.selected import (
             copy_book_epub,
             load_selected_records,
         )
 
-        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
-        if not ready:
+        db = self.gui.current_db
+        normal_ids = [b for b in book_ids if not is_omnibus_book(db, b)]
+        omnibus_ids = [b for b in book_ids if is_omnibus_book(db, b)]
+        options = merge_plugin_settings({}, plugin_runtime_settings())
+        started = 0
+
+        for oid in omnibus_ids:
+            tmp = Path(tempfile.mkdtemp(prefix='omnibus-complete-'))
+            epub = tmp / 'o.epub'
+            if not copy_book_epub(db, int(oid), epub):
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    f'Could not read omnibus EPUB for book {oid}.',
+                    show=True,
+                )
+                continue
+            try:
+                members = [
+                    m for m in read_omnibus_members(epub) if m.get('active', True)
+                ]
+                meta = read_omnibus_meta(epub) or {}
+            except ImportError as exc:
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(self.gui, 'Fanfic Organizer', str(exc), show=True)
+                continue
+            try:
+                mi = db.get_metadata(oid, index_is_id=True)
+                ids = mi.get_identifiers() or {}
+                series_name = (
+                    str(meta.get('series_name') or '')
+                    or (mi.series or '')
+                    or ''
+                ).strip()
+                series_id = str(
+                    ids.get('ao3series') or meta.get('series_id') or ''
+                ).strip()
+                omnibus_id = str(ids.get('omnibus') or meta.get('id') or '')
+                book_title = series_omnibus_title(
+                    series_name
+                    or (f'Series {series_id}' if series_id else (mi.title or ''))
+                )
+            except Exception:
+                series_name = str(meta.get('series_name') or '')
+                series_id = str(meta.get('series_id') or '')
+                omnibus_id = str(meta.get('id') or '')
+                book_title = series_omnibus_title(
+                    series_name
+                    or (f'Series {series_id}' if series_id else 'Series')
+                )
+            seeds = []
+            for m in members:
+                mid = member_id_from_record(m)
+                if not mid or str(mid).startswith('omnibus-'):
+                    continue
+                row = dict(m)
+                row.setdefault('work_id', mid)
+                if series_id:
+                    row.setdefault(
+                        'series',
+                        [
+                            {
+                                'series_id': series_id,
+                                'name': series_name or series_id,
+                                'url': f'https://archiveofourown.org/series/{series_id}',
+                            }
+                        ],
+                    )
+                seeds.append(row)
+            if not seeds:
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    'This omnibus has no AO3 member works to complete from.',
+                    show=True,
+                )
+                continue
+            if not series_id:
+                # Still allow series-from via member work pages when ao3series missing.
+                pass
+            job_dir = self.jobs().prepare_job_dir('complete')
+            if job_dir is None:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return
+            plan_complete_omnibus(
+                omnibus_book_id=int(oid),
+                seed_records=seeds,
+                existing_epub=epub,
+                job_dir=Path(job_dir),
+                options=options,
+                title=book_title,
+                series_id=series_id,
+                series_name=series_name,
+                omnibus_id=omnibus_id,
+            )
+            shutil.rmtree(tmp, ignore_errors=True)
+            self.jobs().start_prepared(job_dir)
+            started += 1
+
+        if normal_ids:
+            ready, skipped = load_selected_records(db, normal_ids)
+            if not ready and not started:
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    'None of the selected books have an AO3 URL or work id.',
+                    show=True,
+                )
+                return
+            if ready:
+                job_dir = self.jobs().prepare_job_dir('complete')
+                if job_dir is None:
+                    return
+                epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+                epub_dir.mkdir(parents=True, exist_ok=True)
+                for item in ready:
+                    work_id = str((item.get('record') or {}).get('work_id') or '').strip()
+                    if work_id:
+                        copy_book_epub(db, item['book_id'], epub_dir / f'{work_id}.epub')
+                plan_complete_selected(
+                    [item['record'] for item in ready],
+                    skipped,
+                    job_dir,
+                    options,
+                )
+                self.jobs().start_prepared(job_dir)
+                started += 1
+
+        if not started:
             error_dialog(
                 self.gui,
                 'Fanfic Organizer',
-                'None of the selected books have an AO3 URL or work id.',
+                'Nothing to complete (need AO3 works or a series omnibus).',
                 show=True,
             )
-            return
-        job_dir = self.jobs().prepare_job_dir('complete')
-        if job_dir is None:
-            return
-        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
-        epub_dir.mkdir(parents=True, exist_ok=True)
-        db = self.gui.current_db
-        for item in ready:
-            work_id = str((item.get('record') or {}).get('work_id') or '').strip()
-            if work_id:
-                copy_book_epub(db, item['book_id'], epub_dir / f'{work_id}.epub')
-        plan_complete_selected(
-            [item['record'] for item in ready],
-            skipped,
-            job_dir,
-            merge_plugin_settings({}, plugin_runtime_settings()),
-        )
-        self.jobs().start_prepared(job_dir)
 
     def fill_selected_from_ao3(self):
         book_ids = list(self.gui.library_view.get_selected_ids())

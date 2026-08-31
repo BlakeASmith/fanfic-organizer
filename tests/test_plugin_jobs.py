@@ -288,6 +288,42 @@ def test_plan_complete_selected_does_series_download_and_enrich(tmp_path: Path):
     assert written["steps"] == spec["steps"]
 
 
+def test_plan_complete_omnibus(tmp_path: Path):
+    plans = load_job_plans()
+    job_dir = tmp_path / "complete-omni"
+    existing = tmp_path / "existing.epub"
+    existing.write_bytes(b"PK\x03\x04fake")
+    spec = plans.plan_complete_omnibus(
+        omnibus_book_id=42,
+        seed_records=[
+            {
+                "work_id": "1",
+                "title": "Part 1",
+                "series": [{"series_id": "99", "name": "Quest"}],
+            }
+        ],
+        existing_epub=existing,
+        job_dir=job_dir,
+        options={"download_epubs": False, "simplify_tags": False},
+        title="Quest - Series",
+        series_id="99",
+        series_name="Quest",
+        omnibus_id="u-omni",
+    )
+    assert spec["kind"] == "complete_omnibus"
+    assert "Quest - Series" in spec["title"]
+    assert spec["steps"][0][0] == "scrape"
+    assert "--series-from" in spec["steps"][0]
+    assert "--download" in spec["steps"][0]
+    assert spec["steps"][1][:2] == ["tags", "enrich"]
+    plug = spec["plugin"]
+    assert plug["action"] == "complete_omnibus"
+    assert plug["omnibus_book_id"] == 42
+    assert plug["series_id"] == "99"
+    assert plug["title"] == "Quest - Series"
+    assert Path(plug["existing_epub"]).is_file()
+
+
 def test_plan_graph_serve_is_singleton_job(tmp_path: Path):
     plans = load_job_plans()
     scrape = load_scrape_run()

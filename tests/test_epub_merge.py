@@ -16,7 +16,14 @@ from ao3kit.epub_merge import (
     remove_members,
     reorder_members,
 )
-from ao3kit.omnibus import merge_omnibus_record, sort_collection_members
+from ao3kit.omnibus import merge_omnibus_record, series_omnibus_title, sort_collection_members
+
+
+def test_series_omnibus_title():
+    assert series_omnibus_title("Time Storm") == "Time Storm - Series"
+    assert series_omnibus_title("Time Storm - Series") == "Time Storm - Series"
+    assert series_omnibus_title("") == "Series"
+    assert series_omnibus_title("  ") == "Series"
 
 
 def _mini_epub(path: Path, *, title: str, chapters: list[tuple[str, str]]) -> Path:
@@ -222,5 +229,7 @@ def test_merge_omnibus_record_and_sort():
     assert merged["cleaned"]["word_count"] == 150
     assert "Fluff" in merged["cleaned"]["tags"]
     assert "Angst" in merged["cleaned"]["tags"]
+    assert [m["title"] for m in merged["members"]] == ["A", "B"]
+    assert [m["member_id"] for m in merged["members"]] == ["1", "2"]
     assert merged["cleaned"]["complete"] is True
     assert "My Collection" in merged["cleaned"]["collections"]

@@ -37,6 +37,13 @@ def member_id_from_record(record: dict[str, Any]) -> str:
     return _impl(record)
 
 
+def series_omnibus_title(series_name: str) -> str:
+    _ensure_ao3kit()
+    from ao3kit.omnibus import series_omnibus_title as _impl
+
+    return _impl(series_name)
+
+
 def sort_collection_members(records):
     _ensure_ao3kit()
     from ao3kit.omnibus import sort_collection_members as _impl

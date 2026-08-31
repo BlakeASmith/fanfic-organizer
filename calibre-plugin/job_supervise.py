@@ -792,6 +792,8 @@ class JobSupervisor:
             return self._ingest_omnibus_explode(plugin)
         if action == 'apply_omnibus_sync':
             return self._ingest_omnibus_sync(plugin)
+        if action == 'complete_omnibus':
+            return self._ingest_complete_omnibus(plugin)
         return f'Unknown ingest action {action!r}.', ''
 
     def _import_records_for_plugin(
@@ -1302,6 +1304,145 @@ class JobSupervisor:
         add_epub_format(self.gui.current_db, int(book_id), epub, replace=True)
         refresh_library_ui(self.gui, [int(book_id)])
         return 'Updated collection omnibus EPUB.', epub.name
+
+    def _ingest_complete_omnibus(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        """Import series mates, append new EPUBs onto the omnibus, refresh metadata."""
+        from calibre_plugins.fanfic_organizer.importer import (
+            add_epub_format,
+            refresh_library_ui,
+            write_layout_fields,
+            set_book_tags,
+            build_metadata,
+        )
+        from calibre_plugins.fanfic_organizer.jsonl_loader import (
+            load_jsonl_records,
+            resolve_epub_path,
+        )
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            member_id_from_record,
+            merge_omnibus_record,
+            read_omnibus_meta,
+            series_omnibus_title,
+        )
+        from calibre_plugins.fanfic_organizer.runtime import ensure_ao3kit_importable
+
+        omnibus_book_id = plugin.get('omnibus_book_id')
+        existing = Path(str(plugin.get('existing_epub') or ''))
+        if omnibus_book_id is None or not existing.is_file():
+            return 'Complete omnibus missing book id or existing EPUB.', ''
+        omnibus_book_id = int(omnibus_book_id)
+
+        # Reuse normal import for series mates / metadata.
+        import_summary, import_detail = self._ingest_import(
+            {
+                'jsonl': plugin.get('jsonl'),
+                'bundle_root': plugin.get('bundle_root'),
+                'update_existing': True,
+                'skip_existing_epub': True,
+            }
+        )
+
+        if not ensure_ao3kit_importable():
+            return (
+                import_summary + ' Omnibus append skipped (ao3kit unavailable).',
+                import_detail,
+            )
+
+        from ao3kit.epub_merge import MemberSpec, append_members
+
+        meta = read_omnibus_meta(existing) or {}
+        have = set(str(m) for m in (meta.get('member_ids') or []))
+        jsonl = plugin.get('jsonl') or plugin.get('results_jsonl')
+        records = load_jsonl_records(jsonl) if jsonl else []
+        bundle = plugin.get('bundle_root')
+        to_add: list = []
+        member_rows: list[dict] = []
+        for record in records:
+            mid = member_id_from_record(record)
+            if not mid or mid in have:
+                continue
+            epub_path = resolve_epub_path(record, bundle) if bundle else None
+            if epub_path is None or not Path(epub_path).is_file():
+                continue
+            to_add.append(
+                MemberSpec(
+                    member_id=mid,
+                    title=str(record.get('title') or mid),
+                    epub_path=Path(epub_path),
+                    record=dict(record),
+                )
+            )
+            member_rows.append(record)
+
+        work = existing.parent
+        out = work / 'omnibus.epub'
+        series_name = str(plugin.get('series_name') or meta.get('title') or '')
+        series_id = str(plugin.get('series_id') or meta.get('series_id') or '')
+        book_title = str(
+            plugin.get('title')
+            or series_omnibus_title(series_name or f'Series {series_id}')
+        )
+        if to_add:
+            append_members(existing, to_add, out)
+        else:
+            out.write_bytes(existing.read_bytes())
+
+        # Refresh omnibus Calibre metadata from all active members when possible.
+        try:
+            from ao3kit.epub_merge import read_omnibus_members
+
+            active = [m for m in read_omnibus_members(out) if m.get('active', True)]
+        except Exception:
+            active = member_rows
+        if active:
+            oid = str(plugin.get('omnibus_id') or meta.get('id') or '')
+            merged = merge_omnibus_record(
+                active,
+                omnibus_id=oid or str(omnibus_book_id),
+                kind='series',
+                title=book_title,
+                series_id=series_id,
+                series_name=series_name,
+                auto_update=bool(meta.get('auto_update', False)),
+            )
+            db = self.gui.current_db
+            try:
+                mi_existing = db.get_metadata(omnibus_book_id, index_is_id=True)
+                ids = mi_existing.get_identifiers()
+                comments = mi_existing.comments
+            except Exception:
+                ids = None
+                comments = None
+            mi = build_metadata(
+                merged,
+                existing_identifiers=ids,
+                existing_comments=comments,
+            )
+            try:
+                db.set_metadata(omnibus_book_id, mi, force_changes=True)
+            except TypeError:
+                db.set_metadata(omnibus_book_id, mi)
+            write_layout_fields(db, omnibus_book_id, merged)
+            set_book_tags(db, omnibus_book_id, mi.tags)
+        else:
+            merged = None
+
+        try:
+            from ao3kit.covers import maybe_stamp_downloaded_epub
+
+            maybe_stamp_downloaded_epub(out, merged or {'title': book_title})
+        except Exception:
+            pass
+
+        add_epub_format(self.gui.current_db, omnibus_book_id, out, replace=True)
+        refresh_library_ui(self.gui, [omnibus_book_id])
+        appended = len(to_add)
+        summary = import_summary.rstrip('.')
+        if appended:
+            summary += f'; appended {appended} part(s) to omnibus.'
+        else:
+            summary += '; omnibus already had every downloaded part.'
+        return summary, import_detail
 
     def _mark_ingest(self, job_dir: Path, ingest: str, error: str | None = None) -> None:
         fields = {'ingest': ingest}

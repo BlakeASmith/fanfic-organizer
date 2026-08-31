@@ -290,6 +290,60 @@ def plan_complete_selected(
     return _write_spec(job_dir, spec)
 
 
+def plan_complete_omnibus(
+    *,
+    omnibus_book_id: int,
+    seed_records: list[dict[str, Any]],
+    existing_epub: Path,
+    job_dir: Path,
+    options: dict[str, Any],
+    title: str = '',
+    series_id: str = '',
+    series_name: str = '',
+    omnibus_id: str = '',
+) -> dict[str, Any]:
+    """Fetch rest of series for an omnibus, then append new parts into it."""
+    forced = dict(options)
+    forced['download_epubs'] = True
+    forced['simplify_tags'] = True
+    forced['update_existing'] = True
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    dest_existing = work / 'existing.epub'
+    if Path(existing_epub) != dest_existing:
+        dest_existing.write_bytes(Path(existing_epub).read_bytes())
+    argv, jsonl, dest = prepare_series_from_command(seed_records, work, forced)
+    steps = [argv]
+    out = jsonl
+    if forced.get('simplify_tags'):
+        cleaned = work / 'cleaned.jsonl'
+        steps.append(build_enrich_argv(str(jsonl), str(cleaned), forced))
+        out = cleaned
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Complete omnibus · {title or series_name or series_id or omnibus_book_id}',
+            'kind': 'complete_omnibus',
+            'steps': steps,
+            'plugin': {
+                'action': 'complete_omnibus',
+                'jsonl': str(out),
+                'results_jsonl': str(jsonl),
+                'bundle_root': str(dest),
+                'update_existing': True,
+                'skip_existing_epub': True,
+                'omnibus_book_id': int(omnibus_book_id),
+                'existing_epub': str(dest_existing),
+                'omnibus_id': omnibus_id,
+                'series_id': series_id,
+                'series_name': series_name,
+                'title': title,
+            },
+            'result': _jsonl_result(out),
+        },
+    )
+
+
 def plan_fill_series(
     ready: list[dict[str, Any]],
     skipped: list[dict[str, Any]],
