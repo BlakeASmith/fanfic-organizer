@@ -254,8 +254,20 @@ class WebImportDialog(QDialog):
             self.bundle_path.setText(path)
 
     def _save_userscript(self) -> None:
-        USERSCRIPT_NAME = 'fanfic-organizer-webcompile.user.js'
-        src = self._locate_userscript(USERSCRIPT_NAME)
+        try:
+            from ao3kit.webcompile.userscript import (
+                USERSCRIPT_NAME,
+                resolve_userscript,
+            )
+        except Exception as exc:
+            error_dialog(
+                self,
+                'Fanfic Organizer',
+                f'Could not load userscript helper: {exc}',
+                show=True,
+            )
+            return
+        src = resolve_userscript()
         if src is None or not Path(src).is_file():
             error_dialog(
                 self,
@@ -293,28 +305,6 @@ class WebImportDialog(QDialog):
             show=True,
         )
 
-    @staticmethod
-    def _locate_userscript(name: str) -> Path | None:
-        """Find the companion .user.js without importing crawl/requests."""
-        # Packaged next to the plugin (calibre-customize -b / fat zip).
-        plugin_root = Path(__file__).resolve().parents[2]
-        local = plugin_root / 'resources' / 'webcompile' / name
-        if local.is_file():
-            return local
-        try:
-            from calibre_plugins.fanfic_organizer.runtime import (
-                ensure_ao3kit_importable,
-            )
-
-            ensure_ao3kit_importable()
-            from ao3kit.webcompile.userscript import resolve_userscript
-
-            found = resolve_userscript(plugin_dir=plugin_root)
-            if found is not None and Path(found).is_file():
-                return Path(found)
-        except Exception:
-            pass
-        return None
     def accept(self) -> None:
         # Keep expand controls consistent with full-list checkbox.
         self._sync_expand()

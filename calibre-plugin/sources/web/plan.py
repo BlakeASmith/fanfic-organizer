@@ -21,10 +21,13 @@ def plan_web(options: dict[str, Any], job_dir: Path) -> dict[str, Any]:
     work = job_dir / 'work'
     work.mkdir(parents=True, exist_ok=True)
     argv, jsonl = prepare_web_command(options, work)
+    mode = str(options.get('mode') or 'single').strip().casefold()
+    kind = 'webcompile' if mode == 'compile' else 'web'
+    label = 'book' if mode == 'compile' else 'page'
     spec: dict[str, Any] = {
         'id': job_dir.name,
         'title': describe_web(options)[:80],
-        'kind': 'web',
+        'kind': kind,
         'steps': [argv],
         'plugin': {
             'action': 'import_records',
@@ -38,7 +41,7 @@ def plan_web(options: dict[str, Any], job_dir: Path) -> dict[str, Any]:
         'result': {
             'source': 'jsonl_count',
             'path': str(jsonl),
-            'label': 'page',
+            'label': label,
         },
     }
     write_json(job_dir / 'spec.json', spec)

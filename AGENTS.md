@@ -22,6 +22,7 @@ ao3kit/                 # Application package
   jobs.py / proc.py     # detachable background jobs (pid, log, start/stop)
   config.py             # User settings + rule file storage (XDG config)
   sources/              # Multi-source contracts + Wikipedia / generic web → JSONL
+  webcompile/           # Multi-page web crawl → preprocess → unified EPUB (+ Tampermonkey bundle)
   tags/                 # Tag profiles, resolver, SQLite cache, code-first rules
   cli.py                # Unified CLI (python -m ao3kit …)
 ~/.config/fanfic-organizer/   # User config (XDG; AO3KIT_HOME override)
@@ -117,7 +118,7 @@ The toolbar button opens the full plugin menu. The library **right-click** conte
 
 **Import → Wikipedia…** is a separate source adapter under `calibre-plugin/sources/wikipedia/` (library: `ao3kit.sources.wikipedia` / `python -m ao3kit wikipedia`). It writes the same JSONL shape with `source=wikipedia`, a `wikipedia` identifier, and publisher Wikipedia; categories become Tags. **Build EPUB** (default on) fetches rendered article HTML via MediaWiki `action=parse`, packs a minimal EPUB3, stamps a generated cover, and attaches it on import. The toolbar menu discovers sources by `menu_group` so AO3 dialogs/job plans stay AO3-only.
 
-**Import → URL or HTML…** (`calibre-plugin/sources/web/`, library: `ao3kit.sources.web` / `python -m ao3kit web`) fetches a static HTML URL or reads a browser-exported HTML file, extracts metadata/content best-effort, and builds an EPUB (`source=web`, `web` identifier, publisher Web). Does not run JavaScript — dynamic sites need Save Page / Download page HTML. The dialog warns about that limit.
+**Import → URL or HTML…** (`calibre-plugin/sources/web/`, library: `ao3kit.sources.web` / `python -m ao3kit web`, multi-page: `ao3kit.webcompile` / `python -m ao3kit webcompile`) fetches a static HTML URL or reads a browser-exported HTML file, extracts metadata/content best-effort, and builds an EPUB (`source=web`, `web` identifier, publisher Web). **Multi-page compile** crawls seed URLs (or an explicit link list) with free / same-domain / specific-domains expansion, rewrites in-book links, and writes one unified EPUB with a TOC. Does not run JavaScript — dynamic sites need Save Page HTML or the companion **Tampermonkey** userscript (export a JSON crawl bundle, then import it). The dialog warns about that limit.
 
 **Process library** (menu; no selection needed) opens a small job window for the **whole open library**. Use it instead of Select All on a large library. Choose simplify tags, fill Series, import the rest of each series, download missing EPUBs, generate covers, and/or recompute collections, plus related flags for that run (update existing books, covers on new downloads). The dialog shows a local estimate first: unique vs unmatched tags from the tag cache, books missing an EPUB, books whose series metadata is incomplete, and a duration hint from the configured request interval. Extra series parts cannot be counted without AO3. Then it starts the same background job path as the selected-book actions.
 
