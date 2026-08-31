@@ -4,10 +4,8 @@ from calibre.customize import InterfaceActionBase
 
 from calibre_plugins.fanfic_organizer.plugin_version import CalibreVersion
 
-__version__ = (0, 31, 0)
-__version_display__ = "0.31.0"
-
-
+__version__ = (0, 32, 0)
+__version_display__ = "0.32.0"
 class FanficOrganizerBase(InterfaceActionBase):
     name = 'Fanfic Organizer'
     description = (

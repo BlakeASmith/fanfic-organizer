@@ -15,6 +15,8 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-08-31
+
 ### Features
 
 - Add **Import → URL or HTML…**: best-effort fetch of a static HTML URL (or a browser-exported HTML file for dynamic sites), extract title/author/summary/date/tags when present, and build an EPUB with a generated cover (`python -m ao3kit web`). Warns that JavaScript-rendered pages often fail without a saved HTML file.
