@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import sys
 import zipfile
 from pathlib import Path
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+PLUGIN = ROOT / "calibre-plugin"
+if str(PLUGIN) not in sys.path:
+    sys.path.insert(0, str(PLUGIN))
 
 from ao3kit.webcompile.bundle import load_bundle, write_bundle
 from ao3kit.webcompile.crawl import (
@@ -328,6 +334,20 @@ def test_cli_html_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_plugin_zip_includes_userscript():
     from makeplugin import iter_zip_entries
 
-    names = {arc for _path, arc in iter_zip_entries(vendor_dir=None)}
-    assert "resources/webcompile/fanfic-organizer-webcompile.user.js" in names
+    names = [arc for _path, arc in iter_zip_entries(vendor_dir=None)]
+    assert names.count("resources/webcompile/fanfic-organizer-webcompile.user.js") == 1
     assert any(n.startswith("ao3kit/webcompile/") for n in names)
+
+
+def test_userscript_import_is_lightweight():
+    """Calibre GUI must load userscript helpers without importing requests."""
+    import importlib
+    import sys
+
+    # Drop cached heavy modules if present.
+    for key in list(sys.modules):
+        if key.startswith("ao3kit.webcompile"):
+            del sys.modules[key]
+    mod = importlib.import_module("ao3kit.webcompile.userscript")
+    assert mod.resolve_userscript() is not None
+    assert "requests" not in sys.modules or "ao3kit.webcompile.crawl" not in sys.modules
