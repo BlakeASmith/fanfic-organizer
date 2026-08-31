@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
 KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
+WEBCOMPILE_ADDON_DIR = ROOT / "addons" / "webcompile-tampermonkey"
 OUTPUT = ROOT / "fanfic-organizer.zip"
 RUNTIME_REQUIREMENTS = ROOT / "requirements.txt"
 # Native wheels (or already in Calibre). Do not pip-install these into vendor/.
@@ -167,6 +168,14 @@ def iter_zip_entries(
             if not path.is_file() or path.suffix.lower() != ".png":
                 continue
             entries.append((path, path.relative_to(plugin_dir).as_posix()))
+    resources_dir = plugin_dir / "resources"
+    if resources_dir.is_dir():
+        for path in sorted(resources_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".json", ".txt", ".md", ".lua"}:
+                continue
+            entries.append((path, path.relative_to(plugin_dir).as_posix()))
     if not (ao3kit_dir / "__init__.py").is_file():
         raise SystemExit(f"Missing ao3kit package: {ao3kit_dir}")
     for path in sorted(ao3kit_dir.rglob("*")):
@@ -188,6 +197,18 @@ def iter_zip_entries(
                 continue
             rel = path.relative_to(KOREADER_ADDON_DIR).as_posix()
             entries.append((path, f"resources/koreader/{rel}"))
+    if WEBCOMPILE_ADDON_DIR.is_dir():
+        for path in sorted(WEBCOMPILE_ADDON_DIR.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".js", ".md", ".txt"}:
+                continue
+            rel = path.relative_to(WEBCOMPILE_ADDON_DIR).as_posix()
+            arc = f"resources/webcompile/{rel}"
+            # Prefer the copy under calibre-plugin/resources when both exist.
+            if any(existing == arc for _src, existing in entries):
+                continue
+            entries.append((path, arc))
     return entries
 
 
