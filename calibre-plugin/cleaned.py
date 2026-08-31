@@ -115,18 +115,29 @@ def ao3_work_url_from_book_fields(
     return ''
 
 
+def _source_adapter(record: dict[str, Any] | None = None):
+    plugin_root = str(Path(__file__).resolve().parent)
+    if plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+    try:
+        from calibre_plugins.fanfic_organizer.sources import adapter_for_record
+    except ImportError:
+        from sources import adapter_for_record
+
+    return adapter_for_record(record)
+
+
+def record_source(record: dict[str, Any] | None) -> str:
+    """Origin id of a JSONL work record (``ao3`` when unknown)."""
+    return _source_adapter(record).id
+
+
 def canonical_work_id(record: dict[str, Any]) -> str:
-    work_id = str(record.get('work_id') or '').strip()
-    if work_id:
-        return work_id
-    return work_id_from_url(record.get('url')) or ''
+    return _source_adapter(record).work_id(record)
 
 
 def canonical_work_url(record: dict[str, Any]) -> str:
-    url = str(record.get('url') or '').strip()
-    if url:
-        return url
-    return work_url(canonical_work_id(record)) or ''
+    return _source_adapter(record).work_url(record)
 
 
 def book_matches_work(
@@ -134,43 +145,39 @@ def book_matches_work(
     *,
     work_id: str = '',
     url: str = '',
+    source: str = 'ao3',
 ) -> bool:
-    """True if Calibre identifiers refer to the same AO3 work."""
-    ids = identifiers or {}
-    work_id = str(work_id or '').strip()
-    url = str(url or '').strip()
-    existing_ao3 = str(ids.get('ao3') or '').strip()
-    existing_url = str(ids.get('url') or '').strip()
-    existing_from_url = work_id_from_url(existing_url) or ''
-    wanted_from_url = work_id_from_url(url) or ''
-    if work_id and existing_ao3 == work_id:
-        return True
-    if work_id and existing_from_url == work_id:
-        return True
-    if wanted_from_url and existing_from_url == wanted_from_url:
-        return True
-    if wanted_from_url and existing_ao3 == wanted_from_url:
-        return True
-    if url and existing_url.rstrip('/') == url.rstrip('/'):
-        return True
-    return False
+    """True if Calibre identifiers refer to the same work for ``source``."""
+    plugin_root = str(Path(__file__).resolve().parent)
+    if plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+    try:
+        from calibre_plugins.fanfic_organizer.sources import get_source
+    except ImportError:
+        from sources import get_source
+
+    adapter = get_source(source)
+    if adapter is None:
+        adapter = _source_adapter({'source': source})
+    return adapter.book_matches(identifiers, work_id=work_id, url=url)
 
 
 def existing_book_id_from_identifiers(
     books: Iterable[tuple[Any, dict[str, Any] | None]],
     record: dict[str, Any],
 ) -> Any | None:
-    """Return the library book id that already stores this AO3 work, if any.
+    """Return the library book id that already stores this work, if any.
 
     ``books`` is ``(book_id, identifiers)`` from the in-memory Calibre
-    identifier maps. Same match rules as ``book_matches_work`` (ao3 id or URL).
+    identifier maps. Match rules come from the record's source adapter.
     """
-    work_id = canonical_work_id(record)
-    url = canonical_work_url(record)
+    adapter = _source_adapter(record)
+    work_id = adapter.work_id(record)
+    url = adapter.work_url(record)
     if not work_id and not url:
         return None
     for book_id, ids in books:
-        if book_matches_work(ids, work_id=work_id, url=url):
+        if adapter.book_matches(ids, work_id=work_id, url=url):
             return book_id
     return None
 
@@ -609,28 +616,29 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
 
     summary = _resolve_record_summary(record)
 
-    work_id = canonical_work_id(record)
-    url = canonical_work_url(record)
-    identifiers: dict[str, str] = {}
-    if url:
-        identifiers['url'] = url
-    if work_id:
-        identifiers['ao3'] = work_id
+    adapter = _source_adapter(record)
+    work_id = adapter.work_id(record)
+    url = adapter.work_url(record)
+    identifiers = adapter.identifiers(record, work_id=work_id, url=url)
 
-    primary = primary_series(record)
     series_name = None
     series_index = None
     series_id = ''
-    if primary:
-        series_name = primary.get('name') or None
-        series_id = str(primary.get('series_id') or '')
-        position = primary.get('position')
-        if position is not None:
-            series_index = float(position)
-        elif series_name:
-            series_index = 1.0
-        if series_id:
-            identifiers['ao3series'] = series_id
+    series_list: list[dict[str, Any]] = []
+    if getattr(adapter, 'include_series', False):
+        primary = primary_series(record)
+        series_list = series_memberships_from_record(record)
+        if primary:
+            series_name = primary.get('name') or None
+            series_id = str(primary.get('series_id') or '')
+            position = primary.get('position')
+            if position is not None:
+                series_index = float(position)
+            elif series_name:
+                series_index = 1.0
+            apply_series = getattr(adapter, 'apply_series_identifier', None)
+            if apply_series and series_id:
+                apply_series(identifiers, series_id)
 
     published = parse_ao3_date(record.get('date'))
 
@@ -648,10 +656,10 @@ def calibre_fields_for_record(record: dict[str, Any]) -> dict[str, Any]:
         'series': series_name,
         'series_index': series_index,
         'series_id': series_id,
-        'series_list': series_memberships_from_record(record),
-        'publisher': AO3_PUBLISHER,
+        'series_list': series_list,
+        'publisher': adapter.publisher,
         'published': published,
-        'source': payload.get('source'),
+        'source': adapter.id,
     }
 
 

@@ -32,8 +32,8 @@ SELECTION_ACTION_LABELS = (
 )
 
 # Top-level labels / submenus that are library-wide (toolbar only).
-GLOBAL_ACTION_LABELS = (
-    'Search AO3 and import...',
+# Toolbar source labels come from ``sources.source_menu_labels(group='toolbar')``.
+_FIXED_GLOBAL_ACTION_LABELS = (
     'Process library...',
     'Running jobs...',
     'Tags and collections',
@@ -42,6 +42,26 @@ GLOBAL_ACTION_LABELS = (
     'Deploy to KOReader…',
     'Plugin settings...',
 )
+
+
+def _global_action_labels() -> tuple[str, ...]:
+    import sys
+    from pathlib import Path
+
+    root = str(Path(__file__).resolve().parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from calibre_plugins.fanfic_organizer.sources import source_menu_labels
+    except ImportError:
+        try:
+            from sources import source_menu_labels
+        except ImportError:
+            return ('Search AO3 and import...',) + _FIXED_GLOBAL_ACTION_LABELS
+    return source_menu_labels(group='toolbar') + _FIXED_GLOBAL_ACTION_LABELS
+
+
+GLOBAL_ACTION_LABELS = _global_action_labels()
 
 
 def ensure_name_in_layout(
