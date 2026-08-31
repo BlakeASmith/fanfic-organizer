@@ -97,5 +97,6 @@ class WikipediaSource:
         prefs['last_wikipedia_lang'] = values['lang']
         prefs['last_wikipedia_max_results'] = values['max_results'] or '25'
         prefs['wikipedia_build_epub'] = bool(values.get('download_epubs', True))
+        prefs['wikipedia_epub_images'] = bool(values.get('wikipedia_epub_images', False))
         prefs['update_existing'] = values['update_existing']
         return values

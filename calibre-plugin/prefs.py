@@ -38,6 +38,7 @@ prefs.defaults = {
     'include_prereleases': False,  # legacy; migrated to the two flags below
     'include_previews': False,
     'include_pr_builds': False,
+    'omnibus_auto_update_collections': True,
 }
 
 

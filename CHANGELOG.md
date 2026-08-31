@@ -15,6 +15,11 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Features
+
+- Add **EPUB consolidation (omnibus)**: combine selected books, an AO3 series, or a Calibre collection into one EPUB with hierarchical ToC (work → chapters), stable member paths for append/reorder, virtual member metadata inside the EPUB, explode/rebuild/edit, and optional auto-update of collection omnibuses when membership changes (`python -m ao3kit epub combine|explode|rebuild|reorder|remove|sync-collection`). Series omnibus titles use `{series name} - Series`. **Complete selected** on a series omnibus fetches newer parts, appends them into the combined EPUB, and refreshes omnibus metadata. Combined EPUBs get a generated cover (when covers are enabled); Cover style can show **member titles** and/or **part numbers** on the cover.
+- Add optional **Include images in EPUB** on **Import → Wikipedia…** (and `python -m ao3kit wikipedia --epub --images`): embed Wikimedia thumbnails for offline reading; wiki/article links are rewritten to absolute https URLs.
+
 ## [0.32.0] - 2026-08-31
 
 ### Features
