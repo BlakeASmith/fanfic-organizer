@@ -69,6 +69,10 @@ def prepare_wikipedia_command(
     if options.get('download_epubs'):
         argv.append('--epub')
         argv.extend(['--epub-dir', str(work)])
+        if options.get('wikipedia_epub_images', False):
+            argv.append('--images')
+        else:
+            argv.append('--no-images')
     else:
         argv.append('--no-epub')
     return argv, jsonl

@@ -89,6 +89,12 @@ def _load_jsonl_records(path: Path) -> list[dict[str, Any]]:
 
 
 @dataclass
+class CoverMember:
+    title: str = ""
+    part: int | None = None
+
+
+@dataclass
 class CoverInfo:
     title: str = ""
     summary: str = ""
@@ -101,6 +107,7 @@ class CoverInfo:
     score: float | None = None
     complete: bool | None = None
     work_id: str = ""
+    members: list[CoverMember] | None = None
 
     def seed_text(self, which: str) -> str:
         mapping = {
@@ -249,6 +256,84 @@ def resolve_record_summary(
     return ""
 
 
+def _cover_members_from_raw(raw: Any) -> list[CoverMember]:
+    if not isinstance(raw, list):
+        return []
+    out: list[CoverMember] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("active") is False:
+            continue
+        title = _normalize_cover_text(
+            str(item.get("title") or item.get("member_id") or "")
+        )
+        part: int | None = None
+        for key in ("part", "position", "series_index"):
+            raw_part = item.get(key)
+            if raw_part in (None, ""):
+                continue
+            try:
+                part = int(float(str(raw_part)))
+                break
+            except (TypeError, ValueError):
+                continue
+        if part is None:
+            for entry in item.get("series") or []:
+                if not isinstance(entry, dict):
+                    continue
+                raw_part = entry.get("position")
+                if raw_part in (None, ""):
+                    continue
+                try:
+                    part = int(float(str(raw_part)))
+                    break
+                except (TypeError, ValueError):
+                    continue
+        if title or part is not None:
+            out.append(CoverMember(title=title, part=part))
+    return out
+
+
+def cover_members_from_epub(path: str | Path) -> list[CoverMember]:
+    """Read active omnibus members from the EPUB sidecar (empty if not omnibus)."""
+    try:
+        from ao3kit.epub_merge import read_omnibus_members, read_omnibus_meta
+    except ImportError:
+        return []
+    epub = Path(path)
+    if not epub.is_file():
+        return []
+    if read_omnibus_meta(epub) is None:
+        return []
+    return _cover_members_from_raw(read_omnibus_members(epub))
+
+
+def format_member_cover_lines(
+    members: list[CoverMember] | None,
+    settings: CoverSettings | None = None,
+) -> list[str]:
+    """Format omnibus member lines for the cover middle band."""
+    settings = settings or CoverSettings()
+    show_titles = settings.shows("member_titles")
+    show_parts = settings.shows("member_parts")
+    if not (show_titles or show_parts) or not members:
+        return []
+    lines: list[str] = []
+    for index, member in enumerate(members, start=1):
+        n = member.part if member.part is not None else index
+        title = _normalize_cover_text(member.title)
+        if show_titles and show_parts:
+            text = f"{n}. {title}" if title else f"Part {n}"
+        elif show_titles:
+            text = title
+        else:
+            text = f"Part {n}"
+        if text:
+            lines.append(text)
+    return lines
+
+
 def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     record = record or {}
     fandoms = record.get("fandoms") or []
@@ -302,6 +387,7 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
     else:
         author = str(authors or "").strip()
     summary = resolve_record_summary(record)
+    members = _cover_members_from_raw(record.get("members"))
     return CoverInfo(
         title=_normalize_cover_text(str(record.get("title") or "")),
         summary=summary,
@@ -316,6 +402,7 @@ def cover_info_from_record(record: dict[str, Any] | None) -> CoverInfo:
         score=_score_from_record(record, meta, words if isinstance(words, int) else None),
         complete=bool(complete) if complete is not None else None,
         work_id=str(record.get("work_id") or "").strip(),
+        members=members or None,
     )
 
 
@@ -544,7 +631,28 @@ def merge_cover_info(*parts: CoverInfo | None) -> CoverInfo:
             merged.score = part.score
         if merged.complete is None and part.complete is not None:
             merged.complete = part.complete
+        if not merged.members and part.members:
+            merged.members = list(part.members)
     return merged
+
+
+def attach_omnibus_members(
+    info: CoverInfo,
+    *,
+    epub_path: str | Path | None = None,
+    record: dict[str, Any] | None = None,
+) -> CoverInfo:
+    """Prefer EPUB sidecar members, then record ``members``, leave otherwise."""
+    if epub_path is not None:
+        from_epub = cover_members_from_epub(epub_path)
+        if from_epub:
+            info.members = from_epub
+            return info
+    if not info.members and record is not None:
+        from_record = _cover_members_from_raw(record.get("members"))
+        if from_record:
+            info.members = from_record
+    return info
 
 
 def parse_color(value: str) -> tuple[int, int, int, int]:
@@ -1068,6 +1176,49 @@ def _fit_wrapped(
     return font, size, lines, separator, line_height
 
 
+def _fit_member_list(
+    draw,
+    settings: CoverSettings,
+    member_lines: list[str],
+    *,
+    max_width: float,
+    max_height: float,
+) -> tuple[object, int, list[str], str, float]:
+    """Fit one-line-per-member list; shrink font, then truncate with …."""
+    size = max(int(settings.summary_size), int(settings.min_summary_size))
+    floor = max(8, int(settings.min_summary_size))
+    last: tuple[object, int, list[str], str, float] | None = None
+    while size >= floor:
+        font = resolve_font(settings, size)
+        shown: list[str] = []
+        for line in member_lines:
+            wrapped = wrap_title(draw, font, line, max_width)
+            shown.extend(wrapped or [line])
+        line_height = _font_line_height(
+            font, size, settings.summary_leading
+        ) + _effect_extra(settings, size)
+        last = (font, size, shown, " ", line_height)
+        if _block_height(len(shown), line_height) <= max_height:
+            return last
+        if not settings.auto_fit_summary:
+            break
+        size -= 2
+    font, size, lines, separator, line_height = last or (
+        resolve_font(settings, floor),
+        floor,
+        list(member_lines),
+        " ",
+        float(floor),
+    )
+    max_count = max(1, int(max_height / max(line_height, 1.0)))
+    if len(lines) > max_count:
+        lines = list(lines[:max_count])
+        if lines:
+            base = lines[-1].rstrip("…").rstrip()
+            lines[-1] = f"{base}…"
+    return font, size, lines, separator, line_height
+
+
 def plan_cover_layout(
     info: CoverInfo,
     settings: CoverSettings | None = None,
@@ -1178,8 +1329,16 @@ def plan_cover_layout(
     )
 
     summary_block: CoverTextBlock | None = None
+    member_lines = format_member_cover_lines(info.members, settings)
+    wants_members = bool(member_lines)
     summary_text = _normalize_cover_text(info.summary)
-    wants_summary = settings.shows("summary") and bool(summary_text)
+    wants_summary = (
+        (not wants_members)
+        and settings.shows("summary")
+        and bool(summary_text)
+    )
+    middle_text = "\n".join(member_lines) if wants_members else summary_text
+    wants_middle = wants_members or wants_summary
 
     title_block: CoverTextBlock | None = None
     if settings.shows("title") and info.title:
@@ -1188,7 +1347,7 @@ def plan_cover_layout(
             title = title.upper()
         preferred_top = max(height * settings.title_y, band_top)
         title_ceiling = band_bottom
-        if wants_summary:
+        if wants_middle:
             reserve = max(
                 float(settings.min_summary_size) * 2.0,
                 (band_bottom - preferred_top) * 0.35,
@@ -1238,28 +1397,39 @@ def plan_cover_layout(
             max_lines=settings.title_max_lines,
         )
 
-    if wants_summary:
+    if wants_middle:
         summary_top = (
             title_block.bottom + gap
             if title_block is not None
             else max(height * settings.title_y, band_top)
         )
         max_summary_height = max(float(settings.min_summary_size), band_bottom - summary_top)
-        _font, size, lines, sep, line_height = _fit_wrapped(
-            draw,
-            settings,
-            summary_text,
-            start_size=settings.summary_size,
-            min_size=settings.min_summary_size,
-            max_width=max_width,
-            max_height=max_summary_height,
-            max_lines=settings.summary_max_lines,
-            leading=settings.summary_leading,
-            wrap=wrap_title,
-            auto_fit=bool(settings.auto_fit_summary),
-        )
+        if wants_members:
+            _font, size, lines, sep, line_height = _fit_member_list(
+                draw,
+                settings,
+                member_lines,
+                max_width=max_width,
+                max_height=max_summary_height,
+            )
+            kind = "members"
+        else:
+            _font, size, lines, sep, line_height = _fit_wrapped(
+                draw,
+                settings,
+                middle_text,
+                start_size=settings.summary_size,
+                min_size=settings.min_summary_size,
+                max_width=max_width,
+                max_height=max_summary_height,
+                max_lines=settings.summary_max_lines,
+                leading=settings.summary_leading,
+                wrap=wrap_title,
+                auto_fit=bool(settings.auto_fit_summary),
+            )
+            kind = "summary"
         summary_block = CoverTextBlock(
-            kind="summary",
+            kind=kind,
             lines=lines,
             separator=sep,
             size=size,
@@ -1510,6 +1680,25 @@ def extract_cover_bytes(path: str | Path) -> bytes | None:
         return None
 
 
+def _strip_other_cover_image_props(opf_root: ET.Element, keep_id: str) -> None:
+    """Ensure only ``keep_id`` carries the EPUB3 cover-image property."""
+    manifest = _find_child(opf_root, "manifest")
+    if manifest is None:
+        return
+    for item in _iter_local(manifest, "item"):
+        item_id = item.get("id") or ""
+        props = [p for p in (item.get("properties") or "").split() if p]
+        if "cover-image" not in props:
+            continue
+        if item_id == keep_id:
+            continue
+        props = [p for p in props if p != "cover-image"]
+        if props:
+            item.set("properties", " ".join(props))
+        elif "properties" in item.attrib:
+            del item.attrib["properties"]
+
+
 def _ensure_cover_refs(
     opf_root: ET.Element,
     *,
@@ -1535,9 +1724,11 @@ def _ensure_cover_refs(
     manifest = _find_child(opf_root, "manifest")
     if manifest is None:
         manifest = ET.SubElement(opf_root, f"{{{ns}}}manifest")
-    item, found_id = existing_cover_item(opf_root)
-    if found_id:
-        cover_id = found_id
+    item = None
+    for candidate in _iter_local(manifest, "item"):
+        if candidate.get("id") == cover_id:
+            item = candidate
+            break
     if item is None:
         item = ET.Element(f"{{{ns}}}item")
         manifest.insert(0, item)
@@ -1548,6 +1739,7 @@ def _ensure_cover_refs(
     if "cover-image" not in props:
         props.append("cover-image")
     item.set("properties", " ".join(props))
+    _strip_other_cover_image_props(opf_root, cover_id)
 
 
 COVER_PAGE_ID = "ao3-cover"
@@ -1584,8 +1776,7 @@ def _ensure_cover_page(
     page_item = None
     for item in _iter_local(manifest, "item"):
         href = (item.get("href") or "").replace("\\", "/")
-        name = href.rsplit("/", 1)[-1]
-        if item.get("id") == page_id or name == Path(page_href).name:
+        if item.get("id") == page_id or href == page_href:
             page_item = item
             page_id = item.get("id") or page_id
             page_href = item.get("href") or page_href
@@ -1691,14 +1882,22 @@ def inject_cover(
         href = settings.cover_href or f"media/cover.{ext}"
         if "." not in Path(href).name:
             href = f"{href}.{ext}"
-        elif item is not None and item.get("href"):
-            href = item.get("href") or href
+        # Never reuse a member-scoped cover path (omnibus m/<id>/…).
+        existing_href = (item.get("href") if item is not None else "") or ""
+        if (
+            item is not None
+            and existing_href
+            and not str(existing_href).replace("\\", "/").startswith("m/")
+            and "fanfic-organizer" not in str(existing_href)
+        ):
+            href = existing_href
+        package_cover_id = "cover-image"
         zip_cover = _join_zip(_opf_dir(opf_path), href)
         _ensure_cover_refs(
             opf_root,
             href=href,
             media_type=cover_media_type(settings),
-            cover_id=cover_id or "cover-image",
+            cover_id=package_cover_id,
         )
         page_href = _ensure_cover_page(opf_root)
         zip_page = _join_zip(_opf_dir(opf_path), page_href)
@@ -1739,6 +1938,28 @@ def inject_cover(
     return out
 
 
+def _record_is_omnibus(
+    record: dict[str, Any] | None,
+    epub_path: str | Path | None = None,
+) -> bool:
+    rec = record or {}
+    if str(rec.get("source") or "").strip().lower() == "omnibus":
+        return True
+    ids = rec.get("identifiers") if isinstance(rec.get("identifiers"), dict) else {}
+    if str(ids.get("omnibus") or "").strip():
+        return True
+    if isinstance(rec.get("omnibus"), dict) and rec["omnibus"].get("id"):
+        return True
+    if epub_path is not None:
+        try:
+            from ao3kit.epub_merge import read_omnibus_meta
+
+            return read_omnibus_meta(epub_path) is not None
+        except Exception:
+            return False
+    return False
+
+
 def apply_cover_to_epub(
     epub_path: str | Path,
     *,
@@ -1757,6 +1978,9 @@ def apply_cover_to_epub(
     except OSError as exc:
         return CoverOutcome(path=src, status="failed", error=str(exc))
     merged = merge_cover_info(info, cover_info_from_record(record), from_epub)
+    attach_omnibus_members(merged, epub_path=src, record=record)
+    if _record_is_omnibus(record, src):
+        settings = omnibus_cover_settings(settings)
     if epub_has_cover(src) and not settings.replace_existing:
         if png_path:
             existing = extract_cover_bytes(src)
@@ -1890,6 +2114,48 @@ def maybe_stamp_downloaded_epub(
         return outcome.error
     return None
 
+
+def omnibus_cover_settings(base: CoverSettings | None = None) -> CoverSettings:
+    """Cover settings for omnibus EPUBs: skip huge fandom/relationship headers.
+
+    Enables member titles when neither omnibus member field is already on.
+    """
+    from ao3kit.config import merge_cover_settings
+
+    base = base or load_cover_settings()
+    fields = [
+        name
+        for name in base.fields
+        if name not in {"fandom", "relationship"}
+    ]
+    if "member_titles" not in fields and "member_parts" not in fields:
+        fields.append("member_titles")
+    return merge_cover_settings(
+        base,
+        fields=fields,
+        replace_existing=True,
+    )
+
+
+def maybe_stamp_omnibus_epub(
+    dest: Path,
+    record: dict[str, Any],
+    *,
+    cover: bool | None = None,
+    settings: CoverSettings | None = None,
+) -> str | None:
+    """Stamp an omnibus cover (member list, no fandom flood)."""
+    if cover is False:
+        return None
+    resolved = settings or load_cover_settings()
+    if cover is None and not resolved.enabled:
+        return None
+    return maybe_stamp_downloaded_epub(
+        dest,
+        record,
+        cover=True,
+        settings=omnibus_cover_settings(resolved),
+    )
 
 def _settings_from_args(args: argparse.Namespace) -> CoverSettings:
     base = load_cover_settings()

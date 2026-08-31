@@ -42,6 +42,8 @@ COVER_FIELD_LABELS = (
     ('wordcount', 'Word count'),
     ('score', 'Quality score'),
     ('complete', 'Complete / WIP'),
+    ('member_titles', 'Omnibus: member titles'),
+    ('member_parts', 'Omnibus: part numbers'),
 )
 
 COLOR_SEEDS = (

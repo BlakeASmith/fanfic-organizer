@@ -283,11 +283,15 @@ class FanficOrganizerPlugin(InterfaceAction):
         for label, slot in (
             ('Download EPUB', self.download_selected_epubs),
             ('Generate covers', self.generate_covers_for_selected),
+            ('Combine selected…', self.combine_selected_epubs),
+            ('Combine series…', self.combine_series_epubs),
+            ('Combine collection…', self.combine_collection_epubs),
+            ('Edit omnibus…', self.edit_omnibus),
             ('Import rest of series', self.import_series_for_selected),
             ('Fill series', self.fill_series_for_selected),
         ):
             action = self.menu.addAction(label, slot)
-            action.setEnabled(has_selection)
+            action.setEnabled(has_selection if label != 'Combine collection…' else True)
         self.menu.addSeparator()
         simplify = self.menu.addAction(
             'Simplify tags, fandoms & relationships',
@@ -653,7 +657,20 @@ class FanficOrganizerPlugin(InterfaceAction):
             return
 
         from calibre_plugins.fanfic_organizer.epub_plan import REASON_HAS_EPUB, REASON_NO_AO3
+        from calibre_plugins.fanfic_organizer.omnibus_ops import is_omnibus_book
         from calibre_plugins.fanfic_organizer.selected import load_selected_for_epub_download
+
+        book_ids = [
+            b for b in book_ids if not is_omnibus_book(self.gui.current_db, b)
+        ]
+        if not book_ids:
+            info_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Omnibus rows do not download a single AO3 EPUB.',
+                show=True,
+            )
+            return
 
         ready, skipped = load_selected_for_epub_download(
             self.gui.current_db, book_ids
@@ -739,6 +756,391 @@ class FanficOrganizerPlugin(InterfaceAction):
         )
         self.jobs().start_prepared(job_dir)
 
+    def combine_selected_epubs(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if len(book_ids) < 2:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select at least two books that have EPUBs.',
+                show=True,
+            )
+            return
+        from calibre_plugins.fanfic_organizer.omnibus_dialog import CombineSelectedDialog
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            export_member_epubs,
+            members_for_book_ids,
+            write_combine_inputs,
+        )
+        from calibre_plugins.fanfic_organizer.job_plans import plan_omnibus_combine
+
+        ready, skipped = members_for_book_ids(self.gui.current_db, book_ids)
+        if len(ready) < 2:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Need at least two selected books with an EPUB (omnibus rows are skipped).',
+                show=True,
+            )
+            return
+        titles = [str((r.get('record') or {}).get('title') or '?') for r in ready]
+        default_title = ' + '.join(titles[:3]) + ('…' if len(titles) > 3 else '')
+        dialog = CombineSelectedDialog(
+            self.gui,
+            [{'title': t, **r} for t, r in zip(titles, ready)],
+            default_title=default_title,
+        )
+        if not dialog.exec_():
+            return
+        payload = dialog.result_payload()
+        ordered = payload['rows']
+        job_dir = self.jobs().prepare_job_dir('omnibus')
+        if job_dir is None:
+            return
+        from pathlib import Path
+
+        work = Path(job_dir) / 'work'
+        exported = export_member_epubs(
+            self.gui.current_db, ordered, work / 'members'
+        )
+        if len(exported) < 2:
+            error_dialog(self.gui, 'Fanfic Organizer', 'Could not export member EPUBs.', show=True)
+            return
+        remove_ids = (
+            [int(i['book_id']) for i in exported]
+            if payload.get('remove_individuals')
+            else []
+        )
+        manifest = write_combine_inputs(
+            work,
+            exported,
+            kind='selected',
+            title=payload.get('title') or default_title,
+            include_prefaces=bool(payload.get('include_prefaces')),
+            remove_book_ids=remove_ids,
+        )
+        plan_omnibus_combine(manifest, Path(job_dir))
+        self.jobs().start_prepared(job_dir)
+
+    def combine_series_epubs(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select a book in a series first.',
+                show=True,
+            )
+            return
+        db = self.gui.current_db
+        series_id = ''
+        series_name = ''
+        for book_id in book_ids:
+            try:
+                mi = db.get_metadata(book_id, index_is_id=True)
+                ids = mi.get_identifiers() or {}
+            except Exception:
+                continue
+            sid = str(ids.get('ao3series') or '').strip()
+            if sid:
+                series_id = sid
+                series_name = mi.series or series_id
+                break
+        if not series_id:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Selected books have no ao3series id. Run Fill series first.',
+                show=True,
+            )
+            return
+        from calibre_plugins.fanfic_organizer.omnibus_dialog import CombineSeriesDialog
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            export_member_epubs,
+            find_omnibus_book_id,
+            members_for_series,
+            series_omnibus_title,
+            write_combine_inputs,
+        )
+        from calibre_plugins.fanfic_organizer.job_plans import plan_omnibus_combine
+        from pathlib import Path
+
+        ready, skipped = members_for_series(db, series_id)
+        existing = find_omnibus_book_id(db, series_id=series_id)
+        dialog = CombineSeriesDialog(
+            self.gui,
+            series_name=series_name,
+            series_id=series_id,
+            member_count=len(ready),
+            missing_count=len(skipped),
+            updating=existing is not None,
+        )
+        if not dialog.exec_():
+            return
+        payload = dialog.result_payload()
+        if payload.get('fetch_newer'):
+            # Kick import-rest-of-series for the selection, then user re-runs combine.
+            # For a single job we chain: series-from then combine of whatever is ready now
+            # after a quick re-scan is hard mid-job; start series import and tell user.
+            self.import_series_for_selected()
+            info_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Importing newer series parts. When that job finishes, run '
+                'Combine series… again to append them to the omnibus.',
+                show=True,
+            )
+            return
+        if len(ready) < 1:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'No series parts with an EPUB are in the library yet.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('omnibus')
+        if job_dir is None:
+            return
+        work = Path(job_dir) / 'work'
+        exported = export_member_epubs(db, ready, work / 'members')
+        append_epub = None
+        omnibus_id = ''
+        if existing is not None:
+            append_epub = work / 'existing.epub'
+            from calibre_plugins.fanfic_organizer.selected import copy_book_epub
+
+            if not copy_book_epub(db, existing, append_epub):
+                append_epub = None
+            else:
+                try:
+                    mi = db.get_metadata(existing, index_is_id=True)
+                    omnibus_id = str((mi.get_identifiers() or {}).get('omnibus') or '')
+                except Exception:
+                    pass
+        remove_ids = (
+            [int(i['book_id']) for i in exported]
+            if payload.get('remove_individuals')
+            else []
+        )
+        if append_epub is not None:
+            from calibre_plugins.fanfic_organizer.omnibus_ops import (
+                member_id_from_record,
+                read_omnibus_meta,
+            )
+
+            meta = read_omnibus_meta(append_epub) or {}
+            have = set(meta.get('member_ids') or [])
+            exported = [
+                e
+                for e in exported
+                if member_id_from_record(e['record']) not in have
+            ]
+            if not exported:
+                info_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    'Omnibus already includes every series part with an EPUB.',
+                    show=True,
+                )
+                return
+        manifest = write_combine_inputs(
+            work,
+            exported,
+            kind='series',
+            title=series_omnibus_title(series_name or f'Series {series_id}'),
+            series_id=series_id,
+            series_name=series_name,
+            include_prefaces=bool(payload.get('include_prefaces')),
+            omnibus_id=omnibus_id,
+            append_epub=append_epub,
+            remove_book_ids=remove_ids,
+            existing_omnibus_book_id=existing,
+        )
+        plan_omnibus_combine(manifest, Path(job_dir))
+        self.jobs().start_prepared(job_dir)
+
+    def combine_collection_epubs(self):
+        from calibre_plugins.fanfic_organizer.omnibus_dialog import CombineCollectionDialog
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            export_member_epubs,
+            find_omnibus_book_id,
+            list_collection_names,
+            members_for_collection,
+            write_combine_inputs,
+            member_id_from_record,
+            read_omnibus_meta,
+        )
+        from calibre_plugins.fanfic_organizer.job_plans import plan_omnibus_combine
+        from pathlib import Path
+
+        db = self.gui.current_db
+        names = list_collection_names(db)
+        dialog = CombineCollectionDialog(self.gui, names)
+        if not dialog.exec_():
+            return
+        payload = dialog.result_payload()
+        collection = payload['collection']
+        ready, skipped = members_for_collection(db, collection)
+        if not ready:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                f'No books with an EPUB are in collection “{collection}”.',
+                show=True,
+            )
+            return
+        existing = find_omnibus_book_id(db, collection=collection)
+        job_dir = self.jobs().prepare_job_dir('omnibus')
+        if job_dir is None:
+            return
+        work = Path(job_dir) / 'work'
+        exported = export_member_epubs(db, ready, work / 'members')
+        append_epub = None
+        omnibus_id = ''
+        if existing is not None:
+            append_epub = work / 'existing.epub'
+            from calibre_plugins.fanfic_organizer.selected import copy_book_epub
+
+            if copy_book_epub(db, existing, append_epub):
+                meta = read_omnibus_meta(append_epub) or {}
+                omnibus_id = str(meta.get('id') or '')
+                have = set(meta.get('member_ids') or [])
+                exported = [
+                    e for e in exported if member_id_from_record(e['record']) not in have
+                ]
+            else:
+                append_epub = None
+        if not exported and existing is not None:
+            info_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Collection omnibus is already up to date.',
+                show=True,
+            )
+            return
+        if not exported:
+            error_dialog(self.gui, 'Fanfic Organizer', 'Could not export member EPUBs.', show=True)
+            return
+        remove_ids = (
+            [int(i['book_id']) for i in exported]
+            if payload.get('remove_individuals')
+            else []
+        )
+        manifest = write_combine_inputs(
+            work,
+            exported,
+            kind='collection',
+            title=collection,
+            collection=collection,
+            auto_update=bool(payload.get('auto_update')),
+            include_prefaces=bool(payload.get('include_prefaces')),
+            omnibus_id=omnibus_id,
+            append_epub=append_epub,
+            remove_book_ids=remove_ids,
+            existing_omnibus_book_id=existing,
+        )
+        plan_omnibus_combine(manifest, Path(job_dir))
+        self.jobs().start_prepared(job_dir)
+
+    def edit_omnibus(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if len(book_ids) != 1:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select a single omnibus book to edit.',
+                show=True,
+            )
+            return
+        book_id = int(book_ids[0])
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            is_omnibus_book,
+            read_omnibus_members,
+            read_omnibus_meta,
+            reorder_members,
+            update_omnibus_sidecar_file,
+        )
+        from calibre_plugins.fanfic_organizer.omnibus_dialog import EditOmnibusDialog
+        from calibre_plugins.fanfic_organizer.selected import copy_book_epub
+        from calibre_plugins.fanfic_organizer.job_plans import (
+            plan_omnibus_explode,
+        )
+        from pathlib import Path
+        import tempfile
+        import shutil
+
+        if not is_omnibus_book(self.gui.current_db, book_id):
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'That book is not an omnibus (no omnibus identifier).',
+                show=True,
+            )
+            return
+        tmp = Path(tempfile.mkdtemp(prefix='omnibus-edit-'))
+        epub = tmp / 'omnibus.epub'
+        if not copy_book_epub(self.gui.current_db, book_id, epub):
+            error_dialog(self.gui, 'Fanfic Organizer', 'Could not read the omnibus EPUB.', show=True)
+            return
+        try:
+            meta = read_omnibus_meta(epub) or {}
+            members = read_omnibus_members(epub)
+        except ImportError as exc:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                str(exc),
+                show=True,
+            )
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
+        dialog = EditOmnibusDialog(
+            self.gui, members, auto_update=bool(meta.get('auto_update'))
+        )
+        if not dialog.exec_():
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
+        payload = dialog.result_payload()
+        if payload.get('explode'):
+            job_dir = self.jobs().prepare_job_dir('omnibus')
+            if job_dir is None:
+                return
+            work = Path(job_dir) / 'work'
+            work.mkdir(parents=True, exist_ok=True)
+            dest = work / 'omnibus.epub'
+            shutil.copy2(epub, dest)
+            plan_omnibus_explode(
+                dest,
+                Path(job_dir),
+                omnibus_book_id=book_id,
+                delete_omnibus=bool(payload.get('delete_after_explode')),
+            )
+            self.jobs().start_prepared(job_dir)
+            return
+        if payload.get('rebuild'):
+            info_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Rebuild from Edit omnibus is not wired to re-export members yet; '
+                'use Combine again or explode first.',
+                show=True,
+            )
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
+        # spine reorder in-process then replace format
+        out = tmp / 'reordered.epub'
+        reorder_members(epub, payload.get('order') or [], out)
+        update_omnibus_sidecar_file(
+            out, meta_updates={'auto_update': bool(payload.get('auto_update'))}
+        )
+        from calibre_plugins.fanfic_organizer.importer import add_epub_format, refresh_library_ui
+
+        add_epub_format(self.gui.current_db, book_id, out, replace=True)
+        refresh_library_ui(self.gui, [book_id])
+        shutil.rmtree(tmp, ignore_errors=True)
+        info_dialog(self.gui, 'Fanfic Organizer', 'Omnibus order updated.', show=True)
+
     def open_selected_in_ao3(self):
         book_ids = list(self.gui.library_view.get_selected_ids())
         if not book_ids:
@@ -769,7 +1171,11 @@ class FanficOrganizerPlugin(InterfaceAction):
                 comments = str(getattr(mi, 'comments', None) or '')
             except Exception:
                 continue
-            url = ao3_work_url_from_book_fields(identifiers, comments)
+            series_id = str(identifiers.get('ao3series') or '').strip()
+            if identifiers.get('omnibus') and series_id:
+                url = f'https://archiveofourown.org/series/{series_id}'
+            else:
+                url = ao3_work_url_from_book_fields(identifiers, comments)
             if not url:
                 continue
             key = url.rstrip('/')
@@ -782,7 +1188,8 @@ class FanficOrganizerPlugin(InterfaceAction):
             error_dialog(
                 self.gui,
                 'Fanfic Organizer',
-                'None of the selected books have an AO3 work id or URL.',
+                'None of the selected books have an AO3 work/series URL '
+                '(omnibus rows open the series page when ao3series is set).',
                 show=True,
             )
             return
@@ -802,39 +1209,168 @@ class FanficOrganizerPlugin(InterfaceAction):
             return
 
         from pathlib import Path
+        import shutil
+        import tempfile
 
-        from calibre_plugins.fanfic_organizer.job_plans import plan_complete_selected
+        from calibre_plugins.fanfic_organizer.job_plans import (
+            plan_complete_omnibus,
+            plan_complete_selected,
+        )
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            is_omnibus_book,
+            member_id_from_record,
+            read_omnibus_meta,
+            read_omnibus_members,
+            series_omnibus_title,
+        )
         from calibre_plugins.fanfic_organizer.selected import (
             copy_book_epub,
             load_selected_records,
         )
 
-        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
-        if not ready:
+        db = self.gui.current_db
+        normal_ids = [b for b in book_ids if not is_omnibus_book(db, b)]
+        omnibus_ids = [b for b in book_ids if is_omnibus_book(db, b)]
+        options = merge_plugin_settings({}, plugin_runtime_settings())
+        started = 0
+
+        for oid in omnibus_ids:
+            tmp = Path(tempfile.mkdtemp(prefix='omnibus-complete-'))
+            epub = tmp / 'o.epub'
+            if not copy_book_epub(db, int(oid), epub):
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    f'Could not read omnibus EPUB for book {oid}.',
+                    show=True,
+                )
+                continue
+            try:
+                members = [
+                    m for m in read_omnibus_members(epub) if m.get('active', True)
+                ]
+                meta = read_omnibus_meta(epub) or {}
+            except ImportError as exc:
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(self.gui, 'Fanfic Organizer', str(exc), show=True)
+                continue
+            try:
+                mi = db.get_metadata(oid, index_is_id=True)
+                ids = mi.get_identifiers() or {}
+                series_name = (
+                    str(meta.get('series_name') or '')
+                    or (mi.series or '')
+                    or ''
+                ).strip()
+                if not series_name:
+                    titled = str(meta.get('title') or mi.title or '').strip()
+                    if titled.casefold().endswith(' - series'):
+                        series_name = titled[: -len(' - Series')].rstrip()
+                    elif titled:
+                        series_name = titled
+                series_id = str(
+                    ids.get('ao3series') or meta.get('series_id') or ''
+                ).strip()
+                omnibus_id = str(ids.get('omnibus') or meta.get('id') or '')
+                book_title = series_omnibus_title(
+                    series_name
+                    or (f'Series {series_id}' if series_id else (mi.title or ''))
+                )
+            except Exception:
+                series_name = str(meta.get('series_name') or '')
+                series_id = str(meta.get('series_id') or '')
+                omnibus_id = str(meta.get('id') or '')
+                book_title = series_omnibus_title(
+                    series_name
+                    or (f'Series {series_id}' if series_id else 'Series')
+                )
+            seeds = []
+            for m in members:
+                mid = member_id_from_record(m)
+                if not mid or str(mid).startswith('omnibus-'):
+                    continue
+                row = dict(m)
+                row.setdefault('work_id', mid)
+                if series_id:
+                    row.setdefault(
+                        'series',
+                        [
+                            {
+                                'series_id': series_id,
+                                'name': series_name or series_id,
+                                'url': f'https://archiveofourown.org/series/{series_id}',
+                            }
+                        ],
+                    )
+                seeds.append(row)
+            if not seeds:
+                shutil.rmtree(tmp, ignore_errors=True)
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    'This omnibus has no AO3 member works to complete from.',
+                    show=True,
+                )
+                continue
+            if not series_id:
+                # Still allow series-from via member work pages when ao3series missing.
+                pass
+            job_dir = self.jobs().prepare_job_dir('complete')
+            if job_dir is None:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return
+            plan_complete_omnibus(
+                omnibus_book_id=int(oid),
+                seed_records=seeds,
+                existing_epub=epub,
+                job_dir=Path(job_dir),
+                options=options,
+                title=book_title,
+                series_id=series_id,
+                series_name=series_name,
+                omnibus_id=omnibus_id,
+            )
+            shutil.rmtree(tmp, ignore_errors=True)
+            self.jobs().start_prepared(job_dir)
+            started += 1
+
+        if normal_ids:
+            ready, skipped = load_selected_records(db, normal_ids)
+            if not ready and not started:
+                error_dialog(
+                    self.gui,
+                    'Fanfic Organizer',
+                    'None of the selected books have an AO3 URL or work id.',
+                    show=True,
+                )
+                return
+            if ready:
+                job_dir = self.jobs().prepare_job_dir('complete')
+                if job_dir is None:
+                    return
+                epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
+                epub_dir.mkdir(parents=True, exist_ok=True)
+                for item in ready:
+                    work_id = str((item.get('record') or {}).get('work_id') or '').strip()
+                    if work_id:
+                        copy_book_epub(db, item['book_id'], epub_dir / f'{work_id}.epub')
+                plan_complete_selected(
+                    [item['record'] for item in ready],
+                    skipped,
+                    job_dir,
+                    options,
+                )
+                self.jobs().start_prepared(job_dir)
+                started += 1
+
+        if not started:
             error_dialog(
                 self.gui,
                 'Fanfic Organizer',
-                'None of the selected books have an AO3 URL or work id.',
+                'Nothing to complete (need AO3 works or a series omnibus).',
                 show=True,
             )
-            return
-        job_dir = self.jobs().prepare_job_dir('complete')
-        if job_dir is None:
-            return
-        epub_dir = Path(job_dir) / 'work' / 'bundle' / 'epubs'
-        epub_dir.mkdir(parents=True, exist_ok=True)
-        db = self.gui.current_db
-        for item in ready:
-            work_id = str((item.get('record') or {}).get('work_id') or '').strip()
-            if work_id:
-                copy_book_epub(db, item['book_id'], epub_dir / f'{work_id}.epub')
-        plan_complete_selected(
-            [item['record'] for item in ready],
-            skipped,
-            job_dir,
-            merge_plugin_settings({}, plugin_runtime_settings()),
-        )
-        self.jobs().start_prepared(job_dir)
 
     def fill_selected_from_ao3(self):
         book_ids = list(self.gui.library_view.get_selected_ids())
@@ -979,15 +1515,74 @@ class FanficOrganizerPlugin(InterfaceAction):
             )
             return
 
-        from calibre_plugins.fanfic_organizer.job_plans import plan_simplify_selected
-        from calibre_plugins.fanfic_organizer.selected import load_selected_records
+        from pathlib import Path
+        import tempfile
+        import shutil
 
-        ready, skipped = load_selected_records(self.gui.current_db, book_ids)
+        from calibre_plugins.fanfic_organizer.job_plans import plan_simplify_selected
+        from calibre_plugins.fanfic_organizer.omnibus_ops import (
+            is_omnibus_book,
+            merge_omnibus_record,
+            read_omnibus_members,
+        )
+        from calibre_plugins.fanfic_organizer.selected import (
+            copy_book_epub,
+            load_selected_records,
+        )
+
+        db = self.gui.current_db
+        normal_ids = [b for b in book_ids if not is_omnibus_book(db, b)]
+        omnibus_ids = [b for b in book_ids if is_omnibus_book(db, b)]
+
+        ready, skipped = ([], [])
+        if normal_ids:
+            ready, skipped = load_selected_records(db, normal_ids)
+
+        # Expand omnibus virtual members into enrich rows (book_id = omnibus id).
+        for oid in omnibus_ids:
+            tmp = Path(tempfile.mkdtemp(prefix='omnibus-simplify-'))
+            epub = tmp / 'o.epub'
+            if not copy_book_epub(db, int(oid), epub):
+                skipped.append(
+                    {'book_id': oid, 'reason': 'could not read omnibus EPUB'}
+                )
+                shutil.rmtree(tmp, ignore_errors=True)
+                continue
+            try:
+                members = [m for m in read_omnibus_members(epub) if m.get('active', True)]
+            except ImportError as exc:
+                skipped.append({'book_id': oid, 'reason': str(exc)})
+                shutil.rmtree(tmp, ignore_errors=True)
+                continue
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not members:
+                skipped.append({'book_id': oid, 'reason': 'omnibus has no members'})
+                continue
+            try:
+                mi = db.get_metadata(oid, index_is_id=True)
+                ids = mi.get_identifiers() or {}
+                title = mi.title or 'Omnibus'
+                omnibus_id = str(ids.get('omnibus') or '')
+            except Exception:
+                title = 'Omnibus'
+                omnibus_id = ''
+                ids = {}
+            merged = merge_omnibus_record(
+                members,
+                omnibus_id=omnibus_id or str(oid),
+                kind='selected',
+                title=title,
+                series_id=str(ids.get('ao3series') or ''),
+                collection=str(ids.get('omnibuscollection') or ''),
+            )
+            merged['members'] = members
+            ready.append({'book_id': oid, 'record': merged, 'title': title})
+
         if not ready:
             error_dialog(
                 self.gui,
                 'Fanfic Organizer',
-                'None of the selected books have an AO3 URL or work id.',
+                'Nothing to simplify (need AO3 works or an omnibus with members).',
                 show=True,
             )
             return
@@ -1035,7 +1630,17 @@ class FanficOrganizerPlugin(InterfaceAction):
             merge_plugin_settings({}, plugin_runtime_settings()),
             collections_only=True,
         )
-        self.jobs().start_prepared(job_dir)
+        started = self.jobs().start_prepared(job_dir)
+        if started:
+            # Defer omnibus sync until after this job; kick a lightweight follow-up.
+            try:
+                from calibre_plugins.fanfic_organizer.omnibus_ops import (
+                    schedule_collection_omnibus_updates,
+                )
+
+                schedule_collection_omnibus_updates(self, self.gui.current_db)
+            except Exception:
+                pass
 
     def edit_collections_of_selected(self, *args):
         book_ids = list(self.gui.library_view.get_selected_ids())
