@@ -46,7 +46,7 @@ class WikipediaSearchDialog(QDialog):
             'into the <b>currently open</b> Calibre library. Articles get a '
             'Wikipedia identifier and publisher; categories become Tags. '
             'With Build EPUB on, each article is rendered to an EPUB '
-            '(MediaWiki HTML) and stamped with a generated cover.'
+            '(MediaWiki HTML) and stamped with a generated cover. Wiki links open in a browser when online.'
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -81,11 +81,20 @@ class WikipediaSearchDialog(QDialog):
             'Fetches the rendered article and packs it into an EPUB under '
             'the job folder, then attaches it in Calibre.'
         )
+        self.epub_images = QCheckBox('Include images in EPUB')
+        self.epub_images.setChecked(
+            bool(prefs.get('wikipedia_epub_images', False))
+        )
+        self.epub_images.setToolTip(
+            'Download Wikimedia thumbnails into the EPUB for offline reading. '
+            'Slower and larger files.'
+        )
         self.update_existing = QCheckBox(
             'Update existing books (same Wikipedia id)'
         )
         self.update_existing.setChecked(bool(prefs.get('update_existing', True)))
         import_form.addRow(self.build_epub)
+        import_form.addRow(self.epub_images)
         import_form.addRow(self.update_existing)
         layout.addWidget(import_box)
 
@@ -119,6 +128,7 @@ class WikipediaSearchDialog(QDialog):
             'max_results': self.max_results.text().strip(),
             'update_existing': self.update_existing.isChecked(),
             'download_epubs': self.build_epub.isChecked(),
+            'wikipedia_epub_images': self.epub_images.isChecked(),
             'simplify_tags': False,
             'drop_unmarked': False,
         }
