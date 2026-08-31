@@ -9,21 +9,21 @@ from typing import Any, Callable
 from ao3kit.sources.base import SOURCE_WEB
 from ao3kit.sources.extract import extract_page
 from ao3kit.sources.web import work_id_for_url
-from ao3kit.webcompile.bundle import bundle_meta, load_bundle, pages_from_bundle
-from ao3kit.webcompile.crawl import (
+from webcompile.bundle import bundle_meta, load_bundle, pages_from_bundle
+from webcompile.crawl import (
     crawl_urls,
     page_url_key,
     pages_from_html_files,
 )
-from ao3kit.webcompile.epub import attach_compiled_epub
-from ao3kit.webcompile.models import (
+from webcompile.epub import attach_compiled_epub
+from webcompile.models import (
     CompileOptions,
     CompileResult,
     CrawlOptions,
     CrawlResult,
     ExpandMode,
 )
-from ao3kit.webcompile.preprocess import preprocess_pages
+from webcompile.preprocess import preprocess_pages
 
 StatusCallback = Callable[[str], None]
 

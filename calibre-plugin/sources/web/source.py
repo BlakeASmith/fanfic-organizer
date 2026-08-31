@@ -80,10 +80,11 @@ class WebSource:
         if not dialog.exec_():
             return None
         values = dialog.values()
-        prefs['last_web_mode'] = values.get('mode') or 'single'
+        prefs['last_web_mode'] = values.get('mode') or 'compile'
         prefs['last_web_url'] = values.get('url') or ''
         prefs['last_web_html_path'] = values.get('html_path') or ''
         prefs['last_web_seeds'] = '\n'.join(values.get('seeds') or [])
+        prefs['last_web_static_crawl'] = bool(values.get('use_static_crawl'))
         prefs['last_web_full_list'] = bool(values.get('full_list'))
         prefs['last_web_expand'] = values.get('expand') or 'same_domain'
         prefs['last_web_domains'] = ', '.join(values.get('domains') or [])

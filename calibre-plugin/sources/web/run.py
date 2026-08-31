@@ -13,6 +13,9 @@ def web_import_is_usable(options: dict[str, Any]) -> bool:
     if mode == 'compile':
         if str(options.get('bundle_path') or '').strip():
             return True
+        if not options.get('use_static_crawl', True):
+            # Tampermonkey-only path requires a bundle.
+            return False
         seeds = options.get('seeds') or []
         if isinstance(seeds, str):
             seeds = [seeds]

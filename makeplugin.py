@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLUGIN_DIR = ROOT / "calibre-plugin"
 AO3KIT_DIR = ROOT / "ao3kit"
+WEBCOMPILE_DIR = ROOT / "webcompile"
 KOREADER_ADDON_DIR = ROOT / "addons" / "koreader-collections"
 WEBCOMPILE_ADDON_DIR = ROOT / "addons" / "webcompile-tampermonkey"
 OUTPUT = ROOT / "fanfic-organizer.zip"
@@ -148,6 +149,7 @@ def iter_zip_entries(
     *,
     plugin_dir: Path = PLUGIN_DIR,
     ao3kit_dir: Path = AO3KIT_DIR,
+    webcompile_dir: Path = WEBCOMPILE_DIR,
     vendor_dir: Path | None = None,
 ) -> list[tuple[Path, str]]:
     """``(filesystem path, zip arcname)`` for a release plugin zip."""
@@ -183,6 +185,12 @@ def iter_zip_entries(
             continue
         rel = path.relative_to(ao3kit_dir).as_posix()
         entries.append((path, f"ao3kit/{rel}"))
+    if webcompile_dir.is_dir() and (webcompile_dir / "__init__.py").is_file():
+        for path in sorted(webcompile_dir.rglob("*")):
+            if not path.is_file() or _should_skip(path, webcompile_dir):
+                continue
+            rel = path.relative_to(webcompile_dir).as_posix()
+            entries.append((path, f"webcompile/{rel}"))
     if vendor_dir is not None:
         for path in sorted(vendor_dir.rglob("*")):
             if not path.is_file() or _should_skip(path, vendor_dir):

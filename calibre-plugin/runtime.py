@@ -20,7 +20,7 @@ from typing import Iterable
 
 PLUGIN_NAME = 'Fanfic Organizer'
 RUNTIME_DIRNAME = 'fanfic_organizer_runtime'
-BUNDLED_ZIP_PREFIXES = ('ao3kit/', 'vendor/')
+BUNDLED_ZIP_PREFIXES = ('ao3kit/', 'webcompile/', 'vendor/')
 BUNDLED_ZIP_FILES = ('run_ao3kit.py',)
 NATIVE_SUFFIXES = {'.so', '.pyd', '.dylib', '.dll'}
 
@@ -202,7 +202,7 @@ def extract_bundled_runtime(
         ]
         if 'ao3kit/__init__.py' not in to_extract:
             raise FileNotFoundError(f'{zip_path} has no bundled ao3kit')
-        for prefix in ('ao3kit', 'vendor'):
+        for prefix in ('ao3kit', 'webcompile', 'vendor'):
             target = dest / prefix
             if target.is_dir():
                 shutil.rmtree(target)

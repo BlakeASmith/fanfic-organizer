@@ -23,7 +23,7 @@ from ao3kit.sources.web import (
     normalize_url,
     read_html_file,
 )
-from ao3kit.webcompile.models import (
+from webcompile.models import (
     CrawlOptions,
     CrawledPage,
     CrawlResult,
@@ -296,6 +296,6 @@ def pages_from_html_files(
 
 def crawl_from_bundle(bundle: dict) -> CrawlResult:
     """Build a CrawlResult from a Tampermonkey / exported JSON bundle."""
-    from ao3kit.webcompile.bundle import pages_from_bundle
+    from webcompile.bundle import pages_from_bundle
 
     return pages_from_bundle(bundle)

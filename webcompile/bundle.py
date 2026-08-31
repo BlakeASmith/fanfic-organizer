@@ -23,8 +23,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ao3kit.webcompile.crawl import page_url_key
-from ao3kit.webcompile.models import CrawledPage, CrawlResult
+from webcompile.crawl import page_url_key
+from webcompile.models import CrawledPage, CrawlResult
 
 BUNDLE_VERSION = 1
 BUNDLE_GENERATOR = "fanfic-organizer-webcompile"

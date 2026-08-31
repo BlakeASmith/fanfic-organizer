@@ -7,8 +7,8 @@ from urllib.parse import urldefrag, urljoin, urlparse
 from ao3kit.htmlsoup import parse_html
 from ao3kit.sources.extract import extract_page
 from ao3kit.sources.web import normalize_url
-from ao3kit.webcompile.crawl import page_url_key
-from ao3kit.webcompile.models import CompiledChapter, CrawledPage
+from webcompile.crawl import page_url_key
+from webcompile.models import CompiledChapter, CrawledPage
 
 
 def chapter_filename(index: int) -> str:

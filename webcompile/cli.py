@@ -7,24 +7,23 @@ import sys
 from pathlib import Path
 
 from ao3kit.sources.web import write_jsonl
-from ao3kit.webcompile.models import CrawlOptions, ExpandMode
-from ao3kit.webcompile.pipeline import (
+from webcompile.models import CrawlOptions, ExpandMode
+from webcompile.pipeline import (
     compile_bundle_file,
     compile_html_files,
     compile_pages,
     parse_expand_mode,
 )
-from ao3kit.webcompile.userscript import resolve_userscript
+from webcompile.userscript import resolve_userscript
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ao3kit webcompile",
+        prog="webcompile",
         description=(
             "Compile multiple linked web pages into one EPUB with a TOC. "
-            "Phase 1 crawls seeds (or uses an explicit URL list / Tampermonkey "
-            "bundle); phase 2 extracts content and rewrites in-book links; "
-            "phase 3 writes a unified EPUB."
+            "Prefer a Tampermonkey crawl bundle for JavaScript sites "
+            "(--bundle). Static --seed crawl is best-effort only."
         ),
     )
     parser.add_argument(
@@ -184,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_pages=max(1, int(args.max_pages)),
                 max_depth=max(0, int(args.max_depth)),
             )
-            from ao3kit.webcompile.models import CompileOptions
+            from webcompile.models import CompileOptions
 
             result = compile_pages(
                 CompileOptions(

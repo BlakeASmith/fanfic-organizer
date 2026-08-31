@@ -1,4 +1,4 @@
-"""Tests for ao3kit.webcompile (multi-page crawl → EPUB)."""
+"""Tests for webcompile (multi-page crawl → EPUB)."""
 
 from __future__ import annotations
 
@@ -14,19 +14,19 @@ PLUGIN = ROOT / "calibre-plugin"
 if str(PLUGIN) not in sys.path:
     sys.path.insert(0, str(PLUGIN))
 
-from ao3kit.webcompile.bundle import load_bundle, write_bundle
-from ao3kit.webcompile.crawl import (
+from webcompile.bundle import load_bundle, write_bundle
+from webcompile.crawl import (
     extract_links,
     link_allowed,
 )
-from ao3kit.webcompile.epub import write_compiled_epub
-from ao3kit.webcompile.models import (
+from webcompile.epub import write_compiled_epub
+from webcompile.models import (
     CrawledPage,
     ExpandMode,
 )
-from ao3kit.webcompile.pipeline import compile_html_files
-from ao3kit.webcompile.preprocess import preprocess_pages, rewrite_internal_links
-from ao3kit.webcompile.userscript import resolve_userscript
+from webcompile.pipeline import compile_html_files
+from webcompile.preprocess import preprocess_pages, rewrite_internal_links
+from webcompile.userscript import resolve_userscript
 
 
 def _article_html(title: str, body: str, links: list[tuple[str, str]] | None = None) -> str:
@@ -212,7 +212,7 @@ def test_bundle_roundtrip(tmp_path: Path):
     assert data["title"] == "From Bundle"
     assert len(data["pages"]) == 2
 
-    from ao3kit.webcompile.pipeline import compile_bundle_file
+    from webcompile.pipeline import compile_bundle_file
 
     result = compile_bundle_file(
         bundle_path, dest_dir=tmp_path / "out", cover=False
@@ -235,12 +235,19 @@ def test_prepare_webcompile_command(tmp_path: Path):
     from sources.web.run import describe_web, prepare_web_command, web_import_is_usable
 
     assert web_import_is_usable(
-        {"mode": "compile", "seeds": ["https://example.com/a"]}
+        {"mode": "compile", "seeds": ["https://example.com/a"], "use_static_crawl": True}
+    )
+    assert web_import_is_usable(
+        {"mode": "compile", "bundle_path": "/tmp/x.json"}
+    )
+    assert not web_import_is_usable(
+        {"mode": "compile", "seeds": ["https://example.com/a"], "use_static_crawl": False}
     )
     argv, jsonl = prepare_web_command(
         {
             "mode": "compile",
             "seeds": ["https://example.com/a", "https://example.com/b"],
+            "use_static_crawl": True,
             "full_list": False,
             "expand": "same_domain",
             "max_pages": 10,
@@ -300,7 +307,7 @@ def test_plan_webcompile(tmp_path: Path):
 
 
 def test_cli_html_compile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from ao3kit.webcompile import cli as webcompile_cli
+    from webcompile import cli as webcompile_cli
 
     p1 = tmp_path / "1.html"
     p2 = tmp_path / "2.html"
@@ -336,18 +343,18 @@ def test_plugin_zip_includes_userscript():
 
     names = [arc for _path, arc in iter_zip_entries(vendor_dir=None)]
     assert names.count("resources/webcompile/fanfic-organizer-webcompile.user.js") == 1
-    assert any(n.startswith("ao3kit/webcompile/") for n in names)
+    assert not any(n.startswith("ao3kit/webcompile/") for n in names)
+    assert "webcompile/__init__.py" in names
 
 
 def test_userscript_import_is_lightweight():
-    """Calibre GUI must load userscript helpers without importing requests."""
+    """Calibre GUI must load userscript helpers without importing crawl/requests."""
     import importlib
     import sys
 
-    # Drop cached heavy modules if present.
     for key in list(sys.modules):
-        if key.startswith("ao3kit.webcompile"):
+        if key == "webcompile" or key.startswith("webcompile."):
             del sys.modules[key]
-    mod = importlib.import_module("ao3kit.webcompile.userscript")
+    mod = importlib.import_module("webcompile.userscript")
     assert mod.resolve_userscript() is not None
-    assert "requests" not in sys.modules or "ao3kit.webcompile.crawl" not in sys.modules
+    assert "webcompile.crawl" not in sys.modules

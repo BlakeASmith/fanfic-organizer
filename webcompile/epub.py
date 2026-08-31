@@ -11,7 +11,7 @@ from xml.sax.saxutils import escape
 
 from ao3kit.htmlsoup import parse_html
 from ao3kit.sources.web_epub import EPUB_DIRNAME, epub_relpath
-from ao3kit.webcompile.models import CompiledChapter
+from webcompile.models import CompiledChapter
 
 _SCRIPT_STYLE_RE = re.compile(
     r"<(script|style|noscript|iframe)\b[^>]*>.*?</\1>",
