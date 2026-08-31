@@ -24,9 +24,11 @@ def load_cleaned():
 
 def test_source_registry_lists_ao3_wikipedia_and_web():
     from sources import all_sources, source_menu_labels
+    import sources as sources_mod
 
+    sources_mod._ADAPTERS = None
     ids = [s.id for s in all_sources()]
-    assert ids == ["wikipedia", "web", "ao3"]
+    assert ids == ["omnibus", "wikipedia", "web", "ao3"]
     assert source_menu_labels(group="toolbar") == ("Search AO3 and import...",)
     assert source_menu_labels(group="import") == ("Wikipedia...", "URL or HTML...")
 
@@ -351,3 +353,80 @@ def test_plan_web(tmp_path: Path):
     assert spec["kind"] == "web"
     assert spec["steps"][0][0] == "web"
     assert (job_dir / "spec.json").is_file()
+
+
+def test_wikipedia_epub_links_and_images(tmp_path: Path):
+    from ao3kit.sources.wikipedia_epub import (
+        absolutize_wiki_url,
+        write_article_epub,
+    )
+    import zipfile
+
+    assert absolutize_wiki_url("/wiki/TARDIS", lang="en") == (
+        "https://en.wikipedia.org/wiki/TARDIS"
+    )
+    assert absolutize_wiki_url("//upload.wikimedia.org/a.jpg") == (
+        "https://upload.wikimedia.org/a.jpg"
+    )
+    assert absolutize_wiki_url("#cite_note-1") == "#cite_note-1"
+
+    html = (
+        '<p>See <a href="/wiki/TARDIS">TARDIS</a>.</p>'
+        '<img src="//upload.wikimedia.org/wikipedia/commons/thumb/a/a0/x.jpg/120px-x.jpg" '
+        'srcset="//upload.wikimedia.org/wikipedia/commons/thumb/a/a0/x.jpg/250px-x.jpg 250w"/>'
+    )
+    path = tmp_path / "epubs" / "1.epub"
+    write_article_epub(
+        path,
+        title="TARDIS",
+        html_body=html,
+        url="https://en.wikipedia.org/wiki/TARDIS",
+        work_id="1",
+        include_images=False,
+    )
+    with zipfile.ZipFile(path) as zf:
+        chapter = zf.read("OEBPS/chapter.xhtml").decode()
+        assert 'href="https://en.wikipedia.org/wiki/TARDIS"' in chapter
+        assert 'src="https://upload.wikimedia.org/' in chapter
+        assert not any(n.startswith("OEBPS/images/") for n in zf.namelist())
+
+
+def test_prepare_wikipedia_command_images(tmp_path: Path):
+    from sources.wikipedia.run import prepare_wikipedia_command
+
+    argv, _ = prepare_wikipedia_command(
+        {
+            "url": "https://en.wikipedia.org/wiki/TARDIS",
+            "download_epubs": True,
+            "wikipedia_epub_images": True,
+        },
+        tmp_path,
+    )
+    assert "--epub" in argv
+    assert "--images" in argv
+
+    argv2, _ = prepare_wikipedia_command(
+        {
+            "url": "https://en.wikipedia.org/wiki/TARDIS",
+            "download_epubs": True,
+            "wikipedia_epub_images": False,
+        },
+        tmp_path,
+    )
+    assert "--no-images" in argv2
+
+
+def test_clean_article_html_navbox_nested():
+    from ao3kit.sources.wikipedia_epub import _clean_article_html
+
+    html = (
+        '<div class="navbox"><table class="navbox">'
+        '<tr><td class="navbox">nested</td></tr></table></div>'
+        '<p>Keep me</p>'
+        '<span class="mw-editsection">[edit]</span>'
+    )
+    out = _clean_article_html(html)
+    assert "Keep me" in out
+    assert "navbox" not in out
+    assert "[edit]" not in out
+

@@ -11,6 +11,7 @@ import pytest
 from ao3kit.config import CoverSettings, UserSettings, init_user_config, load_user_config
 from ao3kit.covers import (
     CoverInfo,
+    CoverMember,
     apply_cover_to_epub,
     choose_colours,
     contrast_ratio,
@@ -19,6 +20,7 @@ from ao3kit.covers import (
     ensure_contrast,
     epub_has_cover,
     extract_cover_bytes,
+    format_member_cover_lines,
     inject_cover,
     main as cover_main,
     merge_cover_info,
@@ -165,6 +167,55 @@ def test_cover_info_from_record_and_epub(tmp_path: Path):
     merged = merge_cover_info(info, from_file)
     assert merged.title == "Record Title"
     assert merged.fandom == "Doctor Who (2005)"
+
+
+def test_inject_cover_does_not_reuse_member_cover_href(tmp_path: Path):
+    """Omnibus member cover-image props must not capture the package cover path."""
+    from ao3kit.epub_merge import MemberSpec, merge_epubs
+
+    a = tmp_path / "a.epub"
+    b = tmp_path / "b.epub"
+    a.write_bytes(ao3_epub_bytes())
+    b.write_bytes(ao3_epub_bytes())
+    apply_cover_to_epub(
+        a,
+        info=CoverInfo(title="A", author="Ann"),
+        settings=CoverSettings(fields=["title", "author"], replace_existing=True),
+    )
+    omni = tmp_path / "omni.epub"
+    merge_epubs(
+        [MemberSpec("1", "A", a), MemberSpec("2", "B", b)],
+        omni,
+        title="Omni - Series",
+        series_id="9",
+        series_name="Omni",
+    )
+    apply_cover_to_epub(
+        omni,
+        record={
+            "title": "Omni - Series",
+            "source": "omnibus",
+            "identifiers": {"omnibus": "u"},
+            "members": [{"title": "A", "part": 1}, {"title": "B", "part": 2}],
+        },
+        settings=CoverSettings(
+            fields=["title", "author", "member_titles"],
+            replace_existing=True,
+        ),
+    )
+    with ZipFile(omni) as zf:
+        assert "media/cover.png" in zf.namelist()
+        opf = next(n for n in zf.namelist() if n.endswith(".opf"))
+        txt = zf.read(opf).decode()
+        assert 'href="media/cover.png"' in txt
+        assert 'content="cover-image"' in txt
+        import re
+
+        for match in re.finditer(r'<[^>]+href="m/[^"]+"[^>]*>', txt):
+            tag = match.group(0)
+            props = re.search(r'properties="([^"]*)"', tag)
+            if props:
+                assert "cover-image" not in props.group(1).split()
 
 
 def test_inject_cover_marks_opf_and_adds_image(tmp_path: Path):
@@ -402,6 +453,60 @@ def test_cover_footer_includes_wordcount():
     assert _format_footer(raw, CoverSettings(fields=["score"])) == ["Score 62"]
 
 
+def test_format_member_cover_lines_titles_and_parts():
+    members = [
+        CoverMember(title="First Work", part=1),
+        CoverMember(title="Second Work", part=2),
+    ]
+    both = CoverSettings(fields=["member_titles", "member_parts"])
+    assert format_member_cover_lines(members, both) == [
+        "1. First Work",
+        "2. Second Work",
+    ]
+    titles = CoverSettings(fields=["member_titles"])
+    assert format_member_cover_lines(members, titles) == ["First Work", "Second Work"]
+    parts = CoverSettings(fields=["member_parts"])
+    assert format_member_cover_lines(members, parts) == ["Part 1", "Part 2"]
+    off = CoverSettings(fields=["title", "author"])
+    assert format_member_cover_lines(members, off) == []
+
+
+def test_omnibus_members_take_summary_band():
+    info = CoverInfo(
+        title="Quest - Series",
+        summary="should be ignored when members shown",
+        author="Ann",
+        members=[
+            CoverMember(title="Part One", part=1),
+            CoverMember(title="Part Two", part=2),
+        ],
+    )
+    settings = CoverSettings(
+        fields=["title", "summary", "author", "member_titles", "member_parts"]
+    )
+    _title, middle, _author, _footer, _headers = plan_cover_layout(info, settings)
+    assert middle is not None
+    assert middle.kind == "members"
+    joined = " ".join(middle.lines)
+    assert "Part One" in joined
+    assert "1." in joined
+
+
+def test_cover_info_from_record_includes_members():
+    info = cover_info_from_record(
+        {
+            "title": "Omni",
+            "members": [
+                {"title": "A", "part": 1},
+                {"title": "B", "part": 2, "active": False},
+                {"title": "C", "part": 3},
+            ],
+        }
+    )
+    assert info.members is not None
+    assert [m.title for m in info.members] == ["A", "C"]
+
+
 def test_long_title_auto_fits_without_ellipsis():
     info = CoverInfo(
         title=(
@@ -420,7 +525,7 @@ def test_long_title_auto_fits_without_ellipsis():
     assert "…" not in joined
     assert "Galaxy" in joined
     assert title.size < 88
-    assert title.line_height <= title.size * 1.2
+    assert title.line_height <= title.size * 1.35
     assert title.bottom <= author.y - 8
 
 

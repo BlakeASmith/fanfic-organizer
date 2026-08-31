@@ -105,6 +105,8 @@ COVER_FIELDS = (
     "wordcount",
     "score",
     "complete",
+    "member_titles",
+    "member_parts",
 )
 DEFAULT_COVER_FIELDS = ("title", "author", "wordcount", "score")
 

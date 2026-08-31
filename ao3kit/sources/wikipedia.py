@@ -339,6 +339,7 @@ def build_epubs_for_records(
     session: requests.Session | None = None,
     on_status: StatusCallback | None = None,
     cover: bool = True,
+    include_images: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch article HTML and write EPUB files; returns updated records."""
     from ao3kit.sources.wikipedia_epub import attach_epub_to_record
@@ -360,7 +361,13 @@ def build_epubs_for_records(
                     on_status=on_status,
                 )
                 updated = attach_epub_to_record(
-                    record, dest_dir, html_body, cover=cover
+                    record,
+                    dest_dir,
+                    html_body,
+                    cover=cover,
+                    include_images=include_images,
+                    session=sess,
+                    on_status=on_status,
                 )
                 out.append(updated)
             except (WikipediaError, requests.RequestException, OSError, ValueError) as exc:
@@ -519,6 +526,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Stamp a generated cover into built EPUBs (default: on)",
     )
+    parser.add_argument(
+        "--images",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Download and embed article images in built EPUBs (default: off). "
+            "Wiki links are always rewritten to absolute https URLs."
+        ),
+    )
     return parser
 
 
@@ -572,6 +588,7 @@ def main(argv: list[str] | None = None) -> int:
                 epub_root,
                 on_status=on_status,
                 cover=bool(args.cover),
+                include_images=bool(args.images),
             )
     except (WikipediaError, requests.RequestException, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
