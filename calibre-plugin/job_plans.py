@@ -237,6 +237,32 @@ def plan_simplify_selected(
     )
 
 
+def plan_synopsis_sync_selected(
+    ready: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    job_dir: Path,
+) -> dict[str, Any]:
+    work = job_dir / 'work'
+    work.mkdir(parents=True, exist_ok=True)
+    items_path = work / 'items.json'
+    write_json(items_path, {'ready': ready, 'skipped': skipped})
+    n = len(ready)
+    noun = 'book' if n == 1 else 'books'
+    return _write_spec(
+        job_dir,
+        {
+            'title': f'Sync synopsis for Kobo ({n} {noun})',
+            'kind': 'synopsis',
+            'steps': [],
+            'plugin': {
+                'action': 'apply_synopsis_sync',
+                'items_json': str(items_path),
+            },
+            'result': {'source': 'last_log'},
+        },
+    )
+
+
 def plan_import_series(
     records: list[dict[str, Any]],
     skipped: list[dict[str, Any]],
@@ -466,6 +492,7 @@ def plan_library_job(
     download = bool(options.get('download_epubs'))
     covers = bool(options.get('generate_covers'))
     collections = bool(options.get('recompute_collections'))
+    sync_synopsis = bool(options.get('sync_synopsis'))
     cover_flag = options.get('cover_on_download')
     if cover_flag is None:
         cover_flag = options.get('cover')
@@ -554,6 +581,9 @@ def plan_library_job(
         plugin['png_dir'] = str(png_dir)
         plugin['bundle_root'] = str(dest)
         actions.append('apply_covers')
+
+    if sync_synopsis:
+        actions.append('apply_synopsis_sync')
 
     plugin['jsonl'] = str(current)
     actions = _dedupe_actions(actions)

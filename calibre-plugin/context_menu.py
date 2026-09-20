@@ -20,6 +20,7 @@ SELECTION_ACTION_LABELS = (
     OPEN_IN_AO3_LABEL,
     'Complete selected',
     'Fill from AO3',
+    'Sync synopsis for Kobo…',
     'Download EPUB',
     'Generate covers',
     'Combine selected…',

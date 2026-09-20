@@ -61,3 +61,41 @@ def resolve_record_summary(
         if text:
             return text
     return ""
+
+
+def comments_for_import_synopsis(
+    summary: Any,
+    existing_comments: Any = None,
+) -> str | None:
+    """Pick Calibre Comments for device synopsis (e.g. Kobo ShortDescription)."""
+    summary_text = _normalize_cover_text(str(summary or ""))
+    existing_raw = str(existing_comments or "")
+    existing_plain = summary_text_from_comments(existing_comments)
+    if summary_text:
+        if not existing_plain:
+            return summary_text
+        return existing_raw or None
+    if existing_raw:
+        return existing_raw
+    return None
+
+
+def classify_synopsis(
+    comments: Any,
+    summary: Any = None,
+    *,
+    work_id: str = "",
+) -> str:
+    """Return ``ok``, ``needs_local``, ``needs_fetch``, or ``no_source``."""
+    text = resolve_record_summary(
+        {},
+        summary_column=summary,
+        comments=comments,
+    )
+    if text and not summary_text_from_comments(comments):
+        return "needs_local"
+    if text:
+        return "ok"
+    if str(work_id or "").strip():
+        return "needs_fetch"
+    return "no_source"

@@ -280,6 +280,13 @@ class FanficOrganizerPlugin(InterfaceAction):
         fill.setStatusTip(
             'Identify from URL, EPUB, or title+author, then fill missing metadata'
         )
+        sync_synopsis = self.menu.addAction(
+            'Sync synopsis for Kobo…', self.sync_synopsis_for_selected
+        )
+        sync_synopsis.setEnabled(has_selection)
+        sync_synopsis.setStatusTip(
+            'Copy #summary into Comments for Send to device (local; no AO3 fetch)'
+        )
         for label, slot in (
             ('Download EPUB', self.download_selected_epubs),
             ('Generate covers', self.generate_covers_for_selected),
@@ -555,7 +562,10 @@ class FanficOrganizerPlugin(InterfaceAction):
         if chosen.download_epubs:
             job_options['cover'] = bool(chosen.cover_on_download)
         spec = plan_library_job(ready, skipped, job_dir, job_options)
-        if not spec.get('steps'):
+        plugin_spec = spec.get('plugin') or {}
+        actions = plugin_spec.get('actions') or [plugin_spec.get('action')]
+        has_plugin_only = 'apply_synopsis_sync' in actions
+        if not spec.get('steps') and not has_plugin_only:
             import shutil
 
             shutil.rmtree(job_dir, ignore_errors=True)
@@ -1371,6 +1381,39 @@ class FanficOrganizerPlugin(InterfaceAction):
                 'Nothing to complete (need AO3 works or a series omnibus).',
                 show=True,
             )
+
+    def sync_synopsis_for_selected(self):
+        book_ids = list(self.gui.library_view.get_selected_ids())
+        if not book_ids:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'Select one or more books in the library first.',
+                show=True,
+            )
+            return
+
+        from calibre_plugins.fanfic_organizer.job_plans import plan_synopsis_sync_selected
+        from calibre_plugins.fanfic_organizer.selected import (
+            load_selected_for_synopsis_sync,
+        )
+
+        ready, skipped = load_selected_for_synopsis_sync(
+            self.gui.current_db, book_ids
+        )
+        if not ready:
+            error_dialog(
+                self.gui,
+                'Fanfic Organizer',
+                'None of the selected books could be loaded.',
+                show=True,
+            )
+            return
+        job_dir = self.jobs().prepare_job_dir('synopsis')
+        if job_dir is None:
+            return
+        plan_synopsis_sync_selected(ready, skipped, job_dir)
+        self.jobs().start_prepared(job_dir)
 
     def fill_selected_from_ao3(self):
         book_ids = list(self.gui.library_view.get_selected_ids())

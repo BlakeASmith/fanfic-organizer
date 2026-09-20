@@ -1021,6 +1021,37 @@ def record_from_library_book(
     return record
 
 
+def load_selected_for_synopsis_sync(
+    db,
+    book_ids: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build job items for local synopsis repair (no AO3 fetch)."""
+    books = load_library_books(db, book_ids)
+    ready: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for book in books:
+        title = book.title or f'book {book.book_id}'
+        record = record_from_library_book(book, require_work_id=False)
+        if record is None:
+            skipped.append(
+                {
+                    'book_id': book.book_id,
+                    'title': title,
+                    'reason': 'could not load this book',
+                }
+            )
+            continue
+        ready.append(
+            {
+                'book_id': book.book_id,
+                'record': record,
+                'title': title,
+                'has_epub': book.has_epub,
+            }
+        )
+    return ready, skipped
+
+
 def library_job_ready_items(
     books: list[LibraryBook],
     options: LibraryJobOptions,

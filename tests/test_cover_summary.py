@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 from ao3kit.covers import (
+    comments_for_import_synopsis as lib_comments_for_import_synopsis,
     resolve_record_summary as lib_resolve_record_summary,
     summary_text_from_comments as lib_summary_text_from_comments,
 )
@@ -31,6 +32,14 @@ def test_summary_text_from_comments_matches_library():
         mod.summary_text_from_comments("Plain synopsis text.")
         == lib_summary_text_from_comments("Plain synopsis text.")
     )
+
+
+def test_comments_for_import_synopsis_matches_library():
+    mod = load_cover_summary()
+    blob = '{"work_id": "1", "tags": ["a"]}'
+    assert mod.comments_for_import_synopsis(
+        "Blurb.", blob
+    ) == lib_comments_for_import_synopsis("Blurb.", blob)
 
 
 def test_resolve_record_summary_matches_library():

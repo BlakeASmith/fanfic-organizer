@@ -229,6 +229,17 @@ class ProcessLibraryDialog(QDialog):
             'when simplify is checked. Local; no AO3.'
         )
         tasks_layout.addWidget(self.recompute_collections)
+
+        self.sync_synopsis = QCheckBox(
+            'Fix Kobo synopsis (copy #summary into Comments)'
+        )
+        self.sync_synopsis.setChecked(bool(options.sync_synopsis))
+        self.sync_synopsis.setToolTip(
+            'Kobo reads Calibre Comments, not the #summary column. Copy stored '
+            'summaries into Comments when Comments is empty or legacy JSON. '
+            'Books with no summary anywhere still need Fill from AO3.'
+        )
+        tasks_layout.addWidget(self.sync_synopsis)
         layout.addWidget(tasks)
 
         settings = QGroupBox('This job')
@@ -271,6 +282,7 @@ class ProcessLibraryDialog(QDialog):
             self.download_epubs,
             self.generate_covers,
             self.recompute_collections,
+            self.sync_synopsis,
         ):
             widget.toggled.connect(self._sync_dependent)
         self._sync_dependent()
@@ -288,6 +300,7 @@ class ProcessLibraryDialog(QDialog):
             self.download_epubs,
             self.generate_covers,
             self.recompute_collections,
+            self.sync_synopsis,
         ):
             widget.toggled.connect(self._refresh_estimate)
 
@@ -323,6 +336,7 @@ class ProcessLibraryDialog(QDialog):
             generate_covers=self.generate_covers.isChecked(),
             recompute_collections=self.recompute_collections.isChecked()
             or self.simplify_tags.isChecked(),
+            sync_synopsis=self.sync_synopsis.isChecked(),
             cover_on_download=self.cover_on_download.isChecked(),
             update_existing=self.update_existing.isChecked(),
         )

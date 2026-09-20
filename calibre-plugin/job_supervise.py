@@ -784,6 +784,8 @@ class JobSupervisor:
             return self._ingest_series(plugin)
         if action == 'apply_covers':
             return self._ingest_covers(plugin)
+        if action == 'apply_synopsis_sync':
+            return self._ingest_synopsis_sync(plugin)
         if action == 'resolve_identify':
             return self._ingest_identify(plugin)
         if action == 'apply_omnibus':
@@ -1026,6 +1028,32 @@ class JobSupervisor:
             [item['book_id'] for item in outcomes if item.get('book_id') is not None],
         )
         return summary, '\n'.join(detail_lines)
+
+    def _ingest_synopsis_sync(self, plugin: dict[str, Any]) -> tuple[str, str]:
+        from calibre_plugins.fanfic_organizer.selected import load_library_books
+        from calibre_plugins.fanfic_organizer.synopsis_sync import (
+            repair_synopsis_for_items,
+            summarize_synopsis_repair,
+        )
+
+        payload = read_json(Path(plugin.get('items_json') or '')) or {}
+        ready = payload.get('ready') or []
+        book_ids = [
+            int(item['book_id'])
+            for item in ready
+            if item.get('book_id') is not None
+        ]
+        db = self.gui.current_db
+        books = load_library_books(db, book_ids) if book_ids else []
+        books_by_id = {book.book_id: book for book in books}
+        result = repair_synopsis_for_items(db, ready, books_by_id=books_by_id)
+        summary, detail = summarize_synopsis_repair(result)
+        updated_ids = [int(x) for x in (result.get('updated_ids') or [])]
+        if updated_ids:
+            from calibre_plugins.fanfic_organizer.importer import refresh_library_ui
+
+            refresh_library_ui(self.gui, updated_ids)
+        return summary, detail
 
     def _ingest_identify(self, plugin: dict[str, Any]) -> tuple[str, str]:
         from calibre_plugins.fanfic_organizer.dialogs import IdentifyWorksDialog
