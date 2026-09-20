@@ -61,3 +61,20 @@ def resolve_record_summary(
         if text:
             return text
     return ""
+
+
+def comments_for_import_synopsis(
+    summary: Any,
+    existing_comments: Any = None,
+) -> str | None:
+    """Pick Calibre Comments for device synopsis (e.g. Kobo ShortDescription)."""
+    summary_text = _normalize_cover_text(str(summary or ""))
+    existing_raw = str(existing_comments or "")
+    existing_plain = summary_text_from_comments(existing_comments)
+    if summary_text:
+        if not existing_plain:
+            return summary_text
+        return existing_raw or None
+    if existing_raw:
+        return existing_raw
+    return None
