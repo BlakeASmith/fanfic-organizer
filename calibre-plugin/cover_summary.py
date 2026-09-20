@@ -78,3 +78,24 @@ def comments_for_import_synopsis(
     if existing_raw:
         return existing_raw
     return None
+
+
+def classify_synopsis(
+    comments: Any,
+    summary: Any = None,
+    *,
+    work_id: str = "",
+) -> str:
+    """Return ``ok``, ``needs_local``, ``needs_fetch``, or ``no_source``."""
+    text = resolve_record_summary(
+        {},
+        summary_column=summary,
+        comments=comments,
+    )
+    if text and not summary_text_from_comments(comments):
+        return "needs_local"
+    if text:
+        return "ok"
+    if str(work_id or "").strip():
+        return "needs_fetch"
+    return "no_source"

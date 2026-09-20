@@ -33,9 +33,30 @@ PREF_KEYS = (
     'library_download_epubs',
     'library_generate_covers',
     'library_recompute_collections',
+    'library_sync_synopsis',
     'library_cover_on_download',
     'library_update_existing',
 )
+
+
+def _classify_synopsis(comments: str, summary: str, *, work_id: str) -> str:
+    try:
+        from calibre_plugins.fanfic_organizer.cover_summary import classify_synopsis
+    except ImportError:
+        import importlib.util
+        import sys
+
+        path = Path(__file__).resolve().parent / 'cover_summary.py'
+        name = '_fanfic_organizer_cover_summary_libjob'
+        cached = sys.modules.get(name)
+        if cached is None:
+            spec = importlib.util.spec_from_file_location(name, path)
+            assert spec is not None and spec.loader is not None
+            cached = importlib.util.module_from_spec(spec)
+            sys.modules[name] = cached
+            spec.loader.exec_module(cached)
+        classify_synopsis = cached.classify_synopsis
+    return classify_synopsis(comments, summary, work_id=work_id)
 
 
 @dataclass
@@ -49,6 +70,7 @@ class LibraryJobOptions:
     download_epubs: bool = False
     generate_covers: bool = False
     recompute_collections: bool = False
+    sync_synopsis: bool = False
     cover_on_download: bool = True
     update_existing: bool = True
 
@@ -60,6 +82,7 @@ class LibraryJobOptions:
             or self.download_epubs
             or self.generate_covers
             or self.recompute_collections
+            or self.sync_synopsis
         )
 
     def needs_ao3_id(self) -> bool:
@@ -74,6 +97,7 @@ class LibraryJobOptions:
             'download_epubs': bool(self.download_epubs),
             'generate_covers': bool(self.generate_covers),
             'recompute_collections': bool(self.recompute_collections),
+            'sync_synopsis': bool(self.sync_synopsis),
             'cover_on_download': bool(self.cover_on_download),
             'update_existing': bool(self.update_existing),
         }
@@ -89,6 +113,7 @@ class LibraryJobOptions:
             download_epubs=bool(data.get('download_epubs', False)),
             generate_covers=bool(data.get('generate_covers', False)),
             recompute_collections=bool(data.get('recompute_collections', False)),
+            sync_synopsis=bool(data.get('sync_synopsis', False)),
             cover_on_download=bool(data.get('cover_on_download', True)),
             update_existing=bool(data.get('update_existing', True)),
         )
@@ -110,6 +135,7 @@ def options_from_prefs(prefs: dict[str, Any] | None) -> LibraryJobOptions:
         recompute_collections=bool(
             prefs.get('library_recompute_collections', False)
         ),
+        sync_synopsis=bool(prefs.get('library_sync_synopsis', False)),
         cover_on_download=bool(prefs.get('library_cover_on_download', True)),
         update_existing=bool(prefs.get('library_update_existing', True)),
     )
@@ -124,6 +150,7 @@ def prefs_from_options(options: LibraryJobOptions) -> dict[str, Any]:
         'library_download_epubs': bool(options.download_epubs),
         'library_generate_covers': bool(options.generate_covers),
         'library_recompute_collections': bool(options.recompute_collections),
+        'library_sync_synopsis': bool(options.sync_synopsis),
         'library_cover_on_download': bool(options.cover_on_download),
         'library_update_existing': bool(options.update_existing),
     }
@@ -203,6 +230,8 @@ class LibraryEstimate:
     series_incomplete: int = 0
     series_known: int = 0
     cover_ready: int = 0
+    synopsis_needs_local: int = 0
+    synopsis_needs_fetch: int = 0
     request_interval: float = DEFAULT_REQUEST_INTERVAL
     tag_fetch_seconds: float = 0.0
     series_fetch_seconds: float = 0.0
@@ -388,6 +417,16 @@ def estimate_library_job(
             estimate.series_known += 1
         if str(book.title or '').strip():
             estimate.cover_ready += 1
+        if options.sync_synopsis:
+            state = _classify_synopsis(
+                book.comments,
+                book.summary,
+                work_id=book.work_id,
+            )
+            if state == 'needs_local':
+                estimate.synopsis_needs_local += 1
+            elif state == 'needs_fetch':
+                estimate.synopsis_needs_fetch += 1
 
     estimate.series_fetch_seconds = _ao3_fetch_seconds(
         estimate.series_incomplete, estimate.request_interval
@@ -494,6 +533,18 @@ def format_library_estimate(
             '(local; no AO3).'
         )
 
+    if options.sync_synopsis:
+        lines.append('')
+        lines.append(
+            f'Fix Kobo synopsis: {estimate.synopsis_needs_local} book(s) can copy '
+            f'#summary (or Comments) into Comments for Send to device (local; no AO3).'
+        )
+        if estimate.synopsis_needs_fetch:
+            lines.append(
+                f'{estimate.synopsis_needs_fetch} book(s) have no stored summary — '
+                'use Fill from AO3 after this job.'
+            )
+
     if options.recompute_collections and not options.simplify_tags:
         lines.append('')
         lines.append(
@@ -531,6 +582,8 @@ def library_job_title(options: LibraryJobOptions, book_count: int) -> str:
         bits.append('covers')
     if options.recompute_collections and not options.simplify_tags:
         bits.append('collections')
+    if options.sync_synopsis:
+        bits.append('synopsis')
     noun = 'book' if book_count == 1 else 'books'
     label = ', '.join(bits) if bits else 'library'
     return f'Process library ({book_count} {noun}: {label})'
@@ -545,6 +598,7 @@ def select_library_job_books(
         options.simplify_tags
         or options.generate_covers
         or options.recompute_collections
+        or options.sync_synopsis
     )
     # Skip no-AO3 books only when every chosen task needs a work id.
     require_ao3 = options.needs_ao3_id() and not local_tasks
