@@ -32,6 +32,7 @@ from ao3kit.covers import (
     _format_footer,
     _normalize_cover_text,
     _scratch_draw,
+    comments_for_import_synopsis,
     resolve_record_summary,
     summary_text_from_comments,
 )
@@ -356,6 +357,20 @@ def test_summary_text_from_comments_skips_json_metadata():
     assert summary_text_from_comments("Plain synopsis text.") == "Plain synopsis text."
 
 
+def test_comments_for_import_synopsis_replaces_json_blob():
+    blob = '{"work_id": "9", "tags": ["Fluff"]}'
+    assert comments_for_import_synopsis("AO3 blurb.", blob) == "AO3 blurb."
+    assert comments_for_import_synopsis("AO3 blurb.", "") == "AO3 blurb."
+    assert comments_for_import_synopsis("", blob) == blob
+
+
+def test_comments_for_import_synopsis_keeps_existing_text():
+    assert (
+        comments_for_import_synopsis("New blurb.", "User kept this synopsis.")
+        == "User kept this synopsis."
+    )
+
+
 def test_resolve_record_summary_prefers_column_over_comments():
     record = {"title": "A"}
     assert (
@@ -411,6 +426,21 @@ def test_apply_cover_to_epub_uses_record_summary(tmp_path: Path):
     assert outcome.info.summary == "A spy romp in wartime London."
     image = extract_cover_bytes(epub)
     assert image is not None
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    from ao3kit.covers import find_opf_path
+
+    with zipfile.ZipFile(epub) as zf:
+        opf_path = find_opf_path(zf)
+        assert opf_path
+        root = ET.fromstring(zf.read(opf_path))
+    descriptions = [
+        el.text
+        for el in root.iter()
+        if el.tag.endswith("description") and (el.text or "").strip()
+    ]
+    assert descriptions == ["A spy romp in wartime London."]
 
 
 def test_summary_hidden_when_field_disabled():
