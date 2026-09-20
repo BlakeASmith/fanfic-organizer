@@ -576,7 +576,15 @@ def plan_library_job(
         png_dir.mkdir(parents=True, exist_ok=True)
         (dest / 'epubs').mkdir(parents=True, exist_ok=True)
         cover_jsonl = dest / 'cover-input.jsonl'
-        write_records_jsonl(cover_jsonl, records)
+        try:
+            from calibre_plugins.fanfic_organizer.cover_summary import (
+                enrich_record_synopsis,
+            )
+        except ImportError:
+            from cover_summary import enrich_record_synopsis
+
+        cover_records = [enrich_record_synopsis(record) for record in records]
+        write_records_jsonl(cover_jsonl, cover_records)
         steps.append(build_cover_argv(str(cover_jsonl), str(dest), str(png_dir), options))
         plugin['png_dir'] = str(png_dir)
         plugin['bundle_root'] = str(dest)

@@ -13,6 +13,15 @@ from ao3kit.covers import (
     resolve_record_summary,
     summary_text_from_comments,
 )
+
+
+def enrich_record_synopsis(record: dict[str, Any]) -> dict[str, Any]:
+    """Ensure ``summary`` is set on a work record for covers and device sync."""
+    row = dict(record or {})
+    text = resolve_record_summary(row)
+    if text:
+        row["summary"] = text
+    return row
 from ao3kit.epubs import load_jsonl_records
 
 

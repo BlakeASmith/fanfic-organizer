@@ -341,6 +341,32 @@ def test_cover_info_from_record_includes_summary():
     assert info.summary == "They were roommates. Oh my god."
 
 
+def test_cover_info_from_epub_reads_dc_description(tmp_path: Path):
+    epub = tmp_path / "work.epub"
+    epub.write_bytes(ao3_epub_bytes())
+    from ao3kit.covers import inject_cover
+
+    inject_cover(
+        epub,
+        render_cover_image(CoverInfo(title="T", author="A"), CoverSettings()),
+        CoverSettings(),
+        synopsis="Stored synopsis for the cover.",
+    )
+    info = cover_info_from_epub(epub)
+    assert info.summary == "Stored synopsis for the cover."
+
+
+def test_cover_info_from_record_uses_cleaned_summary():
+    info = cover_info_from_record(
+        {
+            "title": "A Work",
+            "cleaned": {"summary": "From cleaned payload."},
+            "comments": '{"work_id": "1"}',
+        }
+    )
+    assert info.summary == "From cleaned payload."
+
+
 def test_cover_info_from_record_uses_comments_when_summary_missing():
     record = {
         "title": "A Work",

@@ -9,6 +9,7 @@ from pathlib import Path
 from ao3kit.synopsis import (
     classify_synopsis,
     count_synopsis_states,
+    enrich_record_synopsis,
     repair_jsonl_records,
     repair_record_synopsis,
 )
@@ -34,6 +35,16 @@ def test_classify_synopsis_matches_cover_summary():
     )
     assert classify_synopsis(blob, "", work_id="9") == "needs_fetch"
     assert classify_synopsis("User synopsis.", "Blurb.", work_id="9") == "ok"
+
+
+def test_enrich_record_synopsis_fills_from_summary_column():
+    row = enrich_record_synopsis(
+        {
+            "comments": '{"work_id": "1"}',
+            "summary": "Cover blurb.",
+        }
+    )
+    assert row["summary"] == "Cover blurb."
 
 
 def test_repair_record_synopsis_from_summary_column():
