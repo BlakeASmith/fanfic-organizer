@@ -616,3 +616,35 @@ def test_apply_identify_choices_and_merge_ready():
     )
     assert [item["book_id"] for item in ready] == [1, 2]
     assert ready[1]["record"]["work_id"] == "11"
+
+
+def test_plan_synopsis_sync_selected_no_ao3_steps(tmp_path: Path):
+    plans = load_job_plans()
+    spec = plans.plan_synopsis_sync_selected(
+        [{"book_id": 1, "title": "A", "record": {"work_id": "9"}}],
+        [],
+        tmp_path / "synopsis",
+    )
+    assert spec["steps"] == []
+    assert spec["plugin"]["action"] == "apply_synopsis_sync"
+
+
+def test_plan_library_job_synopsis_only(tmp_path: Path):
+    plans = load_job_plans()
+    spec = plans.plan_library_job(
+        [
+            {
+                "book_id": 1,
+                "title": "A",
+                "has_epub": True,
+                "record": {"work_id": "9", "title": "A", "summary": "Blurb."},
+            }
+        ],
+        [],
+        tmp_path / "library-synopsis",
+        {"sync_synopsis": True, "simplify_tags": False},
+    )
+    assert spec["steps"] == []
+    assert "apply_synopsis_sync" in (
+        spec["plugin"].get("actions") or [spec["plugin"]["action"]]
+    )

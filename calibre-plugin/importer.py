@@ -13,6 +13,7 @@ from calibre_plugins.fanfic_organizer.cleaned import (
     existing_book_id_from_identifiers,
     tags_for_calibre_library,
 )
+from calibre_plugins.fanfic_organizer.cover_summary import comments_for_import_synopsis
 from calibre_plugins.fanfic_organizer.columns import (
     custom_label_is_live,
     layout_columns_present,
@@ -90,11 +91,11 @@ def build_metadata(
         has_collections_column=bool(present.get('collections')),
     )
 
-    summary = str(record.get('summary') or '').strip()
-    if summary and not existing_comments:
-        mi.comments = summary
-    elif existing_comments:
-        mi.comments = existing_comments
+    fields = calibre_fields_for_record(record)
+    summary = str(record.get('summary') or fields.get('summary') or '').strip()
+    synopsis = comments_for_import_synopsis(summary, existing_comments)
+    if synopsis is not None:
+        mi.comments = synopsis
     return mi
 
 

@@ -256,6 +256,29 @@ def resolve_record_summary(
     return ""
 
 
+def comments_for_import_synopsis(
+    summary: Any,
+    existing_comments: Any = None,
+) -> str | None:
+    """Pick Calibre Comments for device synopsis (e.g. Kobo ShortDescription).
+
+    AO3 summaries live in ``#summary`` when that column exists; Kobo and most
+    device drivers still read the built-in Comments field. Replace Comments when
+    it is empty or only holds a legacy FanFicFare JSON blob, but keep a real
+    user synopsis already stored there.
+    """
+    summary_text = _normalize_cover_text(str(summary or ""))
+    existing_raw = str(existing_comments or "")
+    existing_plain = summary_text_from_comments(existing_comments)
+    if summary_text:
+        if not existing_plain:
+            return summary_text
+        return existing_raw or None
+    if existing_raw:
+        return existing_raw
+    return None
+
+
 def _cover_members_from_raw(raw: Any) -> list[CoverMember]:
     if not isinstance(raw, list):
         return []
@@ -1699,6 +1722,27 @@ def _strip_other_cover_image_props(opf_root: ET.Element, keep_id: str) -> None:
             del item.attrib["properties"]
 
 
+def _ensure_dc_description(opf_root: ET.Element, description: str) -> None:
+    """Write plain-text ``dc:description`` for device readers (Kobo, etc.)."""
+    text = _normalize_cover_text(description)
+    if not text:
+        return
+    metadata = _find_child(opf_root, "metadata")
+    if metadata is None:
+        ns = (
+            opf_root.tag.split("}")[0][1:]
+            if opf_root.tag.startswith("{")
+            else OPF_NS
+        )
+        metadata = ET.SubElement(opf_root, f"{{{ns}}}metadata")
+    for el in list(metadata):
+        local = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+        if local == "description":
+            metadata.remove(el)
+    desc = ET.SubElement(metadata, f"{{{DC_NS}}}description")
+    desc.text = text
+
+
 def _ensure_cover_refs(
     opf_root: ET.Element,
     *,
@@ -1857,6 +1901,7 @@ def inject_cover(
     settings: CoverSettings | None = None,
     *,
     dest: str | Path | None = None,
+    synopsis: str | None = None,
 ) -> Path:
     """Insert ``image`` as the EPUB cover. Returns the written path."""
     settings = settings or CoverSettings()
@@ -1901,6 +1946,8 @@ def inject_cover(
         )
         page_href = _ensure_cover_page(opf_root)
         zip_page = _join_zip(_opf_dir(opf_path), page_href)
+        if synopsis:
+            _ensure_dc_description(opf_root, synopsis)
         ET.register_namespace("", OPF_NS)
         ET.register_namespace("dc", DC_NS)
         ET.register_namespace("opf", OPF_NS)
@@ -1991,8 +2038,11 @@ def apply_cover_to_epub(
         image = render_cover_image(merged, settings)
     except CoverError as exc:
         return CoverOutcome(path=src, status="failed", error=str(exc), info=merged)
+    synopsis = _normalize_cover_text(str(merged.summary or ""))
     try:
-        written = inject_cover(src, image, settings, dest=dest)
+        written = inject_cover(
+            src, image, settings, dest=dest, synopsis=synopsis or None
+        )
     except CoverError as exc:
         return CoverOutcome(path=src, status="failed", error=str(exc), info=merged)
     png = None

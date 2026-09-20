@@ -15,6 +15,11 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Fix missing Kobo synopsis after Send to device: write AO3 summaries into Calibre **Comments** when Comments only holds legacy FanFicFare JSON (or is empty) even if **#summary** is set, and stamp ``dc:description`` into EPUBs when generating covers.
+- Add **Sync synopsis for Kobo…** (selected books) and **Process library → Fix Kobo synopsis** to copy stored summaries into Comments on existing books; use **Fill from AO3** when no summary is stored locally (`python -m ao3kit synopsis`).
+
 ### Features
 
 - Add **EPUB consolidation (omnibus)**: combine selected books, an AO3 series, or a Calibre collection into one EPUB with hierarchical ToC (work → chapters), stable member paths for append/reorder, virtual member metadata inside the EPUB, explode/rebuild/edit, and optional auto-update of collection omnibuses when membership changes (`python -m ao3kit epub combine|explode|rebuild|reorder|remove|sync-collection`). Series omnibus titles use `{series name} - Series`. **Complete selected** on a series omnibus fetches newer parts (reuses EPUBs already in the omnibus), appends them into the combined EPUB, and refreshes omnibus metadata. Combined EPUBs get a package-level generated cover (member titles by default; Cover style can also show part numbers).

@@ -78,6 +78,10 @@ def main(argv: list[str] | None = None) -> int:
         "koreader",
         help="KOReader collections index helpers",
     )
+    sub.add_parser(
+        "synopsis",
+        help="Repair device synopsis fields on JSONL work records",
+    )
 
     if not argv:
         parser.print_help()
@@ -159,6 +163,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.koreader.cli import main as koreader_main
 
         return koreader_main(rest)
+
+    if command == "synopsis":
+        from ao3kit.synopsis import main as synopsis_main
+
+        return synopsis_main(rest)
 
     parser.error(f"Unknown command: {command}")
     return 2

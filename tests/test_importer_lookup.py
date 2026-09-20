@@ -50,9 +50,11 @@ def load_importer():
     sys.modules.setdefault("calibre_plugins", types.ModuleType("calibre_plugins"))
     fanfic = types.ModuleType("calibre_plugins.fanfic_organizer")
     sys.modules["calibre_plugins.fanfic_organizer"] = fanfic
+    cover_summary = _load("ao3_cover_summary_for_importer", PLUGIN / "cover_summary.py")
     sys.modules["calibre_plugins.fanfic_organizer.cleaned"] = cleaned
     sys.modules["calibre_plugins.fanfic_organizer.columns"] = columns
     sys.modules["calibre_plugins.fanfic_organizer.jsonl_loader"] = jsonl
+    sys.modules["calibre_plugins.fanfic_organizer.cover_summary"] = cover_summary
     return _load("ao3_importer", PLUGIN / "importer.py")
 
 
@@ -211,6 +213,32 @@ def test_build_metadata_sets_publisher_and_pubdate():
     no_date = mod.build_metadata({"work_id": "43", "title": "Undated", "author": "W"})
     assert no_date.publisher == "Archive of Our Own"
     assert no_date.pubdate is None
+
+
+def test_build_metadata_writes_comments_for_kobo_synopsis():
+    mod = load_importer()
+    fff_blob = '{"work_id": "9", "tags": ["Fluff"]}'
+    mi = mod.build_metadata(
+        {
+            "work_id": "9",
+            "title": "A Work",
+            "author": "Writer",
+            "summary": "They were roommates.",
+        },
+        existing_comments=fff_blob,
+    )
+    assert mi.comments == "They were roommates."
+
+    mi_keep = mod.build_metadata(
+        {
+            "work_id": "9",
+            "title": "A Work",
+            "author": "Writer",
+            "summary": "New AO3 text.",
+        },
+        existing_comments="My edited synopsis.",
+    )
+    assert mi_keep.comments == "My edited synopsis."
 
 
 def test_build_metadata_parses_blurb_date():
