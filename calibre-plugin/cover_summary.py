@@ -56,6 +56,11 @@ def resolve_record_summary(
     direct = _normalize_cover_text(str(record.get("summary") or ""))
     if direct:
         return direct
+    cleaned = record.get("cleaned")
+    if isinstance(cleaned, dict):
+        from_cleaned = _normalize_cover_text(str(cleaned.get("summary") or ""))
+        if from_cleaned:
+            return from_cleaned
     for candidate in (summary_column, comments, record.get("comments")):
         text = summary_text_from_comments(candidate)
         if text:
@@ -78,6 +83,15 @@ def comments_for_import_synopsis(
     if existing_raw:
         return existing_raw
     return None
+
+
+def enrich_record_synopsis(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Ensure ``summary`` is on the record (from column, Comments, or cleaned)."""
+    row = dict(record or {})
+    text = resolve_record_summary(row)
+    if text:
+        row["summary"] = text
+    return row
 
 
 def classify_synopsis(

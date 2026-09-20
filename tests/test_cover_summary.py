@@ -34,6 +34,18 @@ def test_summary_text_from_comments_matches_library():
     )
 
 
+def test_enrich_record_synopsis_matches_library():
+    mod = load_cover_summary()
+    from ao3kit.synopsis import enrich_record_synopsis as lib_enrich
+
+    record = {
+        "title": "A",
+        "comments": '{"work_id": "1"}',
+        "summary": "Blurb text.",
+    }
+    assert mod.enrich_record_synopsis(record) == lib_enrich(record)
+
+
 def test_comments_for_import_synopsis_matches_library():
     mod = load_cover_summary()
     blob = '{"work_id": "1", "tags": ["a"]}'

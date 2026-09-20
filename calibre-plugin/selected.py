@@ -687,6 +687,14 @@ def load_selected_for_covers(
                 }
             )
             continue
+        try:
+            from calibre_plugins.fanfic_organizer.cover_summary import (
+                enrich_record_synopsis,
+            )
+        except ImportError:
+            from cover_summary import enrich_record_synopsis
+
+        record = enrich_record_synopsis(record)
         ready.append(
             {
                 'book_id': book_id,
