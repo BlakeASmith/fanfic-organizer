@@ -101,6 +101,13 @@ def test_github_download_path_encodes_plus():
     )
     assert "+" not in path
     assert "%2B" in path
+    pr_path = github_download_path(
+        "v0.32.0-pr.46+94ce2ba",
+        "FanFicOrganizer-0.32.0-pr.46+94ce2ba.zip",
+    )
+    assert "+" not in pr_path
+    assert "%2B" in pr_path
+    assert "pr.46" in pr_path
 
 
 def test_inject_preview_version_into_plugin_and_package():
