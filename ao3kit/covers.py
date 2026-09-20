@@ -249,6 +249,11 @@ def resolve_record_summary(
     direct = _normalize_cover_text(str(record.get("summary") or ""))
     if direct:
         return direct
+    cleaned = record.get("cleaned")
+    if isinstance(cleaned, dict):
+        from_cleaned = _normalize_cover_text(str(cleaned.get("summary") or ""))
+        if from_cleaned:
+            return from_cleaned
     for candidate in (summary_column, comments, record.get("comments")):
         text = summary_text_from_comments(candidate)
         if text:
@@ -595,6 +600,13 @@ def cover_info_from_epub_bytes(data: bytes) -> CoverInfo:
         ]
         info.title = titles[0] if titles else ""
         info.author = ", ".join(creators)
+        descriptions = [
+            _text(el)
+            for el in opf_root.iter()
+            if _local(el.tag) == "description" and _text(el)
+        ]
+        if descriptions:
+            info.summary = _normalize_cover_text(descriptions[0])
         html_href = _first_html_href(opf_root)
         if html_href:
             html_zip = _join_zip(_opf_dir(opf_path), html_href)
@@ -2072,8 +2084,15 @@ def apply_cover_from_info(
         png.parent.mkdir(parents=True, exist_ok=True)
         png.write_bytes(image)
     if epub_path:
+        synopsis = _normalize_cover_text(str(info.summary or ""))
         try:
-            written = inject_cover(epub_path, image, settings, dest=dest)
+            written = inject_cover(
+                epub_path,
+                image,
+                settings,
+                dest=dest,
+                synopsis=synopsis or None,
+            )
         except CoverError as exc:
             return CoverOutcome(
                 path=Path(epub_path),
@@ -2104,8 +2123,10 @@ def apply_cover_to_record(
     png_dir: str | Path | None = None,
 ) -> CoverOutcome:
     from ao3kit.epubs import epub_relpath, work_id_for_record
+    from ao3kit.synopsis import enrich_record_synopsis
 
     settings = settings or CoverSettings()
+    record = enrich_record_synopsis(record)
     info = cover_info_from_record(record)
     root = Path(bundle)
     epub = None

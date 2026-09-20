@@ -19,6 +19,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 - Fix missing Kobo synopsis after Send to device: write AO3 summaries into Calibre **Comments** when Comments only holds legacy FanFicFare JSON (or is empty) even if **#summary** is set, and stamp ``dc:description`` into EPUBs when generating covers.
 - Add **Sync synopsis for Kobo…** (selected books) and **Process library → Fix Kobo synopsis** to copy stored summaries into Comments on existing books; use **Fill from AO3** when no summary is stored locally (`python -m ao3kit synopsis`).
+- Fix generated covers omitting synopsis when it lived only in **#summary**, ``cleaned``, or EPUB ``dc:description`` (enable **Summary** under Plugin settings → Cover style).
 
 ### Features
 
