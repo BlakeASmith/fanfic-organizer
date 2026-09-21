@@ -28,9 +28,13 @@ def test_source_registry_lists_ao3_wikipedia_and_web():
 
     sources_mod._ADAPTERS = None
     ids = [s.id for s in all_sources()]
-    assert ids == ["omnibus", "wikipedia", "web", "ao3"]
+    assert ids == ["omnibus", "wikipedia", "twc", "web", "ao3"]
     assert source_menu_labels(group="toolbar") == ("Search AO3 and import...",)
-    assert source_menu_labels(group="import") == ("Wikipedia...", "URL or HTML...")
+    assert source_menu_labels(group="import") == (
+        "Wikipedia...",
+        "TWC journal...",
+        "URL or HTML...",
+    )
 
 
 def test_wikipedia_calibre_fields_use_wikipedia_identifier():
@@ -429,4 +433,87 @@ def test_clean_article_html_navbox_nested():
     assert "Keep me" in out
     assert "navbox" not in out
     assert "[edit]" not in out
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def test_twc_parse_issue_and_article_fixtures():
+    from ao3kit.sources.twc import (
+        fetch_article_record,
+        parse_issue_article_ids,
+        parse_landing_metadata,
+        parse_twc_url,
+    )
+
+    issue_html = (FIXTURES / "twc_issue_93.html").read_text(encoding="utf-8")
+    article_ids = parse_issue_article_ids(issue_html)
+    assert "2775" in article_ids
+    assert len(article_ids) >= 20
+
+    issue = parse_twc_url(
+        "https://journal.transformativeworks.org/index.php/twc/issue/view/93"
+    )
+    assert issue == ("issue", "93")
+    article = parse_twc_url(
+        "https://journal.transformativeworks.org/index.php/twc/article/view/2775"
+    )
+    assert article == ("article", "2775")
+
+    landing = (FIXTURES / "twc_article_2775_landing.html").read_text(
+        encoding="utf-8"
+    )
+    meta = parse_landing_metadata(
+        landing,
+        article_id="2775",
+        url="https://journal.transformativeworks.org/index.php/twc/article/view/2775",
+    )
+    assert meta["author"] == "Loïg J. F. Pascual"
+    assert "Feminism" in meta["tags"]
+    assert meta["html_galley"][0] == "3458"
+
+    galley = (FIXTURES / "twc_article_2775_galley.html").read_text(
+        encoding="utf-8"
+    )
+    record = fetch_article_record(
+        "2775", landing_html=landing, galley_html=galley
+    )
+    assert record["source"] == "twc"
+    assert record["work_id"] == "2775"
+    assert record["metadata"]["words"] > 5000
+
+
+def test_prepare_twc_command(tmp_path: Path):
+    from sources.twc.run import prepare_twc_command
+
+    argv, jsonl = prepare_twc_command(
+        {
+            "url": "https://journal.transformativeworks.org/index.php/twc/issue/view/93",
+            "download_epubs": True,
+        },
+        tmp_path,
+    )
+    assert argv[:1] == ["twc"]
+    assert "--url" in argv
+    assert "--epub" in argv
+    assert jsonl == tmp_path / "results.jsonl"
+
+
+def test_twc_calibre_fields_use_twc_identifier():
+    mod = load_cleaned()
+    record = {
+        "source": "twc",
+        "work_id": "2775",
+        "url": "https://journal.transformativeworks.org/index.php/twc/article/view/2775",
+        "title": "Sample TWC article",
+        "author": "Author Name",
+        "summary": "Abstract text.",
+        "tags": ["Fan studies"],
+        "date": "2026-09-14",
+        "metadata": {"language": "en", "words": 8000},
+    }
+    fields = mod.calibre_fields_for_record(record)
+    assert fields["source"] == "twc"
+    assert fields["publisher"] == "Transformative Works and Cultures"
+    assert fields["identifiers"]["twc"] == "2775"
 

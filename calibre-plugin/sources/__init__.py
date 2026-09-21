@@ -49,6 +49,7 @@ def _load_adapters() -> list[Any]:
     try:
         from calibre_plugins.fanfic_organizer.sources.ao3 import Ao3Source
         from calibre_plugins.fanfic_organizer.sources.omnibus import OmnibusSource
+        from calibre_plugins.fanfic_organizer.sources.twc import TwcSource
         from calibre_plugins.fanfic_organizer.sources.web import WebSource
         from calibre_plugins.fanfic_organizer.sources.wikipedia import (
             WikipediaSource,
@@ -56,11 +57,18 @@ def _load_adapters() -> list[Any]:
     except ImportError:
         from sources.ao3 import Ao3Source
         from sources.omnibus import OmnibusSource
+        from sources.twc import TwcSource
         from sources.web import WebSource
         from sources.wikipedia import WikipediaSource
 
     # Specific sources before AO3 (the default catch-all).
-    return [OmnibusSource(), WikipediaSource(), WebSource(), Ao3Source()]
+    return [
+        OmnibusSource(),
+        WikipediaSource(),
+        TwcSource(),
+        WebSource(),
+        Ao3Source(),
+    ]
 
 
 _ADAPTERS: list[Any] | None = None

@@ -13,6 +13,7 @@ Usage:
   python -m ao3kit library  # estimate unmatched tags / missing EPUBs from JSONL
   python -m ao3kit wikipedia  # search/fetch Wikipedia articles to JSONL
   python -m ao3kit web        # fetch URL or saved HTML → JSONL/EPUB
+  python -m ao3kit twc        # TWC journal issue/article → JSONL/EPUB
   python -m ao3kit epub       # combine / explode / rebuild omnibus EPUBs
 """
 
@@ -42,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "web",
         help="Fetch a URL or saved HTML to JSONL/EPUB (source=web; best-effort)",
+    )
+    sub.add_parser(
+        "twc",
+        help="Import TWC journal issues or articles to JSONL/EPUB (source=twc)",
     )
     sub.add_parser(
         "epub",
@@ -108,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.sources.web import main as web_main
 
         return web_main(rest)
+
+    if command == "twc":
+        from ao3kit.sources.twc import main as twc_main
+
+        return twc_main(rest)
 
     if command == "epub":
         from ao3kit.omnibus import main as omnibus_main
