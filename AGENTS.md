@@ -108,7 +108,7 @@ The toolbar button opens the full plugin menu. The library **right-click** conte
 - **Open in AO3** / **Complete selected** / **Fill from AO3** / Download EPUB / Generate covers / **Combine selected…** / **Combine series…** / **Combine collection…** / **Edit omnibus…** / Import rest of series / Fill series / Simplify tags / Edit · recompute · add collections / **Search similar…** (disabled when nothing is selected) — these are also the right-click submenu (**Open in AO3** is top-level on right-click, not nested under Fanfic Organizer)
 - **Search AO3 and import…** / **Process library…** / **Running jobs…** (toolbar only)
 - **Tags and collections** — Collections & tag rules, tag graph, tag purge, warm / log / stop tag cache (toolbar only)
-- **Import** — Wikipedia… / URL or HTML… / JSONL or zip (toolbar only)
+- **Import** — Wikipedia… / TWC journal… / URL or HTML… / JSONL or zip (toolbar only)
 - **Check for updates…** / **Deploy to KOReader…** / **Plugin settings…** (toolbar only)
 
 **Search similar** (menu; needs a selection) builds an AO3 search from the selected library book(s). Fandoms, authors, relationships, characters, and additional tags are merged across the selection and shown in dropdowns so you can add a fandom plus a ship or two. AO3 ANDs every selected tag — pick a few. Then Search and import runs the same scrape/download path as Search AO3. Work id is optional; FanFicFare `#characters` is used when that column exists.
