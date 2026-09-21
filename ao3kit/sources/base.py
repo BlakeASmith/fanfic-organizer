@@ -13,13 +13,15 @@ from typing import Any
 SOURCE_AO3 = "ao3"
 SOURCE_WIKIPEDIA = "wikipedia"
 SOURCE_WEB = "web"
+SOURCE_TWC = "twc"
 
-KNOWN_SOURCES = frozenset({SOURCE_AO3, SOURCE_WIKIPEDIA, SOURCE_WEB})
+KNOWN_SOURCES = frozenset({SOURCE_AO3, SOURCE_WIKIPEDIA, SOURCE_WEB, SOURCE_TWC})
 
 PUBLISHERS = {
     SOURCE_AO3: "Archive of Our Own",
     SOURCE_WIKIPEDIA: "Wikipedia",
     SOURCE_WEB: "Web",
+    SOURCE_TWC: "Transformative Works and Cultures",
 }
 
 # Calibre identifier keys per source (besides shared ``url``).
@@ -27,6 +29,7 @@ ID_KEYS = {
     SOURCE_AO3: "ao3",
     SOURCE_WIKIPEDIA: "wikipedia",
     SOURCE_WEB: "web",
+    SOURCE_TWC: "twc",
 }
 
 
