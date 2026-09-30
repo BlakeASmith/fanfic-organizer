@@ -39,6 +39,12 @@ except ImportError:  # pragma: no cover — vendored in the plugin zip
         return False
 
 load_dotenv(_PROJECT_ROOT / ".env")
+try:
+    from ao3kit.credentials import apply_saved_login_env
+
+    apply_saved_login_env()
+except (OSError, ImportError):
+    pass
 
 AO3_BASE = "https://archiveofourown.org"
 AO3_DOMAIN = "archiveofourown.org"

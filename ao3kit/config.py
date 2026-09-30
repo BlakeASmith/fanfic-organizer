@@ -365,6 +365,35 @@ class RateLimitSettings:
 
 
 @dataclass
+class DeskSettings:
+    """Defaults for the local Fanfic desk page. Nested under ``desk:``."""
+
+    download_epubs: bool = True
+    include_series: bool = False
+    max_results: int = 25
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> DeskSettings:
+        data = data or {}
+        settings = cls()
+        if "download_epubs" in data:
+            settings.download_epubs = bool(data.get("download_epubs"))
+        if "include_series" in data:
+            settings.include_series = bool(data.get("include_series"))
+        if "max_results" in data and data.get("max_results") not in (None, ""):
+            try:
+                count = int(data.get("max_results"))
+            except (TypeError, ValueError):
+                count = settings.max_results
+            if 1 <= count <= 500:
+                settings.max_results = count
+        return settings
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class UserSettings:
     """Serializable user preferences (config.yaml)."""
 
@@ -390,6 +419,7 @@ class UserSettings:
     default_language_id: str = "en"
     notes: str = ""
     cover: CoverSettings = field(default_factory=CoverSettings)
+    desk: DeskSettings = field(default_factory=DeskSettings)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> UserSettings:
@@ -409,6 +439,13 @@ class UserSettings:
         else:
             kwargs["rate"] = RateLimitSettings.from_dict(
                 rate if isinstance(rate, dict) else None
+            )
+        desk = kwargs.get("desk")
+        if isinstance(desk, DeskSettings):
+            kwargs["desk"] = desk
+        else:
+            kwargs["desk"] = DeskSettings.from_dict(
+                desk if isinstance(desk, dict) else None
             )
         return cls(**kwargs)
 

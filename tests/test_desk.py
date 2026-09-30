@@ -80,8 +80,13 @@ def test_search_title_uses_download_verb() -> None:
     assert search_title({"query": "x", "download": False}).startswith("Search:")
 
 
-def _server(tmp_path: Path) -> tuple[DeskServer, str]:
-    server = DeskServer(("127.0.0.1", 0), tmp_path, calibre_port=8081)
+def _server(tmp_path: Path, *, config_home: Path | None = None) -> tuple[DeskServer, str]:
+    server = DeskServer(
+        ("127.0.0.1", 0),
+        tmp_path,
+        calibre_port=8081,
+        config_home=config_home,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address[:2]
@@ -95,6 +100,7 @@ def test_page_links_calibre_and_lists_jobs(tmp_path: Path) -> None:
         with urlopen(base + "/") as response:
             html = response.read().decode()
         assert "Fanfic desk" in html
+        assert "Settings" in html
         assert "const calibrePort = 8081" in html
         with urlopen(base + "/api/jobs") as response:
             payload = json.load(response)
@@ -169,3 +175,81 @@ def test_job_detail_tails_log(tmp_path: Path) -> None:
     assert detail is not None
     assert "line two" in detail["log"]
     assert job_detail("../secret", jobs_dir=tmp_path) is None
+
+
+def _settings_body(**overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "username": "river",
+        "password": "secret-pass",
+        "min_request_interval": 2,
+        "tag_warm_interval": 12,
+        "default_language_id": "en",
+        "max_results": 15,
+        "download_epubs": False,
+        "include_series": True,
+        "include_metatags": False,
+        "drop_unmarked": True,
+        "cover_enabled": False,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_settings_save_hides_password_and_keeps_it(tmp_path: Path) -> None:
+    home = tmp_path / "cfg"
+    jobs = tmp_path / "jobs"
+    server, base = _server(jobs, config_home=home)
+    try:
+        req = Request(
+            base + "/api/settings",
+            data=json.dumps(_settings_body()).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req) as response:
+            saved = json.load(response)
+        assert saved["username"] == "river"
+        assert saved["password_set"] is True
+        assert saved["download_epubs"] is False
+        assert saved["max_results"] == 15
+        assert "password" not in saved
+        secret_path = home / "ao3-login.json"
+        assert "secret-pass" in secret_path.read_text(encoding="utf-8")
+        assert secret_path.stat().st_mode & 0o777 == 0o600
+        with urlopen(base + "/api/settings") as response:
+            again = json.load(response)
+        assert "secret-pass" not in json.dumps(again)
+        req = Request(
+            base + "/api/settings",
+            data=json.dumps(_settings_body(password="", min_request_interval=3)).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req) as response:
+            kept = json.load(response)
+        assert kept["password_set"] is True
+        assert kept["min_request_interval"] == 3
+        assert "secret-pass" in secret_path.read_text(encoding="utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_login_uses_saved_password(tmp_path: Path, monkeypatch) -> None:
+    from ao3kit.credentials import write_credentials
+    from ao3kit.desk import check_login
+
+    write_credentials("river", "secret-pass", home=tmp_path)
+    seen: dict[str, str] = {}
+
+    def fake_verify(username: str, password: str, **kwargs: object) -> str:
+        seen["username"] = username
+        seen["password"] = password
+        return username
+
+    monkeypatch.setattr("ao3kit.http.verify_login", fake_verify)
+    result, error = check_login({"username": "river", "password": ""}, home=tmp_path)
+    assert error is None
+    assert result is not None
+    assert result["username"] == "river"
+    assert seen == {"username": "river", "password": "secret-pass"}

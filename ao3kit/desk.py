@@ -83,7 +83,10 @@ _PAGE = """<!DOCTYPE html>
       border: 1px solid var(--border); border-radius: 0.45rem;
       padding: 0.4rem 0.55rem;
     }
-    input[type="text"], input[type="number"], select { width: 100%; }
+    input[type="text"], input[type="password"], input[type="number"], select { width: 100%; }
+    nav.bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+    nav.bar a.jump { margin-bottom: 0; }
+    button[aria-pressed="true"] { border-color: var(--accent); }
     .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-top: 0.7rem; }
     .check { font-size: 0.95rem; color: var(--text); }
     button { cursor: pointer; background: var(--card); }
@@ -110,7 +113,12 @@ _PAGE = """<!DOCTYPE html>
 <main>
   <h1>Fanfic desk</h1>
   <p class="sub">Search AO3 and watch jobs. Finished files stay in the job folder. Read the library in Calibre.</p>
-  <a class="jump" id="calibre" href="/" target="_blank" rel="noopener">Open Calibre</a>
+  <nav class="bar">
+    <button type="button" id="tab-search" aria-pressed="true">Search</button>
+    <button type="button" id="tab-settings" aria-pressed="false">Settings</button>
+    <a class="jump" id="calibre" href="/" target="_blank" rel="noopener">Open Calibre</a>
+  </nav>
+  <div id="view-search">
   <section>
     <h2>Search AO3</h2>
     <form id="search">
@@ -148,6 +156,49 @@ _PAGE = """<!DOCTYPE html>
     <ul class="jobs" id="jobs"><li class="empty">Loading…</li></ul>
     <pre class="log" id="log" hidden></pre>
   </section>
+  </div>
+  <div id="view-settings" hidden>
+  <section>
+    <h2>AO3 login</h2>
+    <p class="meta" id="login-state">Loading…</p>
+    <form id="settings">
+      <label>Username
+        <input name="username" type="text" autocomplete="username" />
+      </label>
+      <label>Password
+        <input name="password" type="password" autocomplete="current-password" placeholder="Leave blank to keep the saved password" />
+      </label>
+      <div class="row">
+        <button type="button" id="test-login">Test login</button>
+        <button type="button" id="clear-login">Clear login</button>
+      </div>
+      <h2 style="margin-top:1.25rem">Search defaults</h2>
+      <label>Max results
+        <input name="max_results" type="number" min="1" max="500" value="25" />
+      </label>
+      <label>Minimum seconds between AO3 requests
+        <input name="min_request_interval" type="number" min="0.2" max="120" step="0.1" value="1.5" />
+      </label>
+      <label>Extra pause while warming the tag cache (seconds)
+        <input name="tag_warm_interval" type="number" min="0" max="600" step="0.5" value="10" />
+      </label>
+      <label>Language
+        <input name="default_language_id" type="text" value="en" />
+      </label>
+      <div class="row">
+        <label class="check"><input name="download_epubs" type="checkbox" checked /> Download EPUBs</label>
+        <label class="check"><input name="include_series" type="checkbox" /> Also fetch the rest of each series</label>
+        <label class="check"><input name="include_metatags" type="checkbox" checked /> Add fandom metatags</label>
+        <label class="check"><input name="drop_unmarked" type="checkbox" checked /> Drop unmarked tags</label>
+        <label class="check"><input name="cover_enabled" type="checkbox" checked /> Generate covers</label>
+      </div>
+      <div class="row">
+        <button class="primary" type="submit">Save settings</button>
+        <span class="err" id="settings-err"></span>
+      </div>
+    </form>
+  </section>
+  </div>
 </main>
 <script>
 const calibrePort = __CALIBRE_PORT__;
@@ -256,8 +307,103 @@ document.getElementById("search").addEventListener("submit", async (ev) => {
   }
 });
 
+function showView(name) {
+  const settings = name === "settings";
+  document.getElementById("view-search").hidden = settings;
+  document.getElementById("view-settings").hidden = !settings;
+  document.getElementById("tab-search").setAttribute("aria-pressed", settings ? "false" : "true");
+  document.getElementById("tab-settings").setAttribute("aria-pressed", settings ? "true" : "false");
+  if (settings) loadSettings();
+  if (settings) location.hash = "settings";
+  else if (location.hash === "#settings") history.replaceState(null, "", location.pathname);
+}
+
+document.getElementById("tab-search").addEventListener("click", () => showView("search"));
+document.getElementById("tab-settings").addEventListener("click", () => showView("settings"));
+
+function checked(form, name) {
+  return form.elements[name].checked;
+}
+
+async function loadSettings() {
+  const res = await fetch("/api/settings");
+  const data = await res.json();
+  const form = document.getElementById("settings");
+  form.username.value = data.username || "";
+  form.password.value = "";
+  form.max_results.value = data.max_results || 25;
+  form.min_request_interval.value = data.min_request_interval;
+  form.tag_warm_interval.value = data.tag_warm_interval;
+  form.default_language_id.value = data.default_language_id || "en";
+  form.download_epubs.checked = !!data.download_epubs;
+  form.include_series.checked = !!data.include_series;
+  form.include_metatags.checked = !!data.include_metatags;
+  form.drop_unmarked.checked = !!data.drop_unmarked;
+  form.cover_enabled.checked = !!data.cover_enabled;
+  const state = document.getElementById("login-state");
+  state.textContent = data.password_set
+    ? `Saved login for ${data.username}. Searches use it until you clear it.`
+    : "No AO3 login saved. Restricted works stay anonymous.";
+  if (!defaultsApplied) {
+    const search = document.getElementById("search");
+    search.download.checked = !!data.download_epubs;
+    search.include_series.checked = !!data.include_series;
+    if (data.max_results) search.max_results.value = data.max_results;
+    defaultsApplied = true;
+  }
+}
+
+function settingsBody(extra) {
+  const form = document.getElementById("settings");
+  return Object.assign({
+    username: form.username.value,
+    password: form.password.value,
+    max_results: form.max_results.value,
+    min_request_interval: form.min_request_interval.value,
+    tag_warm_interval: form.tag_warm_interval.value,
+    default_language_id: form.default_language_id.value,
+    download_epubs: checked(form, "download_epubs"),
+    include_series: checked(form, "include_series"),
+    include_metatags: checked(form, "include_metatags"),
+    drop_unmarked: checked(form, "drop_unmarked"),
+    cover_enabled: checked(form, "cover_enabled"),
+  }, extra || {});
+}
+
+async function postSettings(url, body) {
+  const err = document.getElementById("settings-err");
+  err.textContent = "";
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    err.textContent = data.error || `Request failed (${res.status})`;
+    return null;
+  }
+  err.textContent = data.message || "Saved.";
+  await loadSettings();
+  return data;
+}
+
+document.getElementById("settings").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  postSettings("/api/settings", settingsBody());
+});
+document.getElementById("test-login").addEventListener("click", () => {
+  postSettings("/api/login", settingsBody());
+});
+document.getElementById("clear-login").addEventListener("click", () => {
+  postSettings("/api/settings", settingsBody({ username: "", password: "", clear_password: true }));
+});
+
+let defaultsApplied = false;
+loadSettings();
 refresh();
 setInterval(refresh, 3000);
+if (location.hash === "#settings") showView("settings");
 </script>
 </body>
 </html>
@@ -444,6 +590,133 @@ def retry_desk_job(job_id: str, *, jobs_dir: Path | None = None) -> tuple[dict[s
     return job_view(status), None
 
 
+def _bounded_float(value: Any, *, low: float, high: float) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < low or number > high:
+        return None
+    return number
+
+
+def _bounded_int(value: Any, *, low: int, high: int) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < low or number > high:
+        return None
+    return number
+
+
+def settings_view(home: Path | None = None) -> dict[str, Any]:
+    from ao3kit.config import load_user_config
+    from ao3kit.credentials import read_credentials
+
+    cfg = load_user_config(home=home, ensure=True)
+    username, password = read_credentials(cfg.home)
+    settings = cfg.settings
+    return {
+        "username": username,
+        "password_set": bool(password),
+        "min_request_interval": settings.min_request_interval,
+        "tag_warm_interval": settings.tag_warm_interval,
+        "include_metatags": settings.include_metatags,
+        "drop_unmarked": settings.drop_unmarked,
+        "default_language_id": settings.default_language_id,
+        "cover_enabled": settings.cover.enabled,
+        "download_epubs": settings.desk.download_epubs,
+        "include_series": settings.desk.include_series,
+        "max_results": settings.desk.max_results,
+    }
+
+
+def save_settings(
+    fields: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    from ao3kit.config import load_user_config
+    from ao3kit.credentials import clear_credentials, read_credentials, write_credentials
+
+    interval = _bounded_float(fields.get("min_request_interval"), low=0.2, high=120)
+    if interval is None:
+        return None, "Minimum request interval must be between 0.2 and 120 seconds."
+    warm = _bounded_float(fields.get("tag_warm_interval"), low=0, high=600)
+    if warm is None:
+        return None, "Tag-cache pause must be between 0 and 600 seconds."
+    language = str(fields.get("default_language_id") or "").strip()
+    if (
+        not language
+        or len(language) > 16
+        or any(not (ch.isalnum() or ch in "-_") for ch in language)
+    ):
+        return None, "Language must be a short id such as en."
+    max_results = _bounded_int(fields.get("max_results"), low=1, high=MAX_RESULTS)
+    if max_results is None:
+        return None, f"Max results must be between 1 and {MAX_RESULTS}."
+
+    username = str(fields.get("username") or "").strip()
+    password = fields.get("password")
+    password_text = password if isinstance(password, str) else ""
+    clear_login = _truthy(fields.get("clear_password")) or not username
+    if not clear_login and not password_text:
+        _current_user, current_password = read_credentials(home)
+        if not current_password:
+            return None, "Enter a password to save an AO3 login."
+
+    cfg = load_user_config(home=home, ensure=True)
+    cover = cfg.settings.cover.to_dict()
+    cover["enabled"] = _truthy(fields.get("cover_enabled"), default=True)
+    desk = cfg.settings.desk.to_dict()
+    desk["download_epubs"] = _truthy(fields.get("download_epubs"), default=True)
+    desk["include_series"] = _truthy(fields.get("include_series"))
+    desk["max_results"] = max_results
+    cfg.update_settings(
+        min_request_interval=interval,
+        tag_warm_interval=warm,
+        include_metatags=_truthy(fields.get("include_metatags"), default=True),
+        drop_unmarked=_truthy(fields.get("drop_unmarked"), default=True),
+        default_language_id=language,
+        cover=cover,
+        desk=desk,
+    )
+
+    if clear_login:
+        clear_credentials(cfg.home)
+    elif password_text:
+        write_credentials(username, password_text, home=cfg.home)
+    else:
+        _current_user, current_password = read_credentials(cfg.home)
+        write_credentials(username, current_password, home=cfg.home)
+    view = settings_view(cfg.home)
+    view["message"] = "Saved."
+    return view, None
+
+
+def check_login(
+    fields: dict[str, Any],
+    *,
+    home: Path | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    from ao3kit.credentials import read_credentials
+    from ao3kit.http import Ao3HttpError, LoginError, verify_login
+
+    saved_user, saved_password = read_credentials(home)
+    username = str(fields.get("username") or saved_user).strip()
+    password = fields.get("password")
+    if not isinstance(password, str) or not password:
+        password = saved_password
+    try:
+        verified = verify_login(username, password)
+    except LoginError as exc:
+        return None, str(exc)
+    except Ao3HttpError as exc:
+        return None, str(exc)
+    return {"ok": True, "username": verified, "message": f"Logged in as {verified}."}, None
+
+
 def page_html(*, calibre_port: int = DEFAULT_CALIBRE_PORT) -> str:
     return _PAGE.replace("__CALIBRE_PORT__", str(int(calibre_port)))
 
@@ -451,6 +724,7 @@ def page_html(*, calibre_port: int = DEFAULT_CALIBRE_PORT) -> str:
 class DeskServer(ThreadingHTTPServer):
     jobs_dir: Path
     calibre_port: int
+    config_home: Path | None
 
     def __init__(
         self,
@@ -458,9 +732,11 @@ class DeskServer(ThreadingHTTPServer):
         jobs_dir: Path,
         *,
         calibre_port: int = DEFAULT_CALIBRE_PORT,
+        config_home: Path | None = None,
     ) -> None:
         self.jobs_dir = jobs_dir
         self.calibre_port = calibre_port
+        self.config_home = config_home
         super().__init__(server_address, DeskHandler)
 
 
@@ -480,6 +756,9 @@ class DeskHandler(BaseHTTPRequestHandler):
             payload = {"jobs": list_job_views(self.server.jobs_dir)}
             self._send_json(200, payload)
             return
+        if path == "/api/settings":
+            self._send_json(200, settings_view(self.server.config_home))
+            return
         prefix = "/api/jobs/"
         if path.startswith(prefix) and path.count("/") == 3:
             detail = job_detail(path[len(prefix) :], jobs_dir=self.server.jobs_dir)
@@ -492,6 +771,28 @@ class DeskHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/settings":
+            fields, error = self._read_json()
+            if error:
+                self._send_json(400, {"error": error})
+                return
+            view, save_error = save_settings(fields, home=self.server.config_home)
+            if save_error or view is None:
+                self._send_json(400, {"error": save_error or "Could not save settings."})
+                return
+            self._send_json(200, view)
+            return
+        if path == "/api/login":
+            fields, error = self._read_json()
+            if error:
+                self._send_json(400, {"error": error})
+                return
+            view, login_error = check_login(fields, home=self.server.config_home)
+            if login_error or view is None:
+                self._send_json(400, {"error": login_error or "AO3 login failed."})
+                return
+            self._send_json(200, view)
+            return
         if path == "/api/search":
             fields, error = self._read_json()
             if error:
