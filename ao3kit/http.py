@@ -49,8 +49,8 @@ except (OSError, ImportError):
 AO3_BASE = "https://archiveofourown.org"
 AO3_DOMAIN = "archiveofourown.org"
 AO3_LOGIN_URL = f"{AO3_BASE}/users/login"
-# Hung / unreachable AO3 pages used to sit on the old 60s socket timeout for
-# several attempts (~3 min per URL). Match login: fail the socket sooner.
+# Read timeout for one try. A healthy AO3 search answers in a few seconds;
+# a Cloudflare blackhole sits until this fires, then we try again.
 DEFAULT_REQUEST_TIMEOUT = 20.0
 LOGIN_REQUEST_TIMEOUT = DEFAULT_REQUEST_TIMEOUT
 # Large EPUB streams need a longer read window than HTML pages.
@@ -202,16 +202,15 @@ def request(
     timeout: float | tuple[float, float] = DEFAULT_REQUEST_TIMEOUT,
     view_adult: bool = False,
     max_retries: int = 5,
-    max_timeouts: int = 2,
+    max_timeouts: int = 5,
     on_status: StatusCallback | None = None,
 ) -> requests.Response:
     """Perform an AO3 request with process-wide rate limiting and retries.
 
-    Socket hangs and Cloudflare origin timeouts (522/524) share ``max_timeouts``
-    so a dead or missing page fails in tens of seconds instead of minutes.
-    That budget is separate from ``max_retries`` (other 5xx, including
-    Cloudflare 525). A run of edge errors must not turn the next socket
-    timeout into an immediate give-up.
+    Socket hangs and Cloudflare origin timeouts (522/524) share ``max_timeouts``.
+    AO3 often accepts a connection and then sends nothing; a couple of those
+    hangs are normal, so the budget is several tries, separate from
+    ``max_retries`` (other 5xx, including Cloudflare 525).
     """
     url = normalize_ao3_url(url)
     if view_adult and AO3_DOMAIN in url.lower():
@@ -254,8 +253,9 @@ def request(
             # 5xx retries use ``attempt``. Reset it so a later 525 still
             # has a full budget after this hang.
             attempt = 0
-            _emit(on_status, f"Timeout — retrying in {retry_delay:.0f}s…")
-            time.sleep(retry_delay)
+            delay = _retry_delay(timeouts)
+            _emit(on_status, f"Timeout — retrying in {delay:.0f}s…")
+            time.sleep(delay)
             continue
         except requests.RequestException as exc:
             elapsed = time.monotonic() - started
@@ -338,13 +338,14 @@ def request(
                 )
             note_request_pressure(status_code=response.status_code)
             attempt = 0
+            delay = _retry_delay(timeouts)
             _emit(
                 on_status,
                 f"AO3 origin timed out ({response.status_code}) — "
-                f"retrying in {retry_delay:.0f}s…",
+                f"retrying in {delay:.0f}s…",
             )
             response.close()
-            time.sleep(retry_delay)
+            time.sleep(delay)
             continue
 
         timeouts = 0

@@ -238,6 +238,16 @@ def test_request_uses_default_page_timeout(monkeypatch: pytest.MonkeyPatch):
     assert session.timeouts == [DEFAULT_REQUEST_TIMEOUT]
 
 
+def test_request_survives_several_hung_reads(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession(
+        [requests.Timeout("hang")] * 4 + [FakeResponse(text="ok")]
+    )
+    response = request(session, "GET", "https://archiveofourown.org/works/1")
+    assert response.text == "ok"
+    assert len(session.calls) == 5
+
+
 def test_request_gives_up_after_max_timeouts(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
     session = FakeSession(

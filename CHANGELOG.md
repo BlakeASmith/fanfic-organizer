@@ -17,7 +17,7 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ### Bug Fixes
 
-- Retry an AO3 search after Cloudflare 525s. Those edge errors no longer use up the timeout budget, so one slow read does not abort the job.
+- Keep retrying an AO3 search when Cloudflare accepts the connection and never sends the page. A couple of hung reads no longer abort the job, and 525s do not use up that timeout budget.
 
 ### Features
 
