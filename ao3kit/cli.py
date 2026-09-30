@@ -14,6 +14,7 @@ Usage:
   python -m ao3kit wikipedia  # search/fetch Wikipedia articles to JSONL
   python -m ao3kit web        # fetch URL or saved HTML → JSONL/EPUB
   python -m ao3kit epub       # combine / explode / rebuild omnibus EPUBs
+  python -m ao3kit desk       # local page: AO3 search jobs and job status
 """
 
 from __future__ import annotations
@@ -77,6 +78,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "koreader",
         help="KOReader collections index helpers",
+    )
+    sub.add_parser(
+        "desk",
+        help="Local web page: start an AO3 search and watch job status",
     )
 
     if not argv:
@@ -159,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
         from ao3kit.koreader.cli import main as koreader_main
 
         return koreader_main(rest)
+
+    if command == "desk":
+        from ao3kit.desk import main as desk_main
+
+        return desk_main(rest)
 
     parser.error(f"Unknown command: {command}")
     return 2
