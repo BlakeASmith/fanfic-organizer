@@ -209,6 +209,9 @@ def request(
 
     Socket hangs and Cloudflare origin timeouts (522/524) share ``max_timeouts``
     so a dead or missing page fails in tens of seconds instead of minutes.
+    That budget is separate from ``max_retries`` (other 5xx, including
+    Cloudflare 525). A run of edge errors must not turn the next socket
+    timeout into an immediate give-up.
     """
     url = normalize_ao3_url(url)
     if view_adult and AO3_DOMAIN in url.lower():
@@ -244,11 +247,13 @@ def request(
                 elapsed_s=elapsed,
                 attempt=attempt,
             )
-            if timeouts >= max_timeouts or attempt >= max_retries:
+            if timeouts >= max_timeouts:
                 raise Ao3HttpError(
                     f"Timed out after {timeouts} attempt(s) fetching {url}"
                 ) from exc
-            attempt += 1
+            # 5xx retries use ``attempt``. Reset it so a later 525 still
+            # has a full budget after this hang.
+            attempt = 0
             _emit(on_status, f"Timeout — retrying in {retry_delay:.0f}s…")
             time.sleep(retry_delay)
             continue
@@ -326,13 +331,13 @@ def request(
                 attempt=attempt,
                 status=response.status_code,
             )
-            if timeouts >= max_timeouts or attempt >= max_retries:
+            if timeouts >= max_timeouts:
                 raise Ao3HttpError(
                     f"Timed out after {timeouts} attempt(s) fetching {url} "
                     f"(HTTP {response.status_code})"
                 )
             note_request_pressure(status_code=response.status_code)
-            attempt += 1
+            attempt = 0
             _emit(
                 on_status,
                 f"AO3 origin timed out ({response.status_code}) — "

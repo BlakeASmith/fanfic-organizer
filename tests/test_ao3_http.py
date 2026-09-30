@@ -282,6 +282,44 @@ def test_request_treats_cloudflare_origin_timeout_like_socket_timeout(
     assert any("origin timed out" in message for message in messages)
 
 
+def test_request_socket_timeout_keeps_its_budget_after_cloudflare_525(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession(
+        [FakeResponse(status_code=525, text="error code: 525")] * 5
+        + [requests.Timeout("hang"), FakeResponse(text="ok")]
+    )
+    response = request(
+        session,
+        "GET",
+        "https://archiveofourown.org/works/1",
+        max_retries=5,
+        max_timeouts=2,
+    )
+    assert response.text == "ok"
+    assert len(session.calls) == 7
+
+
+def test_request_still_stops_after_max_timeouts_following_525(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("ao3kit.http.time.sleep", lambda _s: None)
+    session = FakeSession(
+        [FakeResponse(status_code=525, text="error code: 525")] * 5
+        + [requests.Timeout("hang"), requests.Timeout("hang")]
+    )
+    with pytest.raises(Ao3HttpError, match="Timed out after 2"):
+        request(
+            session,
+            "GET",
+            "https://archiveofourown.org/works/1",
+            max_retries=5,
+            max_timeouts=2,
+        )
+    assert len(session.calls) == 7
+
+
 def test_request_retries_once_on_origin_timeout_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ):

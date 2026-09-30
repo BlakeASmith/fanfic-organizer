@@ -15,6 +15,10 @@ Every push to `main` also publishes a **preview** pre-release; that path does no
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Retry an AO3 search after Cloudflare 525s. Those edge errors no longer use up the timeout budget, so one slow read does not abort the job.
+
 ### Features
 
 - Add a local **Fanfic desk** page (`python -m ao3kit desk`, port 8091): start an AO3 search (optional EPUB download and the rest of each series) and watch, stop, or retry background jobs, with a link to the Calibre content server. Search files stay in the job folder; the page does not write the Calibre library.
